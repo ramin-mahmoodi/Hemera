@@ -1,7 +1,7 @@
-# Build outputs
-build/
-bin/
-obj/
+# Root build outputs
+/build/
+/bin/
+/obj/
 *.exe
 *.dll
 *.pdb
@@ -17,6 +17,24 @@ obj/
 # Libraries (ignore all except core/vendor static libs)
 *.lib
 !core/vendor/**/*.lib
+
+# Vendor build intermediates to ignore
+core/vendor/**/build/CMakeFiles/
+core/vendor/**/build/**/.*
+core/vendor/**/build/**/*.ninja
+core/vendor/**/build/**/*.cmake
+core/vendor/**/build/**/*.manifest
+core/vendor/**/build/**/*.txt
+core/vendor/**/build/**/*.obj
+core/vendor/**/build/**/*.pdb
+core/vendor/**/build/**/*.pc
+core/vendor/**/build/bssl.exe
+core/vendor/**/build/examples/
+core/vendor/**/build/tests/
+
+# Keep essential vendor build headers and libraries
+!core/vendor/**/build/lib/includes/**/*.h
+!core/vendor/**/build/**/*.lib
 
 # Tests & Binaries (as requested)
 tests/
@@ -51,24 +69,12 @@ core/vendor/boringssl/pki/
 core/vendor/boringssl/rust/
 core/vendor/boringssl/tool/
 core/vendor/boringssl/util/
-core/vendor/boringssl/build/bssl.exe
-core/vendor/boringssl/build/CMakeFiles/
-core/vendor/boringssl/build/**/*.cmake
-core/vendor/boringssl/build/**/*.txt
-core/vendor/boringssl/build/**/*.ninja
-core/vendor/boringssl/build/**/*.manifest
-core/vendor/nghttp2/build/CMakeFiles/
 core/vendor/nghttp2/examples/
 core/vendor/nghttp2/tests/
 core/vendor/nghttp2/src/
 core/vendor/nghttp2/doc/
-core/vendor/nghttp3/build/CMakeFiles/
-core/vendor/nghttp3/build/examples/
-core/vendor/nghttp3/build/tests/
 core/vendor/nghttp3/examples/
 core/vendor/nghttp3/tests/
-core/vendor/ngtcp2/build/CMakeFiles/
-core/vendor/ngtcp2/build/third-party/
 core/vendor/ngtcp2/examples/
 core/vendor/ngtcp2/tests/
 
@@ -77,3 +83,4 @@ entry_*.png
 cropped_screenshot.png
 build_icons.py
 test_*.py
+check_*.py
