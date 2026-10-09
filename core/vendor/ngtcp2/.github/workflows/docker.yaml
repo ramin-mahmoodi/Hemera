@@ -1,0 +1,28 @@
+name: docker-build
+
+on:
+  push:
+    paths:
+    - docker/Dockerfile
+    branches:
+    - '**'
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+    - name: Build
+      uses: docker/build-push-action@v7
+      with:
+        context: docker
+        build-args: NGTCP2_BRANCH=${{ github.ref_name }}

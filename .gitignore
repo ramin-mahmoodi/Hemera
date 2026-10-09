@@ -1,0 +1,79 @@
+# Build outputs
+build/
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.map
+*.idb
+*.tlog
+*.log
+*.res
+*.obj
+
+# Libraries (ignore all except core/vendor static libs)
+*.lib
+!core/vendor/**/*.lib
+
+# Tests & Binaries (as requested)
+tests/
+binaries/
+resources.rc
+spike/
+core/spike/
+
+# Secrets and private config files
+*.toml
+*.pem
+*.key
+
+# IDE and Editor files
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+
+# Unused or non-essential vendor submodules/bloat
+core/vendor/msquic/
+core/vendor/tools/
+core/vendor/boringssl/crypto/
+core/vendor/boringssl/ssl/
+core/vendor/boringssl/third_party/
+core/vendor/boringssl/decrepit/
+core/vendor/boringssl/fuzz/
+core/vendor/boringssl/gen/
+core/vendor/boringssl/infra/
+core/vendor/boringssl/pki/
+core/vendor/boringssl/rust/
+core/vendor/boringssl/tool/
+core/vendor/boringssl/util/
+core/vendor/boringssl/build/bssl.exe
+core/vendor/boringssl/build/CMakeFiles/
+core/vendor/boringssl/build/**/*.cmake
+core/vendor/boringssl/build/**/*.txt
+core/vendor/boringssl/build/**/*.ninja
+core/vendor/boringssl/build/**/*.manifest
+core/vendor/nghttp2/build/CMakeFiles/
+core/vendor/nghttp2/examples/
+core/vendor/nghttp2/tests/
+core/vendor/nghttp2/src/
+core/vendor/nghttp2/doc/
+core/vendor/nghttp3/build/CMakeFiles/
+core/vendor/nghttp3/build/examples/
+core/vendor/nghttp3/build/tests/
+core/vendor/nghttp3/examples/
+core/vendor/nghttp3/tests/
+core/vendor/ngtcp2/build/CMakeFiles/
+core/vendor/ngtcp2/build/third-party/
+core/vendor/ngtcp2/examples/
+core/vendor/ngtcp2/tests/
+
+# Scratch & temporary artifacts
+entry_*.png
+cropped_screenshot.png
+build_icons.py
+test_*.py

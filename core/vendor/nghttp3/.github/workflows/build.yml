@@ -1,0 +1,278 @@
+name: build
+
+on: [push, pull_request]
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-26.04, macos-26, macos-15]
+        compiler: [gcc, clang]
+        buildtool: [autotools, cmake]
+        include:
+        - os: ubuntu-26.04
+          compiler: clang
+          buildtool: distcheck
+        - os: ubuntu-26.04-arm
+          compiler: gcc
+          buildtool: autotools
+        - os: ubuntu-26.04-arm
+          compiler: clang
+          buildtool: autotools
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Linux setup
+      if: runner.os == 'Linux'
+      run: |
+        # Do not use azure mirror.  They are frequently throttled
+        # therefore unstable and slow.
+        sudo sed -i '/azure.archive.ubuntu.com/d' /etc/apt/apt-mirrors.txt
+        sudo apt-get update
+        sudo apt-get install \
+          g++-14 \
+          clang-19 \
+          autoconf \
+          automake \
+          autotools-dev \
+          libtool \
+          pkg-config \
+          cmake \
+          cmake-data
+
+        asanflags="-fsanitize=address,undefined -fno-sanitize-recover=undefined"
+
+        LDFLAGS="$LDFLAGS $asanflags"
+        CFLAGS="$CFLAGS $asanflags -g3"
+        CXXFLAGS="$CXXFLAGS $asanflags -g3"
+
+        echo 'LDFLAGS='"$LDFLAGS" >> $GITHUB_ENV
+        echo 'CFLAGS='"$CFLAGS" >> $GITHUB_ENV
+        echo 'CXXFLAGS='"$CXXFLAGS" >> $GITHUB_ENV
+
+        # https://github.com/actions/runner-images/issues/9491#issuecomment-1989718917
+        # Asan in llvm 14 provided in ubuntu 22.04 is incompatible with
+        # high-entropy ASLR in much newer kernels that GitHub runners are
+        # using leading to random crashes: https://reviews.llvm.org/D148280
+        sudo sysctl vm.mmap_rnd_bits=28
+    - name: MacOS setup
+      if: runner.os == 'macOS'
+      run: |
+        brew install autoconf automake libtool
+    - name: Setup clang (Linux)
+      if: runner.os == 'Linux' && matrix.compiler == 'clang'
+      run: |
+        echo 'CC=clang-19' >> $GITHUB_ENV
+        echo 'CXX=clang++-19' >> $GITHUB_ENV
+    - name: Setup clang (MacOS)
+      if: runner.os == 'macOS' && matrix.compiler == 'clang'
+      run: |
+        echo 'CC=clang' >> $GITHUB_ENV
+        echo 'CXX=clang++' >> $GITHUB_ENV
+    - name: Setup gcc (Linux)
+      if: runner.os == 'Linux' && matrix.compiler == 'gcc'
+      run: |
+        echo 'CC=gcc-14' >> $GITHUB_ENV
+        echo 'CXX=g++-14' >> $GITHUB_ENV
+    - name: Setup gcc (MacOS)
+      if: runner.os == 'macOS' && matrix.compiler == 'gcc'
+      run: |
+        echo 'CC=gcc' >> $GITHUB_ENV
+        echo 'CXX=g++' >> $GITHUB_ENV
+    - name: git submodule
+      run: |
+        git submodule update --init --depth 1
+    - name: Configure autotools
+      if: matrix.buildtool == 'autotools'
+      run: |
+        autoreconf -i && \
+        ./configure --disable-dependency-tracking --enable-werror
+    - name: Configure distcheck
+      if: matrix.buildtool == 'distcheck'
+      run: |
+        autoreconf -i && ./configure --disable-dependency-tracking
+    - name: Configure cmake
+      if: matrix.buildtool == 'cmake'
+      run: |
+        autoreconf -i && ./configure --disable-dependency-tracking
+        make dist
+
+        VERSION=$(grep PACKAGE_VERSION config.h | cut -d' ' -f3 | tr -d '"')
+        tar xf nghttp3-$VERSION.tar.gz
+        cd nghttp3-$VERSION
+        mkdir build
+        cd build
+
+        echo 'NGHTTP3_BUILD_DIR='"$PWD" >> $GITHUB_ENV
+
+        cmake -DENABLE_WERROR=ON $CMAKE_OPTS ..
+    - name: Build nghttp3
+      if: matrix.buildtool != 'distcheck'
+      run: |
+        [ -n "$NGHTTP3_BUILD_DIR" ] && cd "$NGHTTP3_BUILD_DIR"
+        make
+        make check
+    - name: Build nghttp3 with distcheck
+      if: matrix.buildtool == 'distcheck'
+      run: |
+        make distcheck
+    - name: Build fuzzer
+      if: runner.os == 'Linux' && matrix.buildtool == 'autotools' && matrix.compiler == 'clang'
+      run: |
+        export CXXFLAGS="-fsanitize=address,fuzzer"
+        export LIB_FUZZING_ENGINE=
+        export OUT=fuzz-out
+
+        mkdir $OUT
+
+        .clusterfuzzlite/build_fuzzer.sh
+
+  build-cross:
+    strategy:
+      matrix:
+        host: [x86_64-w64-mingw32, i686-w64-mingw32]
+
+    runs-on: ubuntu-26.04
+
+    env:
+      HOST: ${{ matrix.host }}
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Prepare for i386
+      if: matrix.host == 'i686-w64-mingw32'
+      run: |
+        sudo dpkg --add-architecture i386
+    - name: Linux setup
+      run: |
+        # Do not use azure mirror.  They are frequently throttled
+        # therefore unstable and slow.
+        sudo sed -i '/azure.archive.ubuntu.com/d' /etc/apt/apt-mirrors.txt
+        sudo apt-get update
+        sudo apt-get install \
+          gcc-mingw-w64 \
+          autoconf \
+          automake \
+          autotools-dev \
+          libtool \
+          pkg-config \
+          wine
+    - name: Configure autotools
+      run: |
+        git submodule update --init --depth 1
+        autoreconf -i && \
+        ./configure --disable-dependency-tracking --enable-werror \
+          --enable-lib-only --host="$HOST" \
+          LIBS="-pthread"
+    - name: Build nghttp3
+      run: |
+        make -j$(nproc)
+        make -j$(nproc) check TESTS=""
+    - name: Run tests
+      run: |
+        export WINEPATH="/usr/${{ matrix.host }}/lib;$(winepath -w /usr/lib/x86_64-linux-gnu/wine/x86_64-windows)"
+        cd tests
+        wine main.exe
+
+  build-windows:
+    strategy:
+      matrix:
+        arch: [x86, x64]
+        include:
+        - arch: x86
+          platform: Win32
+        - arch: x64
+          platform: x64
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Configure cmake
+      run: |
+        git submodule update --init --depth 1
+        mkdir build
+        cd build
+        cmake -DENABLE_WERROR=ON -DENABLE_LIB_ONLY=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_GENERATOR_PLATFORM=${{ matrix.platform }} -DVCPKG_TARGET_TRIPLET=${{ matrix.arch}}-windows ..
+    - name: Build nghttp3
+      run: |
+        cmake --build build
+        cmake --build build --target check
+
+  release:
+    if: github.ref_type == 'tag'
+
+    needs:
+    - build
+    - build-cross
+    - build-windows
+
+    permissions:
+      contents: write
+
+    runs-on: ubuntu-26.04
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+        submodules: recursive
+    - name: Make artifacts
+      run: |
+        ver='${{ github.ref_name }}'
+
+        prev_ver=$(git tag --sort v:refname | grep -v -F "${ver}" | \
+                   grep 'v[0-9]\+\.[0-9]\+\.0' | tail -n1)
+
+        echo -n "$GPG_KEY" | gpg --batch --pinentry-mode loopback --import
+        ./makerelease.sh "${ver}" "${prev_ver}"
+      env:
+        GPG_KEY: ${{ secrets.GPG_KEY }}
+        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+    - name: Make release
+      uses: actions/github-script@v9
+      with:
+        script: |
+          const fs = require('fs')
+
+          let ver = '${{ github.ref_name }}'
+
+          let {data: release} = await github.rest.repos.createRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            tag_name: ver,
+            name: `nghttp3 ${ver}`,
+            draft: true,
+            generate_release_notes: true,
+            discussion_category_name: 'Announcements',
+          })
+
+          let v = ver.substring(1)
+
+          let files = [
+            'checksums.txt',
+            `nghttp3-${v}.tar.bz2`,
+            `nghttp3-${v}.tar.bz2.asc`,
+            `nghttp3-${v}.tar.gz`,
+            `nghttp3-${v}.tar.gz.asc`,
+            `nghttp3-${v}.tar.xz`,
+            `nghttp3-${v}.tar.xz.asc`,
+          ]
+
+          await Promise.all(files.map(elem =>
+            github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              name: elem,
+              data: fs.readFileSync(elem),
+            })
+          ))

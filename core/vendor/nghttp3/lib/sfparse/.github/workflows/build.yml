@@ -1,0 +1,126 @@
+name: build
+
+on: [push, pull_request]
+
+permissions: read-all
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-26, macos-15]
+        compiler: [gcc, clang]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: recursive
+    - name: Linux setup
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install \
+          g++-14 \
+          clang-19 \
+          autoconf \
+          automake \
+          autotools-dev \
+          libtool \
+          pkg-config
+
+        # https://github.com/actions/runner-images/issues/9491#issuecomment-1989718917
+        # Asan in llvm 14 provided in ubuntu 22.04 is incompatible with
+        # high-entropy ASLR in much newer kernels that GitHub runners are
+        # using leading to random crashes: https://reviews.llvm.org/D148280
+        sudo sysctl vm.mmap_rnd_bits=28
+    - name: MacOS setup
+      if: runner.os == 'macOS'
+      run: |
+        brew install autoconf automake libtool
+    - name: Setup clang (Linux)
+      if: runner.os == 'Linux' && matrix.compiler == 'clang'
+      run: |
+        echo 'CC=clang-19' >> $GITHUB_ENV
+        echo 'CXX=clang++-19' >> $GITHUB_ENV
+    - name: Setup clang (MacOS)
+      if: runner.os == 'macOS' && matrix.compiler == 'clang'
+      run: |
+        echo 'CC=clang' >> $GITHUB_ENV
+        echo 'CXX=clang++' >> $GITHUB_ENV
+    - name: Setup gcc (Linux)
+      if: runner.os == 'Linux' && matrix.compiler == 'gcc'
+      run: |
+        echo 'CC=gcc-14' >> $GITHUB_ENV
+        echo 'CXX=g++-14' >> $GITHUB_ENV
+    - name: Setup gcc (MacOS)
+      if: runner.os == 'macOS' && matrix.compiler == 'gcc'
+      run: |
+        echo 'CC=gcc' >> $GITHUB_ENV
+        echo 'CXX=g++' >> $GITHUB_ENV
+    - name: Enable ASAN
+      if: runner.os == 'Linux'
+      run: |
+        asanflags="-fsanitize=address,undefined -fno-sanitize-recover=undefined"
+
+        LDFLAGS="$LDFLAGS $asanflags"
+        CFLAGS="$CFLAGS $asanflags -g3"
+        CXXFLAGS="$CXXFLAGS $asanflags -g3"
+
+        if [ "${{ runner.arch }}" = "X64" ]; then
+          CFLAGS="$CFLAGS -mavx2"
+        fi
+
+        echo 'LDFLAGS='"$LDFLAGS" >> $GITHUB_ENV
+        echo 'CFLAGS='"$CFLAGS" >> $GITHUB_ENV
+        echo 'CXXFLAGS='"$CXXFLAGS" >> $GITHUB_ENV
+    - name: Configure autotools
+      run: |
+        autoreconf -i && ./configure --disable-dependency-tracking
+    - name: Build sfparse with distcheck
+      run: |
+        make distcheck DISTCHECK_CONFIGURE_FLAGS="--enable-werror"
+
+  build-cross:
+    strategy:
+      matrix:
+        host: [x86_64-w64-mingw32, i686-w64-mingw32]
+
+    runs-on: ubuntu-24.04
+
+    env:
+      HOST: ${{ matrix.host }}
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: recursive
+    - name: Prepare for i386
+      if: matrix.host == 'i686-w64-mingw32'
+      run: |
+        sudo dpkg --add-architecture i386
+    - name: Linux setup
+      run: |
+        sudo apt-get update
+        sudo apt-get install \
+          gcc-mingw-w64 \
+          autoconf \
+          automake \
+          autotools-dev \
+          libtool \
+          pkg-config \
+          wine
+    - name: Configure autotools
+      run: |
+        autoreconf -i && \
+        ./configure --disable-dependency-tracking --enable-werror \
+          --host="$HOST" LIBS="-pthread"
+    - name: Build sfparse
+      run: |
+        make -j$(nproc)
+        make -j$(nproc) check TESTS=""
+    - name: Run tests
+      run: |
+        export WINEPATH="/usr/${{ matrix.host }}/lib;$(winepath -w /usr/lib/x86_64-linux-gnu/wine/x86_64-windows)"
+        wine test.exe
