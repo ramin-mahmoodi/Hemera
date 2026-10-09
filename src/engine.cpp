@@ -277,6 +277,7 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
         if (!prof.exit_loc.empty()) env["HEMERA_EXIT_LOC"] = prof.exit_loc;
         if (!prof.dns.empty()) env["HEMERA_DNS"] = prof.dns;
         if (!prof.route_direct.empty()) env["HEMERA_ROUTE_DIRECT"] = prof.route_direct;
+        if (prof.protocol == Protocol::WarpInWarp) env["HEMERA_GOOL_MODE"] = "classic";
         if (!prof.access_email.empty()) env["HEMERA_ACCESS_EMAIL"] = prof.access_email;
         if (!prof.access_client_id.empty()) env["HEMERA_ACCESS_CLIENT_ID"] = prof.access_client_id;
         if (!prof.access_client_secret.empty()) env["HEMERA_ACCESS_CLIENT_SECRET"] = prof.access_client_secret;

@@ -16,6 +16,7 @@ enum class Protocol {
     Masque,
     Wireguard,
     Gool,
+    WarpInWarp,
     Mim
 };
 
@@ -25,6 +26,7 @@ inline std::string_view to_string(Protocol p) {
         case Protocol::Masque: return "masque";
         case Protocol::Wireguard: return "wireguard";
         case Protocol::Gool: return "gool";
+        case Protocol::WarpInWarp: return "warp-in-warp";
         case Protocol::Mim: return "mim";
     }
     return "auto";
@@ -32,8 +34,9 @@ inline std::string_view to_string(Protocol p) {
 
 inline Protocol protocol_from_string(std::string_view s) {
     if (s == "masque") return Protocol::Masque;
-    if (s == "wireguard") return Protocol::Wireguard;
+    if (s == "wireguard" || s == "wg") return Protocol::Wireguard;
     if (s == "gool") return Protocol::Gool;
+    if (s == "warp-in-warp" || s == "wiw" || s == "classic" || s == "gool-classic") return Protocol::WarpInWarp;
     if (s == "mim") return Protocol::Mim;
     return Protocol::Auto;
 }
@@ -258,6 +261,7 @@ struct ConnectionProfile {
             case Protocol::Masque: args.push_back("--masque"); break;
             case Protocol::Wireguard: args.push_back("--wg"); break;
             case Protocol::Gool: args.push_back("--gool"); break;
+            case Protocol::WarpInWarp: args.push_back("--gool-classic"); break;
             case Protocol::Mim: args.push_back("--mim"); break;
         }
 

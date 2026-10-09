@@ -225,6 +225,8 @@ struct MainWindow::Impl {
 
     bool back_btn_hovered_ = false;
     bool save_btn_hovered_ = false;
+    bool home_proto_hovered_ = false;
+    bool home_route_hovered_ = false;
     bool copy_btn_hovered_ = false;
     bool try_again_hovered_ = false;
     bool view_logs_chip_hovered_ = false;
@@ -458,6 +460,8 @@ struct MainWindow::Impl {
         settings_btn_hovered_ = false;
         back_btn_hovered_ = false;
         save_btn_hovered_ = false;
+        home_proto_hovered_ = false;
+        home_route_hovered_ = false;
         copy_btn_hovered_ = false;
         try_again_hovered_ = false;
         view_logs_chip_hovered_ = false;
@@ -875,6 +879,7 @@ struct MainWindow::Impl {
             float copy_x = card_x + card_w - (float)scale(ds.metrics.row_padding_x, cur_dpi) - (float)scale(44, cur_dpi);
             float copy_y = card_y + row_h * 2.0f + (row_h - (float)scale(44, cur_dpi)) / 2.0f;
             if (x >= copy_x && x <= copy_x + scale_f(44, cur_dpi) && y >= copy_y && y <= copy_y + scale_f(44, cur_dpi)) return true;
+            if (home_proto_hovered_ || home_route_hovered_) return true;
 
             return false;
         }
@@ -1330,6 +1335,15 @@ struct MainWindow::Impl {
         Gdiplus::Pen card_pen(ds.colors.card_border, 1.0f);
         draw_rounded_rect(g, card_pen, card_x, card_y, card_w, card_h, (float)scale(ds.metrics.radius_card, cur_dpi));
 
+        // Row hover highlights for interactive rows
+        Gdiplus::SolidBrush row_hov(ds.colors.dropdown_hover);
+        if (home_proto_hovered_) {
+            fill_rounded_rect(g, row_hov, card_x + 1.0f, card_y + 1.0f, card_w - 2.0f, row_h - 2.0f, (float)scale(12, cur_dpi));
+        }
+        if (home_route_hovered_) {
+            fill_rounded_rect(g, row_hov, card_x + 1.0f, card_y + row_h + 1.0f, card_w - 2.0f, row_h - 2.0f, (float)scale(12, cur_dpi));
+        }
+
         // Horizontal Row Dividers
         g.DrawLine(&card_pen, card_x, card_y + row_h, card_x + card_w, card_y + row_h);
         g.DrawLine(&card_pen, card_x, card_y + row_h * 2.0f, card_x + card_w, card_y + row_h * 2.0f);
@@ -1344,14 +1358,16 @@ struct MainWindow::Impl {
         std::wstring proto_name = L"Auto";
         switch (profile.protocol) {
             case Protocol::Auto: proto_name = L"Auto"; break;
-            case Protocol::Gool: proto_name = L"WARP-in-WARP / gool"; break;
+            case Protocol::Gool: proto_name = L"Gool (WARP over MASQUE)"; break;
+            case Protocol::WarpInWarp: proto_name = L"WARP-in-WARP (Classic)"; break;
             case Protocol::Masque: proto_name = profile.masque_http2 ? L"MASQUE (H2)" : L"MASQUE (H3)"; break;
             case Protocol::Wireguard: proto_name = L"WireGuard"; break;
             case Protocol::Mim: proto_name = L"MiM"; break;
             default: break;
         }
         g.DrawString(L"Protocol", -1, font_body_.get(), Gdiplus::PointF(card_x + label_pad_x, card_y + label_pad_y), &muted_brush);
-        g.DrawString(proto_name.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - label_pad_x, card_y + label_pad_y), &right_fmt, &text_pri_brush);
+        std::wstring proto_disp = proto_name + L"  ›";
+        g.DrawString(proto_disp.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - label_pad_x, card_y + label_pad_y), &right_fmt, &text_pri_brush);
 
         // Row 2: Route (Location & Scan Mode)
         std::wstring loc_str = profile.exit_loc.empty() ? L"Auto" : std::wstring(profile.exit_loc.begin(), profile.exit_loc.end());
@@ -1363,7 +1379,7 @@ struct MainWindow::Impl {
             case ScanMode::Ironclad: scan_str = L"Ironclad"; break;
             default: break;
         }
-        std::wstring route_display = loc_str + L" · " + scan_str;
+        std::wstring route_display = loc_str + L" · " + scan_str + L"  ›";
         g.DrawString(L"Route", -1, font_body_.get(), Gdiplus::PointF(card_x + label_pad_x, card_y + row_h + label_pad_y), &muted_brush);
         g.DrawString(route_display.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - label_pad_x, card_y + row_h + label_pad_y), &right_fmt, &text_pri_brush);
 
@@ -1600,7 +1616,8 @@ struct MainWindow::Impl {
         std::wstring proto_lbl = L"Auto ▾";
         switch (edit_profile_.protocol) {
             case Protocol::Auto: proto_lbl = L"Auto ▾"; break;
-            case Protocol::Gool: proto_lbl = L"WARP-in-WARP / gool ▾"; break;
+            case Protocol::Gool: proto_lbl = L"Gool (WARP over MASQUE) ▾"; break;
+            case Protocol::WarpInWarp: proto_lbl = L"WARP-in-WARP (Classic) ▾"; break;
             case Protocol::Masque: proto_lbl = edit_profile_.masque_http2 ? L"MASQUE (H2) ▾" : L"MASQUE (H3) ▾"; break;
             case Protocol::Wireguard: proto_lbl = L"WireGuard ▾"; break;
             case Protocol::Mim: proto_lbl = L"MiM ▾"; break;
@@ -1805,10 +1822,11 @@ struct MainWindow::Impl {
             if (active_dropdown_ == 0) {
                 if (opt_id == 101) return (edit_profile_.protocol == Protocol::Auto);
                 if (opt_id == 102) return (edit_profile_.protocol == Protocol::Gool);
-                if (opt_id == 103) return (edit_profile_.protocol == Protocol::Masque && !edit_profile_.masque_http2);
-                if (opt_id == 104) return (edit_profile_.protocol == Protocol::Masque && edit_profile_.masque_http2);
-                if (opt_id == 105) return (edit_profile_.protocol == Protocol::Wireguard);
-                if (opt_id == 106) return (edit_profile_.protocol == Protocol::Mim);
+                if (opt_id == 103) return (edit_profile_.protocol == Protocol::WarpInWarp);
+                if (opt_id == 104) return (edit_profile_.protocol == Protocol::Masque && !edit_profile_.masque_http2);
+                if (opt_id == 105) return (edit_profile_.protocol == Protocol::Masque && edit_profile_.masque_http2);
+                if (opt_id == 106) return (edit_profile_.protocol == Protocol::Wireguard);
+                if (opt_id == 107) return (edit_profile_.protocol == Protocol::Mim);
             } else if (active_dropdown_ == 1) {
                 if (opt_id == 201) return (edit_profile_.scan_mode == ScanMode::Balanced);
                 if (opt_id == 202) return (edit_profile_.scan_mode == ScanMode::Turbo);
@@ -1864,10 +1882,11 @@ struct MainWindow::Impl {
         if (active_dropdown_ == 0) {
             if (opt_id == 101) { edit_profile_.protocol = Protocol::Auto; }
             else if (opt_id == 102) { edit_profile_.protocol = Protocol::Gool; edit_profile_.masque_http2 = false; }
-            else if (opt_id == 103) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = false; }
-            else if (opt_id == 104) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = true; }
-            else if (opt_id == 105) { edit_profile_.protocol = Protocol::Wireguard; }
-            else if (opt_id == 106) { edit_profile_.protocol = Protocol::Mim; }
+            else if (opt_id == 103) { edit_profile_.protocol = Protocol::WarpInWarp; edit_profile_.masque_http2 = false; }
+            else if (opt_id == 104) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = false; }
+            else if (opt_id == 105) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = true; }
+            else if (opt_id == 106) { edit_profile_.protocol = Protocol::Wireguard; }
+            else if (opt_id == 107) { edit_profile_.protocol = Protocol::Mim; }
         } else if (active_dropdown_ == 1) {
             if (opt_id == 201) edit_profile_.scan_mode = ScanMode::Balanced;
             else if (opt_id == 202) edit_profile_.scan_mode = ScanMode::Turbo;
@@ -2368,8 +2387,9 @@ struct MainWindow::Impl {
     }
 
     void setup_tray_icon() {
+        if (!hwnd_) return;
         memset(&nid_, 0, sizeof(nid_));
-        nid_.cbSize = sizeof(nid_);
+        nid_.cbSize = sizeof(NOTIFYICONDATAW);
         nid_.hWnd = hwnd_;
         nid_.uID = 1;
         nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
@@ -2379,7 +2399,9 @@ struct MainWindow::Impl {
             nid_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
         }
         wcscpy_s(nid_.szTip, L"Hemera — Modern Proxy");
-        Shell_NotifyIconW(NIM_ADD, &nid_);
+        if (!Shell_NotifyIconW(NIM_ADD, &nid_)) {
+            Shell_NotifyIconW(NIM_MODIFY, &nid_);
+        }
         in_tray_ = true;
     }
 
@@ -2429,14 +2451,17 @@ struct MainWindow::Impl {
             edit_settings_ = s;
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (cmd == 1003) {
+            ShowWindow(hwnd_, SW_SHOW);
             ShowWindow(hwnd_, SW_RESTORE);
             SetForegroundWindow(hwnd_);
             switch_view(ActiveView::Home);
         } else if (cmd == 1004) {
+            ShowWindow(hwnd_, SW_SHOW);
             ShowWindow(hwnd_, SW_RESTORE);
             SetForegroundWindow(hwnd_);
             switch_view(ActiveView::Logs);
         } else if (cmd == 1005) {
+            ShowWindow(hwnd_, SW_SHOW);
             ShowWindow(hwnd_, SW_RESTORE);
             SetForegroundWindow(hwnd_);
             switch_view(ActiveView::Settings);
@@ -2450,12 +2475,19 @@ struct MainWindow::Impl {
         if (msg == WM_NCCREATE) {
             auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
             impl = reinterpret_cast<MainWindow::Impl*>(cs->lpCreateParams);
+            impl->hwnd_ = hwnd;
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(impl));
         } else {
             impl = reinterpret_cast<MainWindow::Impl*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         }
 
         if (!impl) return DefWindowProcW(hwnd, msg, wParam, lParam);
+
+        static const UINT s_uTaskbarRestart = RegisterWindowMessageW(L"TaskbarCreated");
+        if (msg == s_uTaskbarRestart) {
+            impl->setup_tray_icon();
+            return 0;
+        }
 
         switch (msg) {
             case WM_CREATE: {
@@ -2600,6 +2632,8 @@ struct MainWindow::Impl {
                 bool prev_set = impl->settings_btn_hovered_;
                 bool prev_back = impl->back_btn_hovered_;
                 bool prev_save = impl->save_btn_hovered_;
+                bool prev_proto = impl->home_proto_hovered_;
+                bool prev_route = impl->home_route_hovered_;
                 bool prev_cp = impl->copy_btn_hovered_;
                 bool prev_cp_logs = impl->copy_logs_hovered_;
                 bool prev_clr_logs = impl->clear_logs_hovered_;
@@ -2650,6 +2684,8 @@ struct MainWindow::Impl {
                     float copy_x = card_x + card_w - (float)scale(ds.metrics.row_padding_x, cur_dpi) - scale_f(44, cur_dpi);
                     float copy_y = card_y + row_h * 2.0f + (row_h - scale_f(44, cur_dpi)) / 2.0f;
                     impl->copy_btn_hovered_ = (x >= copy_x && x <= copy_x + scale_f(44, cur_dpi) && y >= copy_y && y <= copy_y + scale_f(44, cur_dpi));
+                    impl->home_proto_hovered_ = (x >= card_x && x <= card_x + card_w && y >= card_y && y <= card_y + row_h);
+                    impl->home_route_hovered_ = (x >= card_x && x <= card_x + card_w && y >= card_y + row_h && y <= card_y + row_h * 2.0f);
 
                     auto st = impl->engine_->current_state();
                     if (st.kind == StateKind::Error) {
@@ -2767,6 +2803,7 @@ struct MainWindow::Impl {
                 if (prev_hero != impl->hero_hovered_ || prev_logs != impl->logs_btn_hovered_ ||
                     prev_set != impl->settings_btn_hovered_ || prev_back != impl->back_btn_hovered_ ||
                     prev_save != impl->save_btn_hovered_ || prev_cp != impl->copy_btn_hovered_ ||
+                    prev_proto != impl->home_proto_hovered_ || prev_route != impl->home_route_hovered_ ||
                     prev_cp_logs != impl->copy_logs_hovered_ || prev_clr_logs != impl->clear_logs_hovered_ ||
                     prev_log_chip != impl->hovered_log_chip_ ||
                     prev_row != impl->hovered_settings_row_ || prev_about_src != impl->about_src_hovered_ ||
@@ -2859,6 +2896,21 @@ struct MainWindow::Impl {
                         impl->switch_view(ActiveView::Logs);
                     } else if (impl->settings_btn_hovered_) {
                         impl->switch_view(ActiveView::Settings);
+                    } else if (impl->home_proto_hovered_) {
+                        impl->switch_view(ActiveView::Settings);
+                        impl->active_dropdown_ = 0;
+                        impl->dropdown_options_ = {
+                            { L"Auto (Best available)", 101 },
+                            { L"Gool (WARP over MASQUE)", 102 },
+                            { L"WARP-in-WARP (Classic)", 103 },
+                            { L"MASQUE (HTTP/3 QUIC)", 104 },
+                            { L"MASQUE (HTTP/2 TCP)", 105 },
+                            { L"WireGuard", 106 },
+                            { L"MiM (MASQUE-in-MASQUE)", 107 }
+                        };
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    } else if (impl->home_route_hovered_) {
+                        impl->switch_view(ActiveView::Settings);
                     } else if (impl->copy_btn_hovered_) {
                         auto prof = impl->engine_->active_profile();
                         std::wstring addr(prof.bind_address.begin(), prof.bind_address.end());
@@ -2936,11 +2988,12 @@ struct MainWindow::Impl {
                             impl->active_dropdown_ = 0;
                             impl->dropdown_options_ = {
                                 { L"Auto (Best available)", 101 },
-                                { L"WARP-in-WARP / gool", 102 },
-                                { L"MASQUE (HTTP/3 QUIC)", 103 },
-                                { L"MASQUE (HTTP/2 TCP)", 104 },
-                                { L"WireGuard", 105 },
-                                { L"MiM", 106 }
+                                { L"Gool (WARP over MASQUE)", 102 },
+                                { L"WARP-in-WARP (Classic)", 103 },
+                                { L"MASQUE (HTTP/3 QUIC)", 104 },
+                                { L"MASQUE (HTTP/2 TCP)", 105 },
+                                { L"WireGuard", 106 },
+                                { L"MiM (MASQUE-in-MASQUE)", 107 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
                         } else if (r == 1) {
@@ -3104,6 +3157,7 @@ struct MainWindow::Impl {
                     GetCursorPos(&pt);
                     impl->show_tray_menu(pt.x, pt.y);
                 } else if (lParam == WM_LBUTTONUP || lParam == WM_LBUTTONDBLCLK) {
+                    ShowWindow(hwnd, SW_SHOW);
                     ShowWindow(hwnd, SW_RESTORE);
                     SetForegroundWindow(hwnd);
                 }
@@ -3121,6 +3175,7 @@ struct MainWindow::Impl {
             }
 
             case WM_DESTROY: {
+                impl->remove_tray_icon();
                 KillTimer(hwnd, TIMER_ANIMATION);
                 PostQuitMessage(0);
                 return 0;
@@ -3184,6 +3239,10 @@ bool MainWindow::create() {
     );
 
     if (!impl_->hwnd_) return false;
+
+    if (!impl_->in_tray_) {
+        impl_->setup_tray_icon();
+    }
 
     // Apply immersive title bar mode based on active theme
     BOOL dark_mode = ds::is_effective_dark(ds.active_theme) ? TRUE : FALSE;

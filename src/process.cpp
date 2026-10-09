@@ -286,7 +286,24 @@ bool run_and_wait(std::wstring_view command_line, uint32_t timeout_ms) {
 
 void kill_process_tree(uint32_t pid) {
     if (pid == 0) return;
-    run_and_wait(std::format(L"taskkill.exe /PID {} /T /F", pid), 3000);
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe{};
+        pe.dwSize = sizeof(pe);
+        if (Process32FirstW(hSnap, &pe)) {
+            do {
+                if (pe.th32ParentProcessID == pid) {
+                    kill_process_tree(pe.th32ProcessID);
+                }
+            } while (Process32NextW(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
+    }
+    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    if (hProc) {
+        TerminateProcess(hProc, 1);
+        CloseHandle(hProc);
+    }
 }
 
 void reap_orphan(const std::filesystem::path& data_dir) {
