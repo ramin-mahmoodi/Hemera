@@ -1734,7 +1734,7 @@ struct MainWindow::Impl {
 
         float about_y = sec4_y + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
         g.DrawString(L"About Hemera", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, about_y), &text_pri_brush);
-        std::wstring about_sub = L"v1.0.1   ›";
+        std::wstring about_sub = L"v1.0.2   ›";
         g.DrawString(about_sub.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, about_y), &right_fmt, &label_brush);
 
         // Footer: "Hemera · Free and open source proxy"
@@ -2306,7 +2306,7 @@ struct MainWindow::Impl {
 
         float ver_y = name_y + scale_f(34, cur_dpi);
         Gdiplus::SolidBrush muted_brush(ds.colors.text_muted);
-        g.DrawString(L"Version 1.0.0", -1, font_mono_.get(), Gdiplus::PointF(cx, ver_y), &center_fmt, &muted_brush);
+        g.DrawString(L"Version 1.0.2", -1, font_mono_.get(), Gdiplus::PointF(cx, ver_y), &center_fmt, &muted_brush);
 
         // Subtitle text
         float desc_y = ver_y + scale_f(24, cur_dpi);
