@@ -9,7 +9,7 @@
 #include <atomic>
 #include <expected>
 
-namespace aether::process {
+namespace hemera::process {
 
 struct SpawnResult {
     bool success = false;
@@ -17,17 +17,17 @@ struct SpawnResult {
     std::string error_message;
 };
 
-// Locate Aether binary in priority candidate directories
+// Locate Hemera binary in priority candidate directories
 std::expected<std::filesystem::path, std::string> resolve_binary();
 
 // Locate tun2socks binary in priority candidate directories
 std::expected<std::filesystem::path, std::string> resolve_tun2socks();
 
 // Write or clear PID file
-void write_pid_file(const std::filesystem::path& data_dir, uint32_t pid, std::string_view filename = "aether.pid");
-void clear_pid_file(const std::filesystem::path& data_dir, std::string_view filename = "aether.pid");
+void write_pid_file(const std::filesystem::path& data_dir, uint32_t pid, std::string_view filename = "hemera.pid");
+void clear_pid_file(const std::filesystem::path& data_dir, std::string_view filename = "hemera.pid");
 
-// Reaps any leftover Aether or tun2socks process from an earlier crash
+// Reaps any leftover Hemera or tun2socks process from an earlier crash
 void reap_orphan(const std::filesystem::path& data_dir);
 
 // Kill a process tree (by PID)
@@ -46,7 +46,7 @@ public:
     ProcessSession(const ProcessSession&) = delete;
     ProcessSession& operator=(const ProcessSession&) = delete;
 
-    // Spawns aether.exe with redirected pipes and assigned Job Object
+    // Spawns hemera.exe with redirected pipes and assigned Job Object
     SpawnResult spawn(
         const std::filesystem::path& binary_path,
         const std::filesystem::path& work_dir,
@@ -81,4 +81,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace aether::process
+} // namespace hemera::process

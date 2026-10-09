@@ -8,7 +8,7 @@
 #endif
 #include <windows.h>
 
-namespace aether::core {
+namespace hemera::core {
 
 namespace {
 
@@ -23,125 +23,125 @@ struct Row {
     std::string_view second_value;
 };
 
-// One row per match arm of aether/src/cli.rs::parse_args, minus its tor and psiphon
+// One row per match arm of hemera/src/cli.rs::parse_args, minus its tor and psiphon
 // arms, which this port drops. An alias gets its own row because the Rust table does
 // the same, and a diff of the two lists is the check that the port stayed complete.
 constexpr Row rows[] = {
     // Connection
-    {"--bind", "AETHER_SOCKS", arg_value},
-    {"--http-proxy", "AETHER_HTTP_PROXY", arg_value},
-    {"--upstream", "AETHER_UPSTREAM", arg_value},
-    {"--mark", "AETHER_MARK", arg_value},
-    {"--exit-loc", "AETHER_EXIT_LOC", arg_value},
-    {"--exit-loc-secs", "AETHER_EXIT_LOC_SECS", arg_value},
-    {"--stats", "AETHER_STATS", "1"},
-    {"--stats-secs", "AETHER_STATS_SECS", arg_value},
-    {"--quick-reconnect", "AETHER_QUICK_RECONNECT", "1"},
-    {"--no-quick-reconnect", "AETHER_QUICK_RECONNECT", "0"},
+    {"--bind", "HEMERA_SOCKS", arg_value},
+    {"--http-proxy", "HEMERA_HTTP_PROXY", arg_value},
+    {"--upstream", "HEMERA_UPSTREAM", arg_value},
+    {"--mark", "HEMERA_MARK", arg_value},
+    {"--exit-loc", "HEMERA_EXIT_LOC", arg_value},
+    {"--exit-loc-secs", "HEMERA_EXIT_LOC_SECS", arg_value},
+    {"--stats", "HEMERA_STATS", "1"},
+    {"--stats-secs", "HEMERA_STATS_SECS", arg_value},
+    {"--quick-reconnect", "HEMERA_QUICK_RECONNECT", "1"},
+    {"--no-quick-reconnect", "HEMERA_QUICK_RECONNECT", "0"},
 
     // IP version
-    {"-4", "AETHER_IP", "v4"},
-    {"-6", "AETHER_IP", "v6"},
-    {"--dual", "AETHER_IP", "both"},
-    {"--ip", "AETHER_IP", arg_value},
-    {"--peer", "AETHER_PEER", arg_value},
-    {"--wg-peer", "AETHER_WG_PEER", arg_value},
+    {"-4", "HEMERA_IP", "v4"},
+    {"-6", "HEMERA_IP", "v6"},
+    {"--dual", "HEMERA_IP", "both"},
+    {"--ip", "HEMERA_IP", arg_value},
+    {"--peer", "HEMERA_PEER", arg_value},
+    {"--wg-peer", "HEMERA_WG_PEER", arg_value},
 
     // Classic gool (warp-in-warp) endpoints
-    {"--wiw-outer", "AETHER_WIW_OUTER_PEER", arg_value},
-    {"--gool-outer", "AETHER_WIW_OUTER_PEER", arg_value},
-    {"--outer-peer", "AETHER_WIW_OUTER_PEER", arg_value},
-    {"--wiw-inner", "AETHER_WIW_INNER_PEER", arg_value},
-    {"--gool-inner", "AETHER_WIW_INNER_PEER", arg_value},
-    {"--inner-peer", "AETHER_WIW_INNER_PEER", arg_value},
-    {"--wiw-peers", "AETHER_WIW_PEERS", arg_value},
-    {"--gool-peers", "AETHER_WIW_PEERS", arg_value},
-    {"--wiw-scan", "AETHER_WIW_PEERS", "auto"},
-    {"--gool-scan", "AETHER_WIW_PEERS", "auto"},
+    {"--wiw-outer", "HEMERA_WIW_OUTER_PEER", arg_value},
+    {"--gool-outer", "HEMERA_WIW_OUTER_PEER", arg_value},
+    {"--outer-peer", "HEMERA_WIW_OUTER_PEER", arg_value},
+    {"--wiw-inner", "HEMERA_WIW_INNER_PEER", arg_value},
+    {"--gool-inner", "HEMERA_WIW_INNER_PEER", arg_value},
+    {"--inner-peer", "HEMERA_WIW_INNER_PEER", arg_value},
+    {"--wiw-peers", "HEMERA_WIW_PEERS", arg_value},
+    {"--gool-peers", "HEMERA_WIW_PEERS", arg_value},
+    {"--wiw-scan", "HEMERA_WIW_PEERS", "auto"},
+    {"--gool-scan", "HEMERA_WIW_PEERS", "auto"},
 
     // Protocol
-    {"--masque", "AETHER_PROTOCOL", "masque"},
-    {"--wg", "AETHER_PROTOCOL", "wg"},
-    {"--wireguard", "AETHER_PROTOCOL", "wg"},
-    {"--warp", "AETHER_PROTOCOL", "wg"},
-    {"--gool", "AETHER_PROTOCOL", "gool"},
-    {"--wiw", "AETHER_PROTOCOL", "gool"},
-    {"--gool-peer", "AETHER_PROTOCOL", "gool", "AETHER_GOOL_INNER", arg_value},
-    {"--api-fragment", "AETHER_API_FRAGMENT", "1"},
-    {"--gool-classic", "AETHER_PROTOCOL", "gool", "AETHER_GOOL_MODE", "classic"},
-    {"--mim", "AETHER_PROTOCOL", "mim"},
-    {"--masque-in-masque", "AETHER_PROTOCOL", "mim"},
-    {"--mim-outer", "AETHER_MIM_OUTER_PEER", arg_value},
-    {"--mim-inner", "AETHER_MIM_INNER_PEER", arg_value},
-    {"--mim-peers", "AETHER_MIM_PEERS", arg_value},
-    {"--mim-scan", "AETHER_MIM_PEERS", "auto"},
-    {"--protocol", "AETHER_PROTOCOL", arg_value},
+    {"--masque", "HEMERA_PROTOCOL", "masque"},
+    {"--wg", "HEMERA_PROTOCOL", "wg"},
+    {"--wireguard", "HEMERA_PROTOCOL", "wg"},
+    {"--warp", "HEMERA_PROTOCOL", "wg"},
+    {"--gool", "HEMERA_PROTOCOL", "gool"},
+    {"--wiw", "HEMERA_PROTOCOL", "gool"},
+    {"--gool-peer", "HEMERA_PROTOCOL", "gool", "HEMERA_GOOL_INNER", arg_value},
+    {"--api-fragment", "HEMERA_API_FRAGMENT", "1"},
+    {"--gool-classic", "HEMERA_PROTOCOL", "gool", "HEMERA_GOOL_MODE", "classic"},
+    {"--mim", "HEMERA_PROTOCOL", "mim"},
+    {"--masque-in-masque", "HEMERA_PROTOCOL", "mim"},
+    {"--mim-outer", "HEMERA_MIM_OUTER_PEER", arg_value},
+    {"--mim-inner", "HEMERA_MIM_INNER_PEER", arg_value},
+    {"--mim-peers", "HEMERA_MIM_PEERS", arg_value},
+    {"--mim-scan", "HEMERA_MIM_PEERS", "auto"},
+    {"--protocol", "HEMERA_PROTOCOL", arg_value},
 
     // Scan mode
-    {"--scan", "AETHER_SCAN", arg_value},
-    {"--turbo", "AETHER_SCAN", "turbo"},
-    {"--balanced", "AETHER_SCAN", "balanced"},
-    {"--thorough", "AETHER_SCAN", "thorough"},
-    {"--verified", "AETHER_SCAN", "verified"},
-    {"--stealth", "AETHER_SCAN", "verified"},
-    {"--ironclad", "AETHER_SCAN", "ironclad"},
-    {"--noize", "AETHER_NOIZE", arg_value},
+    {"--scan", "HEMERA_SCAN", arg_value},
+    {"--turbo", "HEMERA_SCAN", "turbo"},
+    {"--balanced", "HEMERA_SCAN", "balanced"},
+    {"--thorough", "HEMERA_SCAN", "thorough"},
+    {"--verified", "HEMERA_SCAN", "verified"},
+    {"--stealth", "HEMERA_SCAN", "verified"},
+    {"--ironclad", "HEMERA_SCAN", "ironclad"},
+    {"--noize", "HEMERA_NOIZE", arg_value},
 
     // MASQUE transport
-    {"--h2", "AETHER_MASQUE_HTTP2", "1"},
-    {"--http2", "AETHER_MASQUE_HTTP2", "1"},
-    {"--h3", "AETHER_MASQUE_HTTP2", "0"},
-    {"--quic", "AETHER_MASQUE_HTTP2", "0"},
-    {"--no-quic-v2", "AETHER_QUIC_V2", "0"},
-    {"--h2-peer", "AETHER_MASQUE_H2_PEER", arg_value},
-    {"--ech", "AETHER_ECH", arg_value},
-    {"--ech-dns", "AETHER_ECH_DNS", arg_value},
-    {"--ech-domain", "AETHER_ECH_DOMAIN", arg_value},
-    {"--no-data-check", "AETHER_MASQUE_NO_DATA_CHECK", "1", "AETHER_WG_NO_DATA_CHECK", "1"},
-    {"--validate-secs", "AETHER_MASQUE_VALIDATE_SECS", arg_value, "AETHER_WG_VALIDATE_SECS", arg_value},
-    {"--startup-secs", "AETHER_MASQUE_STARTUP_SECS", arg_value},
-    {"--reconnect-secs", "AETHER_MASQUE_RECONNECT_SECS", arg_value, "AETHER_WG_RECONNECT_SECS", arg_value},
-    {"--dns", "AETHER_DNS", arg_value},
-    {"--fragment", "AETHER_MASQUE_H2_FRAGMENT", "1"},
-    {"--no-fragment", "AETHER_MASQUE_H2_FRAGMENT", "0"},
-    {"--fragment-size", "AETHER_MASQUE_H2_FRAGMENT_SIZE", arg_value},
-    {"--fragment-delay", "AETHER_MASQUE_H2_FRAGMENT_DELAY", arg_value},
+    {"--h2", "HEMERA_MASQUE_HTTP2", "1"},
+    {"--http2", "HEMERA_MASQUE_HTTP2", "1"},
+    {"--h3", "HEMERA_MASQUE_HTTP2", "0"},
+    {"--quic", "HEMERA_MASQUE_HTTP2", "0"},
+    {"--no-quic-v2", "HEMERA_QUIC_V2", "0"},
+    {"--h2-peer", "HEMERA_MASQUE_H2_PEER", arg_value},
+    {"--ech", "HEMERA_ECH", arg_value},
+    {"--ech-dns", "HEMERA_ECH_DNS", arg_value},
+    {"--ech-domain", "HEMERA_ECH_DOMAIN", arg_value},
+    {"--no-data-check", "HEMERA_MASQUE_NO_DATA_CHECK", "1", "HEMERA_WG_NO_DATA_CHECK", "1"},
+    {"--validate-secs", "HEMERA_MASQUE_VALIDATE_SECS", arg_value, "HEMERA_WG_VALIDATE_SECS", arg_value},
+    {"--startup-secs", "HEMERA_MASQUE_STARTUP_SECS", arg_value},
+    {"--reconnect-secs", "HEMERA_MASQUE_RECONNECT_SECS", arg_value, "HEMERA_WG_RECONNECT_SECS", arg_value},
+    {"--dns", "HEMERA_DNS", arg_value},
+    {"--fragment", "HEMERA_MASQUE_H2_FRAGMENT", "1"},
+    {"--no-fragment", "HEMERA_MASQUE_H2_FRAGMENT", "0"},
+    {"--fragment-size", "HEMERA_MASQUE_H2_FRAGMENT_SIZE", arg_value},
+    {"--fragment-delay", "HEMERA_MASQUE_H2_FRAGMENT_DELAY", arg_value},
 
     // WireGuard
-    {"--keepalive", "AETHER_WG_KEEPALIVE", arg_value},
-    {"--no-profile-retry", "AETHER_WG_NO_PROFILE_RETRY", "1"},
+    {"--keepalive", "HEMERA_WG_KEEPALIVE", arg_value},
+    {"--no-profile-retry", "HEMERA_WG_NO_PROFILE_RETRY", "1"},
 
     // Config files
-    {"--config", "AETHER_CONFIG", arg_value},
-    {"--wg-config", "AETHER_WG_CONFIG", arg_value},
-    {"--masque-config", "AETHER_MASQUE_CONFIG", arg_value},
-    {"--register", "AETHER_REGISTER", arg_value},
-    {"--enroll-address", "AETHER_ENROLL_ADDRESS", arg_value},
+    {"--config", "HEMERA_CONFIG", arg_value},
+    {"--wg-config", "HEMERA_WG_CONFIG", arg_value},
+    {"--masque-config", "HEMERA_MASQUE_CONFIG", arg_value},
+    {"--register", "HEMERA_REGISTER", arg_value},
+    {"--enroll-address", "HEMERA_ENROLL_ADDRESS", arg_value},
 
     // Zero Trust
-    {"--team", "AETHER_TEAM", arg_value},
-    {"--organization", "AETHER_TEAM", arg_value},
-    {"--access-id", "AETHER_ACCESS_CLIENT_ID", arg_value},
-    {"--access-secret", "AETHER_ACCESS_CLIENT_SECRET", arg_value},
-    {"--access-token", "AETHER_ACCESS_TOKEN", arg_value},
-    {"--access-email", "AETHER_ACCESS_EMAIL", arg_value},
-    {"--gateway", "AETHER_GATEWAY", "1"},
+    {"--team", "HEMERA_TEAM", arg_value},
+    {"--organization", "HEMERA_TEAM", arg_value},
+    {"--access-id", "HEMERA_ACCESS_CLIENT_ID", arg_value},
+    {"--access-secret", "HEMERA_ACCESS_CLIENT_SECRET", arg_value},
+    {"--access-token", "HEMERA_ACCESS_TOKEN", arg_value},
+    {"--access-email", "HEMERA_ACCESS_EMAIL", arg_value},
+    {"--gateway", "HEMERA_GATEWAY", "1"},
 
     // Routing
-    {"--route-block", "AETHER_ROUTE_BLOCK", arg_value},
-    {"--route-direct", "AETHER_ROUTE_DIRECT", arg_value},
-    {"--routes", "AETHER_ROUTES_FILE", arg_value},
+    {"--route-block", "HEMERA_ROUTE_BLOCK", arg_value},
+    {"--route-direct", "HEMERA_ROUTE_DIRECT", arg_value},
+    {"--routes", "HEMERA_ROUTES_FILE", arg_value},
 
     // TLS
-    {"--tls-groups", "AETHER_TLS_GROUPS", arg_value},
-    {"--tls-ciphers", "AETHER_TLS_CIPHERS", arg_value},
-    {"--disable-grease", "AETHER_DISABLE_GREASE", "1"},
-    {"--tls-verify", "AETHER_TLS_VERIFY", "1"},
+    {"--tls-groups", "HEMERA_TLS_GROUPS", arg_value},
+    {"--tls-ciphers", "HEMERA_TLS_CIPHERS", arg_value},
+    {"--disable-grease", "HEMERA_DISABLE_GREASE", "1"},
+    {"--tls-verify", "HEMERA_TLS_VERIFY", "1"},
 
     // Advanced
-    {"--perf", "AETHER_PERF_PROFILE", arg_value},
-    {"--log-level", "AETHER_LOG_LEVEL", arg_value},
-    {"--verbose", "AETHER_LOG_LEVEL", "debug"},
+    {"--perf", "HEMERA_PERF_PROFILE", arg_value},
+    {"--log-level", "HEMERA_LOG_LEVEL", arg_value},
+    {"--verbose", "HEMERA_LOG_LEVEL", "debug"},
 };
 
 } // namespace
@@ -201,11 +201,11 @@ Settings settings_from_environment() {
         absorb(row.key);
         if (!row.second_key.empty()) absorb(row.second_key);
     }
-    // AETHER_MASQUE_H2_FRAGMENT_SNI has no flag: cli.rs never named it, fragment.rs reads it.
-    absorb("AETHER_MASQUE_H2_FRAGMENT_SNI");
+    // HEMERA_MASQUE_H2_FRAGMENT_SNI has no flag: cli.rs never named it, fragment.rs reads it.
+    absorb("HEMERA_MASQUE_H2_FRAGMENT_SNI");
     // Neither does sysprofile.rs's two netstack buffer sizes: they are environment only.
-    absorb("AETHER_NETSTACK_TCP_RX");
-    absorb("AETHER_NETSTACK_TCP_TX");
+    absorb("HEMERA_NETSTACK_TCP_RX");
+    absorb("HEMERA_NETSTACK_TCP_TX");
     return settings;
 }
 
@@ -256,4 +256,4 @@ CliOutcome apply_cli(const std::vector<std::string>& args, Settings& settings, s
     return CliOutcome::Run;
 }
 
-} // namespace aether::core
+} // namespace hemera::core

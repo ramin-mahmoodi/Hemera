@@ -8,9 +8,9 @@
 #include <string_view>
 #include <algorithm>
 
-namespace aether {
+namespace hemera {
 
-// Protocols supported by Aether core
+// Protocols supported by Hemera core
 enum class Protocol {
     Auto,
     Masque,
@@ -196,6 +196,8 @@ struct ConnectionProfile {
     std::string exit_loc;
     bool system_proxy = true;
     bool tun_mode = false;
+    bool fragment = false;
+    bool ech = false;
 
     [[nodiscard]] std::chrono::seconds connect_timeout() const noexcept {
         uint64_t base = 0;
@@ -281,6 +283,15 @@ struct ConnectionProfile {
         // MASQUE HTTP/2 transport
         if (masque_http2) {
             args.push_back("--h2");
+        }
+
+        // Anti-censorship: TLS fragmentation & ECH
+        if (fragment) {
+            args.push_back("--fragment");
+        }
+        if (ech) {
+            args.push_back("--ech");
+            args.push_back("auto");
         }
 
         // Noize obfuscation
@@ -399,4 +410,4 @@ inline uint64_t current_time_ms() noexcept {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
-} // namespace aether
+} // namespace hemera

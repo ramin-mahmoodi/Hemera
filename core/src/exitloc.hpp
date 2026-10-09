@@ -11,10 +11,10 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core::exitloc {
+namespace hemera::core::exitloc {
 
 // Port of exitloc.rs: the country an exit lands in, read from Cloudflare's /cdn-cgi/trace, and
-// the allow/deny policy the user asks for with AETHER_EXIT_LOC. Everything that decides is here;
+// the allow/deny policy the user asks for with HEMERA_EXIT_LOC. Everything that decides is here;
 // the sockets, the task spawns and the sleeps belong to the engine, which is where the event
 // loop lives. The engine calls the pieces below in the order the Rust async functions did:
 //
@@ -57,11 +57,11 @@ struct LogLine {
     std::string text;
 };
 
-// AETHER_EXIT_LOC as a policy: a list of two-letter country codes an exit must (or must not)
+// HEMERA_EXIT_LOC as a policy: a list of two-letter country codes an exit must (or must not)
 // be in, checked every interval against the location the trace reports.
 class Policy {
 public:
-    // Rust's parse() reads AETHER_EXIT_LOC_SECS itself; here the interval arrives as an argument
+    // Rust's parse() reads HEMERA_EXIT_LOC_SECS itself; here the interval arrives as an argument
     // so parse stays pure and Settings remains the only source of environment, as in every
     // other ported module. from_env() wires the two together exactly like Rust did.
     [[nodiscard]] static std::optional<Policy> parse(std::string_view raw,
@@ -78,7 +78,7 @@ private:
     std::chrono::seconds interval_ = DEFAULT_INTERVAL_SECS;
 };
 
-// AETHER_EXIT_LOC_SECS as the check interval: 0, junk and a missing value all mean the default,
+// HEMERA_EXIT_LOC_SECS as the check interval: 0, junk and a missing value all mean the default,
 // anything above a day is capped at a day.
 [[nodiscard]] std::chrono::seconds interval_from_env(const Settings& settings);
 
@@ -134,4 +134,4 @@ struct WatchStep {
 [[nodiscard]] WatchStep watch_step(const Policy& policy,
                                    const std::expected<std::string, std::string>& answer);
 
-} // namespace aether::core::exitloc
+} // namespace hemera::core::exitloc

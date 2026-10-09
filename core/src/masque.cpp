@@ -1,5 +1,5 @@
-// Port of aether/src/masque.rs (~452 lines) and of the protocol-codec surface of
-// aether/src/masque_h2.rs (~813 lines); see masque.hpp for what both files leave to the crates.
+// Port of hemera/src/masque.rs (~452 lines) and of the protocol-codec surface of
+// hemera/src/masque_h2.rs (~813 lines); see masque.hpp for what both files leave to the crates.
 #include "masque.hpp"
 
 #include "sysprofile.hpp"
@@ -18,7 +18,7 @@
 #endif
 #include <windows.h>
 
-namespace aether::core::masque {
+namespace hemera::core::masque {
 namespace {
 
 // The port the Rust formats into the CONNECT URI: `format!("{}:443", cfg.authority)`.
@@ -85,7 +85,7 @@ std::uint16_t random_source_port() {
 // says. settings_from_environment() reads the variables cli.rs names a flag for, so the map is the
 // first place to look; this is the same call behind it, for the keys no flag covers. A variable set
 // to nothing is present, which Rust's `std::env::var` also reports as Ok, so a switch keyed on
-// presence alone (AETHER_MASQUE_NO_DATA_CHECK) still fires on it.
+// presence alone (HEMERA_MASQUE_NO_DATA_CHECK) still fires on it.
 std::pair<bool, std::string> environment_value(std::string_view key) {
     static thread_local std::wstring buffer;
     const std::wstring wide(key.begin(), key.end());
@@ -112,7 +112,7 @@ std::pair<bool, std::string> environment_value(std::string_view key) {
 }
 
 // A setting masque_h2.rs reads out of the process environment. The flag table of cli.rs names
-// AETHER_MASQUE_HTTP2, --h2-peer, --no-data-check and --validate-secs, so those land in Settings;
+// HEMERA_MASQUE_HTTP2, --h2-peer, --no-data-check and --validate-secs, so those land in Settings;
 // the two keepalive switches have no flag at all and settings_from_environment() never absorbs
 // them, so the environment is asked directly when the map is silent. A caller that does put one in
 // Settings still wins, which is how a flag outranks a variable everywhere else in this port.
@@ -552,7 +552,7 @@ H2Flow h2_flow(const Settings& settings) {
 }
 
 bool enabled(const Settings& settings) {
-    const std::optional<std::string> raw = setting_text(settings, "AETHER_MASQUE_HTTP2");
+    const std::optional<std::string> raw = setting_text(settings, "HEMERA_MASQUE_HTTP2");
     if (!raw) return false;
 
     const std::string value = lowered(trim(*raw));
@@ -561,7 +561,7 @@ bool enabled(const Settings& settings) {
 }
 
 SocketAddr h2_peer(const Settings& settings, const SocketAddr& quic_peer) {
-    const std::optional<std::string> raw = setting_text(settings, "AETHER_MASQUE_H2_PEER");
+    const std::optional<std::string> raw = setting_text(settings, "HEMERA_MASQUE_H2_PEER");
     if (raw) {
         // A value that is no `ip:port` is ignored rather than fatal, as Rust's failed parse is.
         if (const auto addr = parse_socket_addr(trim(*raw))) return *addr;
@@ -572,22 +572,22 @@ SocketAddr h2_peer(const Settings& settings, const SocketAddr& quic_peer) {
 bool data_check_enabled(const Settings& settings) {
     // The presence of the key is the whole switch: `--no-data-check=` with an empty value turns
     // the check off, so is_truthy() has no part to play here. cli.rs's flag writes both this key
-    // and AETHER_WG_NO_DATA_CHECK, but only this one is the WireGuard-free MASQUE reading.
-    return !setting_text(settings, "AETHER_MASQUE_NO_DATA_CHECK").has_value();
+    // and HEMERA_WG_NO_DATA_CHECK, but only this one is the WireGuard-free MASQUE reading.
+    return !setting_text(settings, "HEMERA_MASQUE_NO_DATA_CHECK").has_value();
 }
 
 std::chrono::seconds validation_timeout(const Settings& settings) {
     return std::chrono::seconds(
-        env_secs(settings, "AETHER_MASQUE_VALIDATE_SECS", VALIDATE_SECS_DEFAULT.count()));
+        env_secs(settings, "HEMERA_MASQUE_VALIDATE_SECS", VALIDATE_SECS_DEFAULT.count()));
 }
 
 std::chrono::seconds h2_keepalive_interval(const Settings& settings) {
     return std::chrono::seconds(
-        env_secs(settings, "AETHER_MASQUE_H2_KEEPALIVE_SECS", KEEPALIVE_INTERVAL_DEFAULT.count()));
+        env_secs(settings, "HEMERA_MASQUE_H2_KEEPALIVE_SECS", KEEPALIVE_INTERVAL_DEFAULT.count()));
 }
 
 std::chrono::seconds h2_keepalive_timeout(const Settings& settings) {
-    return std::chrono::seconds(env_secs(settings, "AETHER_MASQUE_H2_KEEPALIVE_TIMEOUT_SECS",
+    return std::chrono::seconds(env_secs(settings, "HEMERA_MASQUE_H2_KEEPALIVE_TIMEOUT_SECS",
                                          KEEPALIVE_TIMEOUT_DEFAULT.count()));
 }
 
@@ -701,4 +701,4 @@ bool rejected_ech(std::string_view message) {
     return message.find("ECH_REJECTED") != std::string_view::npos;
 }
 
-} // namespace aether::core::masque
+} // namespace hemera::core::masque

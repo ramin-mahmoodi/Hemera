@@ -1,6 +1,6 @@
 #pragma once
 
-// Port of aether/src/account.rs, commit 6175b67: the WARP account layer -- the bodies a
+// Port of hemera/src/account.rs, commit 6175b67: the WARP account layer -- the bodies a
 // registration sends, the answer it gets back, the retry arithmetic around the calls, the texts
 // a refused call turns into, the device's own keys, and the identity the whole core hangs off.
 //
@@ -24,11 +24,11 @@
 //
 // SECURITY. No error string, note or log line here repeats a token, a key or a private value:
 // the two access tokens only ever travel in fields, and the base64 of a key appears in a body
-// the caller built. `aether-masque.toml` is never opened by this module -- reading and writing
+// the caller built. `hemera-masque.toml` is never opened by this module -- reading and writing
 // the account file is identity.hpp's, and a damaged one is quarantined there.
 //
 // Environment reads go through Settings (settings.hpp), never std::getenv, so an accessor takes
-// `const Settings&`; the keys are the AETHER_* names the Rust core reads.
+// `const Settings&`; the keys are the HEMERA_* names the Rust core reads.
 
 #include "identity.hpp"
 #include "settings.hpp"
@@ -44,12 +44,12 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::account {
+namespace hemera::core::account {
 
 // -- Names the Rust keeps to itself, and the ones a caller reads -------------------------------
 
-// AETHER_ENROLL_ADDRESS, the variable --enroll-address sets.
-inline constexpr std::string_view ENROLL_ADDRESS_ENV = "AETHER_ENROLL_ADDRESS";
+// HEMERA_ENROLL_ADDRESS, the variable --enroll-address sets.
+inline constexpr std::string_view ENROLL_ADDRESS_ENV = "HEMERA_ENROLL_ADDRESS";
 // The host the API is reached on when nothing else is given, and the port that host is reached
 // on. Rust's `unwrap_or("api.cloudflareclient.com")` names this literal; it is only reachable
 // through an API_URL with no leading segment at all.
@@ -67,22 +67,22 @@ inline constexpr std::uint64_t API_RETRY_AFTER_CAP_SECS = 30;
 // count and the renewal window live in identity.hpp; this is `MASQUE_CERT_LIFETIME_DAYS as u64 *
 // 86_400`, and it is the same number identity.cpp's two checks multiply out.
 inline constexpr std::uint64_t MASQUE_CERT_LIFETIME_SECS =
-    ::aether::core::MASQUE_CERT_LIFETIME_DAYS * 86'400;
+    ::hemera::core::MASQUE_CERT_LIFETIME_DAYS * 86'400;
 
 // Identity, the clock it is aged against and the two certificate checks on it already live in
-// identity.hpp, which owns the struct: `aether::core::Identity`, `aether::core::now_unix()`,
-// `aether::core::masque_cert_expiring()` and `aether::core::cert_still_usable()`. They are
+// identity.hpp, which owns the struct: `hemera::core::Identity`, `hemera::core::now_unix()`,
+// `hemera::core::masque_cert_expiring()` and `hemera::core::cert_still_usable()`. They are
 // re-exported rather than defined again, so this module carries account.rs's whole surface
 // without a second copy of the arithmetic -- and without a duplicate symbol when both land in
 // one library.
-using ::aether::core::Identity;
-using ::aether::core::cert_still_usable;
-using ::aether::core::masque_cert_expiring;
-using ::aether::core::now_unix;
+using ::hemera::core::Identity;
+using ::hemera::core::cert_still_usable;
+using ::hemera::core::masque_cert_expiring;
+using ::hemera::core::now_unix;
 
-// error.rs's Display for AetherError::Api, which is the prefix every error this module raises
+// error.rs's Display for HemeraError::Api, which is the prefix every error this module raises
 // carries. `enroll_address` and friends return the text with it already on; an engine that keeps
-// its own AetherError needs only the reason.
+// its own HemeraError needs only the reason.
 [[nodiscard]] std::string api_error(std::string_view reason);
 
 // A header list: names and values in the order they go on the wire, exactly the pairs
@@ -335,15 +335,15 @@ void forget_api_ech();
 // The loop that uses them is the engine's; the wording is this module's, because a log line and
 // an error message are data.
 
-// `AetherError::Api("{label}: no attempt was made")`, the error an api_call that never sent
+// `HemeraError::Api("{label}: no attempt was made")`, the error an api_call that never sent
 // anything returns.
 [[nodiscard]] std::string no_attempt_error(std::string_view label);
-// `AetherError::Api("{label}: {error}")` for a transport failure.
+// `HemeraError::Api("{label}: {error}")` for a transport failure.
 [[nodiscard]] std::string transport_error(std::string_view label, std::string_view error);
-// `AetherError::Api("{label}: status {status}")`, which StatusCode::from_u16 raises for a code
+// `HemeraError::Api("{label}: status {status}")`, which StatusCode::from_u16 raises for a code
 // outside 100..=999 -- 0 for an answer the engine never read, or a nonsense one.
 [[nodiscard]] std::string status_error(std::string_view label, std::uint16_t status);
-// `AetherError::Api("{label} decode: {reason} ({n} byte answer)")`, for a 2xx that is not an
+// `HemeraError::Api("{label} decode: {reason} ({n} byte answer)")`, for a 2xx that is not an
 // AccountData. The length is in bytes, which is all `body.len()` can mean.
 [[nodiscard]] std::string decode_error(std::string_view label, std::string_view reason,
                                        std::size_t body_len);
@@ -367,7 +367,7 @@ void forget_api_ech();
 
 // -- Where the calls go: --enroll-address -----------------------------------------------------
 
-// `enroll_address` (AETHER_ENROLL_ADDRESS): an IP address or a domain name, its port 443 unless
+// `enroll_address` (HEMERA_ENROLL_ADDRESS): an IP address or a domain name, its port 443 unless
 // `:port` follows it, an IPv6 one then in brackets. Unset, or nothing but spaces, gives the API's
 // own host on 443; anything the address rules refuse is an error naming the option and the value
 // as it was given, spaces and all after the trim. The connection goes there; the API's name stays
@@ -407,7 +407,7 @@ enroll_address(const Settings& settings);
 // -- The profile, once it is in hand ---------------------------------------------------------
 
 // `extract_wg_peer`: the first peer's public key, base64'd, into 32 bytes. No peers, a value that
-// is no base64, or one that decodes to any other length is an AetherError::Api with the Rust's
+// is no base64, or one that decodes to any other length is an HemeraError::Api with the Rust's
 // own reason; the base64 failure keeps the crate's own message out, since encoding.hpp's decode
 // says only that it refused.
 [[nodiscard]] std::expected<std::array<std::uint8_t, 32>, std::string>
@@ -480,4 +480,4 @@ struct EnrollmentPlan {
 masque_enrollment_after_error(const Identity& identity, std::string_view error,
                               std::vector<std::string>& notes);
 
-} // namespace aether::core::account
+} // namespace hemera::core::account

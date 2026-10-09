@@ -3,7 +3,7 @@
 #include <string>
 #include <filesystem>
 
-namespace aether::sysproxy {
+namespace hemera::sysproxy {
 
 // Formats proxy server string to include HTTP, HTTPS, and SOCKS
 std::string format_proxy_string(std::string_view addr, std::string_view socks_addr = "");
@@ -20,4 +20,4 @@ void restore_stale(const std::filesystem::path& backup_file);
 // Returns true if proxy is currently actively managed by this process
 bool is_applied() noexcept;
 
-} // namespace aether::sysproxy
+} // namespace hemera::sysproxy

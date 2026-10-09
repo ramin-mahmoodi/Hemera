@@ -26,11 +26,11 @@
 #include <mutex>
 #include <vector>
 
-namespace aether::core::transport {
+namespace hemera::core::transport {
 
-// tls.hpp declares its surface directly in aether::core (no nested tls namespace); the alias lets
+// tls.hpp declares its surface directly in hemera::core (no nested tls namespace); the alias lets
 // this module read it as the header's prose calls it, and keeps quic:: / masque:: unambiguous.
-namespace tls = ::aether::core;
+namespace tls = ::hemera::core;
 
 namespace {
 
@@ -1492,4 +1492,4 @@ std::optional<std::vector<std::uint8_t>> Session::offered_ech_key() const {
     return state_->current_ech;
 }
 
-} // namespace aether::core::transport
+} // namespace hemera::core::transport

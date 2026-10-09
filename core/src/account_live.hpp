@@ -3,7 +3,7 @@
 // Live exchange half of account.rs: api_call and the register / enable_warp / enroll_key /
 // register_with_team / provision / fetch / refresh / ensure_masque_enrolled round trips over
 // https_runtime::send. account.hpp owns the pure halves (bodies, parsing, plans, log text);
-// this owns the sockets. Errors carry their AetherError kind so the engine can tell a dead
+// this owns the sockets. Errors carry their HemeraError kind so the engine can tell a dead
 // identity (re-register) from a transport failure (keep the saved profile).
 
 #include "account.hpp"
@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::account {
+namespace hemera::core::account {
 
 enum class LiveKind { Api, IdentityRefused, Ech, Tls };
 
@@ -81,4 +81,4 @@ struct LiveEnv {
 [[nodiscard]] LiveResult<MasqueEnrollment> ensure_masque_enrolled(const Identity& identity,
                                                                  const LiveEnv& env);
 
-} // namespace aether::core::account
+} // namespace hemera::core::account

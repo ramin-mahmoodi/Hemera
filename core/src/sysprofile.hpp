@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-namespace aether::core::sysprofile {
+namespace hemera::core::sysprofile {
 
 // Port of sysprofile.rs: how the machine the core runs on sizes its buffers. raise_fd_limit() and
 // open_file_limit() of the Rust core are Unix-only and do nothing on Windows, so they are not here.
@@ -37,7 +37,7 @@ struct Tuning {
     [[nodiscard]] bool operator==(const Tuning&) const = default;
 };
 
-// The tier `AETHER_PERF_PROFILE` names, or the one `cpus` and `mem_mb` fall to: 2 cores or 384 MB
+// The tier `HEMERA_PERF_PROFILE` names, or the one `cpus` and `mem_mb` fall to: 2 cores or 384 MB
 // is Low, 4 cores or 1536 MB is Medium, and anything a machine cannot answer for is not Low.
 [[nodiscard]] Tier detect_tier(std::size_t cpus, std::optional<std::uint64_t> mem_mb,
                                const Settings& settings);
@@ -63,4 +63,4 @@ struct Tuning {
 // The line the Rust core logs once at start-up.
 [[nodiscard]] std::string summary(const Tuning& tuning);
 
-} // namespace aether::core::sysprofile
+} // namespace hemera::core::sysprofile

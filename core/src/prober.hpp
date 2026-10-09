@@ -8,7 +8,7 @@
 // decisions (candidate lists, budget/RTT/target state machine, ranking, the ironclad HTTP verdict)
 // so they can be driven and tested without a network.
 
-#include "aethernoize.hpp"
+#include "hemeranoize.hpp"
 #include "dns.hpp"
 #include "noize.hpp"
 #include "settings.hpp"
@@ -22,9 +22,9 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::prober {
+namespace hemera::core::prober {
 
-// Nested in `prober` on purpose: `aether::ScanMode` already exists in include/types.hpp (the
+// Nested in `prober` on purpose: `hemera::ScanMode` already exists in include/types.hpp (the
 // supervisor's reduced enum that drops several Rust aliases), so the faithful full-mode enums live
 // here to avoid an ambiguous `ScanMode`.
 
@@ -90,7 +90,7 @@ inline constexpr std::chrono::seconds HTTP_PROBE_DEADLINE{6};
 
 // ---- zero-trust prioritisation (prober.rs) --------------------------------------------------
 
-// AETHER_TEAM set to anything but whitespace, exactly as zero_trust_mode() reads it.
+// HEMERA_TEAM set to anything but whitespace, exactly as zero_trust_mode() reads it.
 [[nodiscard]] bool zero_trust_mode(const Settings& settings);
 
 // The `all` list with every `first` entry that appears in it moved to the front, in `first`'s
@@ -247,7 +247,7 @@ struct WgCandidateSources {
 // The engine drives these with each probe result as the real verify_one / verify_one_wg futures
 // complete, and calls on_timeout() when the wake time next_wake() returns has passed, or
 // on_exhausted() when the candidate stream runs dry. `result()` then gives the pick, and an empty
-// result is AetherError::NoCleanEndpoint. The log lines Rust emits are returned in step order.
+// result is HemeraError::NoCleanEndpoint. The log lines Rust emits are returned in step order.
 
 struct HuntStep {
     bool done = false;      // stop feeding the loop
@@ -320,7 +320,7 @@ private:
 
 // ---- ironclad HTTP probe (tunnelping.rs) ----------------------------------------------------
 
-// AETHER_IRONCLAD_PORT parsed strictly as u16, defaulting to 80; no trimming, matching Rust's
+// HEMERA_IRONCLAD_PORT parsed strictly as u16, defaulting to 80; no trimming, matching Rust's
 // var().and_then(parse).unwrap_or(80).
 [[nodiscard]] std::uint16_t http_probe_port(const Settings& settings);
 
@@ -342,8 +342,8 @@ private:
 // What one edge is pinged with, over either carrier. `timeout` bounds the whole attempt. The
 // engine opens the throwaway tunnel with these and feeds the answer to http_probe_passed.
 // Aliased: a member named `noize` would otherwise hide the namespace it is typed from.
-using NoizeConfig = ::aether::core::noize::NoizeConfig;
-using AetherNoizeConfig = ::aether::core::aethernoize::AetherNoizeConfig;
+using NoizeConfig = ::hemera::core::noize::NoizeConfig;
+using HemeraNoizeConfig = ::hemera::core::hemeranoize::HemeraNoizeConfig;
 
 struct MasquePingParams {
     SocketAddr peer;
@@ -364,7 +364,7 @@ struct MasquePingParams {
 struct WgPingParams {
     IpAddress local_ipv4;
     IpAddress local_ipv6;
-    AetherNoizeConfig aethernoize;
+    HemeraNoizeConfig hemeranoize;
     std::chrono::milliseconds timeout{5000};
 };
 
@@ -402,4 +402,4 @@ inline constexpr std::string_view FALLBACK_TO_V4_LOG =
 inline constexpr std::string_view NO_V6_ROUTE_LOG =
     "[-] host has no IPv6 route; IPv6 scan needs native IPv6 connectivity";
 
-} // namespace aether::core::prober
+} // namespace hemera::core::prober

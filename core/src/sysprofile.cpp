@@ -14,7 +14,7 @@
 #endif
 #include <windows.h>
 
-namespace aether::core::sysprofile {
+namespace hemera::core::sysprofile {
 namespace {
 
 constexpr std::size_t MIN_BUFFER = 16 * 1024;
@@ -77,7 +77,7 @@ std::string_view label(Tier tier) {
 }
 
 Tier detect_tier(std::size_t cpus, std::optional<std::uint64_t> mem_mb, const Settings& settings) {
-    if (const auto named = settings.get("AETHER_PERF_PROFILE")) {
+    if (const auto named = settings.get("HEMERA_PERF_PROFILE")) {
         const std::string wanted = lowered(trim(*named));
         if (wanted == "low") return Tier::Low;
         if (wanted == "medium" || wanted == "mid") return Tier::Medium;
@@ -135,9 +135,9 @@ Tuning build(std::size_t cpus, std::optional<std::uint64_t> mem_mb, const Settin
     // is the second ceiling on a download; both halves are paid up front per connection, so the
     // receive side gets the room.
     tuning.netstack_tcp_rx_buf =
-        buffer_override(settings, "AETHER_NETSTACK_TCP_RX", tuning.netstack_tcp_rx_buf);
+        buffer_override(settings, "HEMERA_NETSTACK_TCP_RX", tuning.netstack_tcp_rx_buf);
     tuning.netstack_tcp_tx_buf =
-        buffer_override(settings, "AETHER_NETSTACK_TCP_TX", tuning.netstack_tcp_tx_buf);
+        buffer_override(settings, "HEMERA_NETSTACK_TCP_TX", tuning.netstack_tcp_tx_buf);
     return tuning;
 }
 
@@ -195,4 +195,4 @@ std::string summary(const Tuning& tuning) {
            std::to_string(tuning.h2_connection_window / 1024) + "KB";
 }
 
-} // namespace aether::core::sysprofile
+} // namespace hemera::core::sysprofile

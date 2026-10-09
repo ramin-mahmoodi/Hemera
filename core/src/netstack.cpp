@@ -16,7 +16,7 @@
 #include <cstring>
 #include <limits>
 
-namespace aether::core::netstack {
+namespace hemera::core::netstack {
 
 namespace {
 
@@ -769,9 +769,9 @@ TcpLimits TcpLimits::from_settings(const Settings& settings) {
     TcpLimits limits;
     // netstack.rs's tcp_connect_timeout() / tcp_keepalive(), env reads through Settings.
     limits.connect = Millis(static_cast<std::int64_t>(
-        netpacket::connect_secs(settings.get("AETHER_TCP_CONNECT_SECS"))) * 1000);
+        netpacket::connect_secs(settings.get("HEMERA_TCP_CONNECT_SECS"))) * 1000);
     limits.keepalive = Millis(static_cast<std::int64_t>(
-        netpacket::keepalive_secs(settings.get("AETHER_TCP_KEEPALIVE_SECS"))) * 1000);
+        netpacket::keepalive_secs(settings.get("HEMERA_TCP_KEEPALIVE_SECS"))) * 1000);
     limits.orphan_linger = Millis(static_cast<std::int64_t>(netpacket::ORPHAN_LINGER_MS));
     return limits;
 }
@@ -1499,4 +1499,4 @@ bool NetStack::is_local_addr(const IpAddress& address) const {
     return addrs_.v6 && addrs_.v6->ip == address;
 }
 
-} // namespace aether::core::netstack
+} // namespace hemera::core::netstack

@@ -1,6 +1,6 @@
 #pragma once
 
-// Port of aether/src/upstream.rs: the proxy AETHER_UPSTREAM names (--upstream writes the same
+// Port of hemera/src/upstream.rs: the proxy HEMERA_UPSTREAM names (--upstream writes the same
 // setting), read the way the Rust core reads it, and the pure half of every conversation held
 // with that proxy. Live sockets, tasks and the udp detour table stay with the engine, which
 // builds on the decisions and byte codecs that are here.
@@ -31,7 +31,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-namespace aether::core::upstream {
+namespace hemera::core::upstream {
 
 // The socks5 wire constants (RFC 1928, with RFC 1929's password negotiation).
 inline constexpr std::uint8_t VER = 0x05;
@@ -159,12 +159,12 @@ using Seen = std::optional<std::pair<std::string, std::optional<Upstream>>>;
 [[nodiscard]] std::optional<Upstream> remembered(Seen& seen, std::string_view raw,
                                                  std::vector<std::string>& notes);
 
-// AETHER_UPSTREAM looked up on every call, behind a process-wide memo of the last answer —
+// HEMERA_UPSTREAM looked up on every call, behind a process-wide memo of the last answer —
 // Rust's configured(). --upstream writes the same setting through apply_cli().
 [[nodiscard]] std::optional<Upstream> configured(const Settings& settings,
                                                  std::vector<std::string>& notes);
 
-// AETHER_UPSTREAM parsed with no memo, which is Rust's from_env(); no setting at all answers
+// HEMERA_UPSTREAM parsed with no memo, which is Rust's from_env(); no setting at all answers
 // without a note, blank answers nothing.
 [[nodiscard]] std::optional<Upstream> from_settings(const Settings& settings,
                                                     std::vector<std::string>& notes);
@@ -204,7 +204,7 @@ authenticate_request(const std::optional<std::string>& user,
 [[nodiscard]] std::expected<void, std::string> check_auth_answer(std::span<const std::uint8_t> answer);
 
 // The four-byte head of a socks5 reply: the version, the refusal code, and an address type
-// aether can read; the type comes back so the engine knows how many bytes follow.
+// hemera can read; the type comes back so the engine knows how many bytes follow.
 [[nodiscard]] std::expected<std::uint8_t, std::string>
 check_reply_head(std::span<const std::uint8_t> head);
 
@@ -411,4 +411,4 @@ struct BoundSocket {
 [[nodiscard]] std::expected<std::uint16_t, std::string>
 connect_answer(std::span<const std::uint8_t> head);
 
-} // namespace aether::core::upstream
+} // namespace hemera::core::upstream

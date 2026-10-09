@@ -23,13 +23,13 @@
 #include <cstdio>
 #include <thread>
 
-namespace aether::core::account {
+namespace hemera::core::account {
 
 namespace {
 
  // coreflow.hpp's ECH_ENV, repeated here because that header includes account.hpp and the
  // dependency cannot point back.
-constexpr std::string_view kEchEnv = "AETHER_ECH";
+constexpr std::string_view kEchEnv = "HEMERA_ECH";
 
 [[nodiscard]] std::string live_display(const LiveError& error) {
     switch (error.kind) {
@@ -162,7 +162,7 @@ LiveResult<AccountData> api_call(std::string_view label, std::string_view method
     const bool has_upstream = upstream::configured(settings, upstream_notes).has_value();
     for (const auto& line : upstream_notes) emit_info(env, line);
     if (egress::mark() != 0 && !has_upstream &&
-        !::aether::core::parse_address(target->first).has_value()) {
+        !::hemera::core::parse_address(target->first).has_value()) {
         return std::unexpected(LiveError{
             LiveKind::Api, std::string(label) + ": " + target->first +
                                " would be looked up outside the socket mark, so the call would loop "
@@ -177,7 +177,7 @@ LiveResult<AccountData> api_call(std::string_view label, std::string_view method
             ech = remembered;
         } else {
             auto looked = ech_key(settings, EchPurpose::Api, [&]() {
-                    return ::aether::core::fetch_ech_config(settings, env.ech_transport);
+                    return ::hemera::core::fetch_ech_config(settings, env.ech_transport);
                 });
             if (!looked.has_value()) {
                 return std::unexpected(LiveError{LiveKind::Ech, looked.error()});
@@ -275,7 +275,7 @@ LiveResult<std::pair<AccountData, std::array<std::uint8_t, 32>>> register_device
         .locale = std::string(locale),
     };
     const std::string encoded = body.to_json_text();
-    const std::string path = std::string("/") + std::string(::aether::core::API_VERSION) + "/reg";
+    const std::string path = std::string("/") + std::string(::hemera::core::API_VERSION) + "/reg";
     auto account = api_call("registration", "POST", path,
                             std::optional<std::span<const std::uint8_t>>(
                                 std::span<const std::uint8_t>(
@@ -289,7 +289,7 @@ LiveResult<std::pair<AccountData, std::array<std::uint8_t, 32>>> register_device
 LiveResult<void> enable_warp(std::string_view device_id, std::string_view token,
                              const LiveEnv& env) {
     constexpr std::string_view payload = R"({"warp_enabled":true})";
-    const std::string path = std::string("/") + std::string(::aether::core::API_VERSION) + "/reg/" +
+    const std::string path = std::string("/") + std::string(::hemera::core::API_VERSION) + "/reg/" +
                              std::string(device_id);
     auto answered = api_call("enabling warp", "PATCH", path,
                              std::optional<std::span<const std::uint8_t>>(
@@ -306,7 +306,7 @@ LiveResult<AccountData> enroll_key(std::string_view device_id, std::string_view 
                                    const std::optional<std::string>& name, const LiveEnv& env) {
     const DeviceUpdate body = device_update_body(spki_der, name);
     const std::string encoded = body.to_json_text();
-    const std::string path = std::string("/") + std::string(::aether::core::API_VERSION) + "/reg/" +
+    const std::string path = std::string("/") + std::string(::hemera::core::API_VERSION) + "/reg/" +
                              std::string(device_id);
     return api_call("key enrollment", "PATCH", path,
                     std::optional<std::span<const std::uint8_t>>(
@@ -320,7 +320,7 @@ LiveResult<std::pair<AccountData, std::array<std::uint8_t, 32>>> register_with_t
     const auto [wg_private, wg_public] = generate_x25519_keypair();
     const TeamRegistration body = team_registration_body(wg_public, model, locale);
     const std::string encoded = body.to_json_text();
-    const std::string path = std::string("/") + std::string(::aether::core::API_VERSION) + "/reg";
+    const std::string path = std::string("/") + std::string(::hemera::core::API_VERSION) + "/reg";
     auto account = api_call("team registration", "POST", path,
                             std::optional<std::span<const std::uint8_t>>(
                                 std::span<const std::uint8_t>(
@@ -363,7 +363,7 @@ LiveResult<Identity> provision_wg(std::string_view model, std::string_view local
 
 LiveResult<AccountData> fetch_device(std::string_view device_id, std::string_view token,
                                      const LiveEnv& env) {
-    const std::string path = std::string("/") + std::string(::aether::core::API_VERSION) + "/reg/" +
+    const std::string path = std::string("/") + std::string(::hemera::core::API_VERSION) + "/reg/" +
                              std::string(device_id);
     return api_call("device refresh", "GET", path, std::nullopt, token, std::nullopt, env);
 }
@@ -405,7 +405,7 @@ LiveResult<MasqueEnrollment> ensure_masque_enrolled(const Identity& identity, co
                                std::nullopt, env);
     if (enrolled.has_value()) {
         emit_info(env, "[+] MASQUE key enrolled");
-        return new_masque_enrollment(*keypair, ::aether::core::now_unix());
+        return new_masque_enrollment(*keypair, ::hemera::core::now_unix());
     }
     std::vector<std::string> notes;
     auto kept = masque_enrollment_after_error(identity, live_display(enrolled.error()), notes);
@@ -422,4 +422,4 @@ LiveResult<MasqueEnrollment> ensure_masque_enrolled(const Identity& identity, co
     return *kept;
 }
 
-} // namespace aether::core::account
+} // namespace hemera::core::account

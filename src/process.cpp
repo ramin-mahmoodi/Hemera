@@ -27,7 +27,7 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
 
-namespace aether::process {
+namespace hemera::process {
 
 namespace {
 
@@ -80,26 +80,26 @@ std::vector<std::filesystem::path> get_candidate_bin_dirs() {
     std::vector<std::filesystem::path> dirs;
     PWSTR local_path = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_path))) {
-        dirs.push_back(std::filesystem::path(local_path) / "Aether" / "bin");
+        dirs.push_back(std::filesystem::path(local_path) / "Hemera" / "bin");
         CoTaskMemFree(local_path);
     }
     const wchar_t* env_local = _wgetenv(L"LOCALAPPDATA");
     if (env_local) {
-        auto p = std::filesystem::path(env_local) / "Aether" / "bin";
+        auto p = std::filesystem::path(env_local) / "Hemera" / "bin";
         if (std::find(dirs.begin(), dirs.end(), p) == dirs.end()) dirs.push_back(p);
     }
     PWSTR roaming_path = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &roaming_path))) {
-        auto p = std::filesystem::path(roaming_path) / "Aether" / "bin";
+        auto p = std::filesystem::path(roaming_path) / "Hemera" / "bin";
         if (std::find(dirs.begin(), dirs.end(), p) == dirs.end()) dirs.push_back(p);
         CoTaskMemFree(roaming_path);
     }
     const wchar_t* env_roaming = _wgetenv(L"APPDATA");
     if (env_roaming) {
-        auto p = std::filesystem::path(env_roaming) / "Aether" / "bin";
+        auto p = std::filesystem::path(env_roaming) / "Hemera" / "bin";
         if (std::find(dirs.begin(), dirs.end(), p) == dirs.end()) dirs.push_back(p);
     }
-    dirs.push_back(std::filesystem::temp_directory_path() / "Aether" / "bin");
+    dirs.push_back(std::filesystem::temp_directory_path() / "Hemera" / "bin");
     return dirs;
 }
 
@@ -167,7 +167,7 @@ bool extract_resource_to_file(int res_id, const std::filesystem::path& dest_path
 }
 
 bool extract_embedded_binaries(const std::filesystem::path& bin_dir) {
-    bool ok1 = extract_resource_to_file(IDR_AETHER_BIN, bin_dir / "aether.exe");
+    bool ok1 = extract_resource_to_file(IDR_HEMERA_BIN, bin_dir / "hemera.exe");
     bool ok2 = extract_resource_to_file(IDR_TUN2SOCKS, bin_dir / "tun2socks.exe");
     bool ok3 = extract_resource_to_file(IDR_WINTUN, bin_dir / "wintun.dll");
     return ok1 && ok2 && ok3;
@@ -179,11 +179,11 @@ std::expected<std::filesystem::path, std::string> resolve_binary() {
     auto bin_dirs = get_candidate_bin_dirs();
     for (const auto& dir : bin_dirs) {
         if (extract_embedded_binaries(dir)) {
-            auto aether_path = dir / "aether.exe";
+            auto hemera_path = dir / "hemera.exe";
             std::error_code ec;
-            if (std::filesystem::is_regular_file(aether_path, ec)) {
-                auto can = std::filesystem::canonical(aether_path, ec);
-                return ec ? aether_path : can;
+            if (std::filesystem::is_regular_file(hemera_path, ec)) {
+                auto can = std::filesystem::canonical(hemera_path, ec);
+                return ec ? hemera_path : can;
             }
         }
     }
@@ -191,14 +191,14 @@ std::expected<std::filesystem::path, std::string> resolve_binary() {
     auto exe_dir = get_current_exe_dir();
     std::vector<std::filesystem::path> candidates;
     for (const auto& dir : bin_dirs) {
-        candidates.push_back(dir / "aether.exe");
+        candidates.push_back(dir / "hemera.exe");
     }
-    candidates.push_back(exe_dir / "binaries" / "aether.exe");
-    candidates.push_back(exe_dir / "aether.exe");
-    candidates.push_back(std::filesystem::current_path() / "binaries" / "aether.exe");
-    candidates.push_back(std::filesystem::current_path() / "aether.exe");
-    candidates.push_back(exe_dir / ".." / "src-tauri" / "binaries" / "aether.exe");
-    candidates.push_back(std::filesystem::current_path() / ".." / "Aether-GUI-main" / "src-tauri" / "binaries" / "aether.exe");
+    candidates.push_back(exe_dir / "binaries" / "hemera.exe");
+    candidates.push_back(exe_dir / "hemera.exe");
+    candidates.push_back(std::filesystem::current_path() / "binaries" / "hemera.exe");
+    candidates.push_back(std::filesystem::current_path() / "hemera.exe");
+    candidates.push_back(exe_dir / ".." / "src-tauri" / "binaries" / "hemera.exe");
+    candidates.push_back(std::filesystem::current_path() / ".." / "Hemera-main" / "src-tauri" / "binaries" / "hemera.exe");
 
     for (const auto& path : candidates) {
         std::error_code ec;
@@ -212,7 +212,7 @@ std::expected<std::filesystem::path, std::string> resolve_binary() {
     for (const auto& path : candidates) {
         candidate_list += "  - " + path.string() + "\n";
     }
-    return std::unexpected("Aether core binary (aether.exe) not found. Searched in:\n" + candidate_list);
+    return std::unexpected("Hemera core binary (hemera.exe) not found. Searched in:\n" + candidate_list);
 }
 
 std::expected<std::filesystem::path, std::string> resolve_tun2socks() {
@@ -290,7 +290,7 @@ void kill_process_tree(uint32_t pid) {
 }
 
 void reap_orphan(const std::filesystem::path& data_dir) {
-    for (const char* name : {"aether.pid", "tun2socks.pid"}) {
+    for (const char* name : {"hemera.pid", "tun2socks.pid"}) {
         auto pid_path = data_dir / name;
         if (!std::filesystem::exists(pid_path)) continue;
 
@@ -356,7 +356,7 @@ struct ProcessSession::Impl {
         const std::filesystem::path& work_dir,
         const std::vector<std::pair<std::wstring, std::wstring>>& env_vars,
         LogCallback log_cb,
-        bool inspect_aether_logs
+        bool inspect_hemera_logs
     ) {
         close_all();
         engine_started.store(false);
@@ -483,7 +483,7 @@ struct ProcessSession::Impl {
             AssignProcessToJobObject(hJob, hProcess);
         }
 
-        reader_thread = std::thread([this, log_cb, inspect_aether_logs]() {
+        reader_thread = std::thread([this, log_cb, inspect_hemera_logs]() {
             char buffer[4096];
             std::string line_buffer;
             DWORD bytes_read = 0;
@@ -493,7 +493,7 @@ struct ProcessSession::Impl {
                 buffer[bytes_read] = '\0';
                 line_buffer.append(buffer, bytes_read);
 
-                if (inspect_aether_logs) {
+                if (inspect_hemera_logs) {
                     std::string partial_clean = strip_ansi(line_buffer);
                     if (partial_clean.find("Enter the code:") != std::string::npos ||
                         partial_clean.find("Enter access code:") != std::string::npos ||
@@ -514,7 +514,7 @@ struct ProcessSession::Impl {
                     std::string clean_line = strip_ansi(line);
                     if (clean_line.empty()) continue;
 
-                    if (inspect_aether_logs) {
+                    if (inspect_hemera_logs) {
                         std::string lower_line = clean_line;
                         for (char& c : lower_line) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
@@ -534,7 +534,7 @@ struct ProcessSession::Impl {
                             access_code_required.store(true, std::memory_order_relaxed);
                         }
 
-                        if (clean_line.find("Aether v") != std::string::npos ||
+                        if (clean_line.find("Hemera v") != std::string::npos ||
                             lower_line.find("starting tunnel engine") != std::string::npos ||
                             clean_line.find("[+]") != std::string::npos) {
                             engine_started.store(true, std::memory_order_relaxed);
@@ -623,26 +623,26 @@ SpawnResult ProcessSession::spawn(
     LogCallback log_cb
 ) {
     std::vector<std::pair<std::wstring, std::wstring>> env_vars;
-    env_vars.emplace_back(L"AETHER_MASQUE_HTTP2", profile.masque_http2 ? L"1" : L"0");
+    env_vars.emplace_back(L"HEMERA_MASQUE_HTTP2", profile.masque_http2 ? L"1" : L"0");
 
     if (!profile.zero_trust_team.empty()) {
         switch (profile.zero_trust_auth) {
             case ZeroTrustAuth::Email:
                 if (!profile.access_email.empty()) {
-                    env_vars.emplace_back(L"AETHER_ACCESS_EMAIL", to_wide(profile.access_email));
+                    env_vars.emplace_back(L"HEMERA_ACCESS_EMAIL", to_wide(profile.access_email));
                 }
                 break;
             case ZeroTrustAuth::Service:
                 if (!profile.access_client_id.empty()) {
-                    env_vars.emplace_back(L"AETHER_ACCESS_CLIENT_ID", to_wide(profile.access_client_id));
+                    env_vars.emplace_back(L"HEMERA_ACCESS_CLIENT_ID", to_wide(profile.access_client_id));
                 }
                 if (!profile.access_client_secret.empty()) {
-                    env_vars.emplace_back(L"AETHER_ACCESS_CLIENT_SECRET", to_wide(profile.access_client_secret));
+                    env_vars.emplace_back(L"HEMERA_ACCESS_CLIENT_SECRET", to_wide(profile.access_client_secret));
                 }
                 break;
             case ZeroTrustAuth::Token:
                 if (!profile.access_token.empty()) {
-                    env_vars.emplace_back(L"AETHER_ACCESS_TOKEN", to_wide(profile.access_token));
+                    env_vars.emplace_back(L"HEMERA_ACCESS_TOKEN", to_wide(profile.access_token));
                 }
                 break;
         }
@@ -660,4 +660,4 @@ SpawnResult ProcessSession::spawn_command(
     return impl_->spawn_process(binary_path, args, work_dir, {}, std::move(log_cb), false);
 }
 
-} // namespace aether::process
+} // namespace hemera::process

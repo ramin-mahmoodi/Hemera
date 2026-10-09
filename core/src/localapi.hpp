@@ -1,9 +1,9 @@
 #pragma once
-// Port of aether/src/api.rs (commit 6175b67): the core's control-plane API -- the surface the
+// Port of hemera/src/api.rs (commit 6175b67): the core's control-plane API -- the surface the
 // CLI, the FFI and the supervisor drive to pick a transport, sign into a team, provision an
 // identity, scan for a gateway, verify it and connect the tunnel.
 
-#include "aethernoize.hpp"
+#include "hemeranoize.hpp"
 #include "consts.hpp"
 #include "dns.hpp"
 #include "identity.hpp"
@@ -24,7 +24,7 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core::localapi {
+namespace hemera::core::localapi {
 
 // api.rs is not an HTTP server: the pinned Rust core opens no listening socket and parses no
 // request line anywhere (no route table, no auth header, no CORS exists to keep). What api.rs
@@ -77,7 +77,7 @@ struct ApiError {
 
 // api.rs raises this message itself; every other error the surface returns is the engine's,
 // kinds assigned by the engine. tls.rs owns the wording, so this is the same constant, not a copy.
-inline constexpr std::string_view NO_ECH_KEY = ::aether::core::NO_ECH_KEY;
+inline constexpr std::string_view NO_ECH_KEY = ::hemera::core::NO_ECH_KEY;
 
 // ---- Cancellation ----
 
@@ -273,7 +273,7 @@ struct WgProbe {
     std::array<std::uint8_t, 32> peer_public_key{};
     std::array<std::uint8_t, 3> client_id{};
     IpAddress local_ipv4{};
-    aethernoize::AetherNoizeConfig noise;
+    hemeranoize::HemeraNoizeConfig noise;
     std::vector<std::uint16_t> ports;
     IpScan ip = IpScan::V4;
     std::vector<SocketAddr> excluded;
@@ -286,7 +286,7 @@ struct WgVerifyParams {
     std::array<std::uint8_t, 32> peer_public_key{};
     std::array<std::uint8_t, 3> client_id{};
     IpAddress local_ipv4{};
-    aethernoize::AetherNoizeConfig noise;
+    hemeranoize::HemeraNoizeConfig noise;
     std::chrono::milliseconds verify_timeout{10000};
     std::uint16_t keepalive = 5; // Rust passes Some(keepalive): the check keeps the tunnel too
 };
@@ -300,7 +300,7 @@ struct ScanRequest {
     std::vector<SocketAddr> excluded;
     std::optional<std::vector<std::uint8_t>> ech_config_list;
     noize::NoizeConfig noise;
-    aethernoize::AetherNoizeConfig aethernoize;
+    hemeranoize::HemeraNoizeConfig hemeranoize;
 
     [[nodiscard]] static ScanRequest for_transport(Transport transport);
     [[nodiscard]] ScanRequest with_mode(std::string_view new_mode) const;
@@ -317,7 +317,7 @@ struct TunnelSpec {
     // The ECH key the MASQUE handshakes of the job offer -- the tunnel's and the check's; with
     // none the server name goes out in the clear.
     std::optional<std::vector<std::uint8_t>> ech;
-    aethernoize::AetherNoizeConfig aethernoize;
+    hemeranoize::HemeraNoizeConfig hemeranoize;
     std::uint16_t keepalive = 5;
     std::chrono::milliseconds verify_timeout{10000};
 
@@ -401,7 +401,7 @@ public:
         const Cancel& cancel) = 0;
     [[nodiscard]] virtual std::expected<void, ApiError> run_wireguard_tunnel(
         const Identity& identity, const SocketAddr& peer,
-        const aethernoize::AetherNoizeConfig& noise, const SocketAddr& socks,
+        const hemeranoize::HemeraNoizeConfig& noise, const SocketAddr& socks,
         const Cancel& cancel) = 0;
 };
 
@@ -473,10 +473,10 @@ void team_forget_token(Engine& engine);
                                                             const TunnelSpec& spec,
                                                             const Cancel& cancel);
 
-// api.rs::connect: AETHER_HTTP_PROXY is set (or removed) for the whole process first, then the
+// api.rs::connect: HEMERA_HTTP_PROXY is set (or removed) for the whole process first, then the
 // run loop goes on until it ends or the job is cancelled.
 [[nodiscard]] std::expected<void, ApiError> connect(Engine& engine, const Identity& identity,
                                                     const SocketAddr& peer, const TunnelSpec& spec,
                                                     const Cancel& cancel);
 
-} // namespace aether::core::localapi
+} // namespace hemera::core::localapi

@@ -47,7 +47,7 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::netstack {
+namespace hemera::core::netstack {
 
 // The engine's clock: every deadline, timer and timestamp is one of these, handed in by the
 // caller. Nothing here reads a wall clock (Rust's Instant::now() sites all become parameters).
@@ -104,12 +104,12 @@ struct StackObserver {
 // TcpLimits: netstack.rs's struct, durations in milliseconds.
 
 struct TcpLimits {
-    Millis connect{netpacket::DEFAULT_CONNECT_SECS * 1000};     // AETHER_TCP_CONNECT_SECS, 30 s
-    Millis keepalive{netpacket::DEFAULT_KEEPALIVE_SECS * 1000}; // AETHER_TCP_KEEPALIVE_SECS, 60 s
+    Millis connect{netpacket::DEFAULT_CONNECT_SECS * 1000};     // HEMERA_TCP_CONNECT_SECS, 30 s
+    Millis keepalive{netpacket::DEFAULT_KEEPALIVE_SECS * 1000}; // HEMERA_TCP_KEEPALIVE_SECS, 60 s
     Millis orphan_linger{netpacket::ORPHAN_LINGER_MS};          // ORPHAN_LINGER, 10 s
 
     // TcpLimits::from_env, through Settings the way the codebase requires: the same two
-    // AETHER_* variables, parsed by netpacket's keepalive_secs/connect_secs.
+    // HEMERA_* variables, parsed by netpacket's keepalive_secs/connect_secs.
     [[nodiscard]] static TcpLimits from_settings(const Settings& settings);
 };
 
@@ -648,7 +648,7 @@ public:
 
         // C++-side integration hooks (see the header note): when `routes` is set, every
         // open_tcp and every forwarded UDP datagram gets socks::decide_route's verdict and a
-        // Block stops it; `sniff` (AETHER_ROUTE_SNIFF) feeds a connection's first written bytes
+        // Block stops it; `sniff` (HEMERA_ROUTE_SNIFF) feeds a connection's first written bytes
         // to sniff::sniff_hostname and re-decides the route on the revealed name.
         const routing::RuleSet* routes = nullptr;
         bool sniff = true;
@@ -665,7 +665,7 @@ public:
         std::function<std::uint32_t()> make_iss;
 
         // spawn()'s environment reads, all through Settings: sysprofile's buffers and channel
-        // capacity, TcpLimits::from_env, and AETHER_ROUTE_SNIFF.
+        // capacity, TcpLimits::from_env, and HEMERA_ROUTE_SNIFF.
         [[nodiscard]] static Config from_settings(const Settings& settings, std::string_view ipv4,
                                                   std::string_view ipv6, std::size_t mtu);
     };
@@ -814,4 +814,4 @@ private:
     std::uint32_t iss_counter_ = 0;
 };
 
-} // namespace aether::core::netstack
+} // namespace hemera::core::netstack

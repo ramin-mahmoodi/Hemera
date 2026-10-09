@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core {
+namespace hemera::core {
 
 // Port of dns.rs: where an ECHConfigList is looked up and how its wire messages look. The
 // resolvers themselves -- UDP, TCP and DNS-over-HTTPS -- belong to the egress layer that is not
@@ -145,4 +145,4 @@ using EchTransport =
 [[nodiscard]] std::expected<std::vector<std::uint8_t>, std::string> fetch_ech_config(
     const Settings& settings, const EchTransport& transport);
 
-} // namespace aether::core
+} // namespace hemera::core

@@ -10,7 +10,7 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-namespace aether::network {
+namespace hemera::network {
 
 namespace {
 bool g_wsa_initialized = false;
@@ -129,4 +129,4 @@ bool port_is_live(std::string_view addr_str, std::chrono::milliseconds timeout) 
     return success;
 }
 
-} // namespace aether::network
+} // namespace hemera::network

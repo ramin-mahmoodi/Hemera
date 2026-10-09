@@ -41,13 +41,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PWSTR pCmd
     bool start_minimized = (cmd_line.find(L"--minimized") != std::wstring_view::npos);
 
     // Initialize core engine
-    auto engine = std::make_shared<aether::AetherEngine>();
+    auto engine = std::make_shared<hemera::HemeraEngine>();
 
     // Clean up orphans & stale proxy from previous crash
     engine->startup_cleanup();
 
     // Launch UI
-    aether::gui::MainWindow window(hInstance, engine, start_minimized);
+    hemera::gui::MainWindow window(hInstance, engine, start_minimized);
     if (!window.create()) {
         if (hMutex) CloseHandle(hMutex);
         return 1;

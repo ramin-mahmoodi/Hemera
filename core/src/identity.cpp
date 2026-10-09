@@ -15,7 +15,7 @@
 #endif
 #include <windows.h>
 
-namespace aether::core {
+namespace hemera::core {
 
 namespace {
 
@@ -449,4 +449,4 @@ std::expected<void, std::string> save_masque_creds(const std::string& path,
     return write_private(file, serialize(refreshed));
 }
 
-} // namespace aether::core
+} // namespace hemera::core

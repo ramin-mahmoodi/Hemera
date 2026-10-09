@@ -1,9 +1,9 @@
 #pragma once
 
-// Port of aether/src/ffi.rs (commit 6175b67): the C ABI core/include/aether_core.h declares --
+// Port of hemera/src/ffi.rs (commit 6175b67): the C ABI core/include/hemera_core.h declares --
 // the embedding contract the GUI, the harness and any other supervisor drive the core through.
 // Every entry point is here, with the Rust's job lifecycle, its polling and cancel semantics,
-// its string ownership (the core allocates, aether_string_free releases) and its error texts.
+// its string ownership (the core allocates, hemera_string_free releases) and its error texts.
 //
 // What the Rust gets from its own crate, the port gets from the supervisor, because the sockets
 // and the orchestrator are not in this module: Rust's ffi.rs spawns onto the crate's tokio
@@ -20,10 +20,10 @@
 // SECURITY. No reply, note or log line from this module carries a token, a key or a credential:
 // team payloads travel through fields, tokens appear in replies only as the values the engine
 // handed back, and the identity surface is IdentitySummary, which is the identity minus its
-// secrets. aether-masque.toml is never opened here; the only file this module names is the path
-// a caller gives aether_identity_open.
+// secrets. hemera-masque.toml is never opened here; the only file this module names is the path
+// a caller gives hemera_identity_open.
 
-#include "../include/aether_core.h"
+#include "../include/hemera_core.h"
 
 #include "json.hpp"
 #include "localapi.hpp"
@@ -35,9 +35,9 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core::ffi {
+namespace hemera::core::ffi {
 
-// env!("CARGO_PKG_VERSION") of the pinned crate: what aether_version reports.
+// env!("CARGO_PKG_VERSION") of the pinned crate: what hemera_version reports.
 inline constexpr std::string_view CORE_VERSION = "2.3.0";
 
 // ffi.rs's `type Reply = Result<Value, String>`.
@@ -47,7 +47,7 @@ using Reply = std::expected<json::Value, std::string>;
 // cooperative one localapi.hpp documents: the work sees the flag and answers for it.
 using JobWork = std::function<Reply(const localapi::Cancel& cancel)>;
 
-// lib.rs::run_with, the whole-core run aether_core_start drives. lib.rs is not ported yet, so
+// lib.rs::run_with, the whole-core run hemera_core_start drives. lib.rs is not ported yet, so
 // the supervisor owns it; `cancel` must be honoured the way every engine method honours it.
 using CoreRun = std::function<std::expected<void, localapi::ApiError>(
     const std::vector<std::string>& arguments, const localapi::Cancel& cancel)>;
@@ -85,4 +85,4 @@ void clear_host();
 // {"identity":handle,"summary":{...}} -- the summary, never the identity itself.
 [[nodiscard]] json::Value keep_identity(Identity identity);
 
-} // namespace aether::core::ffi
+} // namespace hemera::core::ffi

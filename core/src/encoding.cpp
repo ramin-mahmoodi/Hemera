@@ -2,7 +2,7 @@
 
 #include <array>
 
-namespace aether::core {
+namespace hemera::core {
 
 namespace {
 
@@ -115,4 +115,4 @@ std::optional<std::vector<uint8_t>> base64_decode(std::string_view text) {
     return out;
 }
 
-} // namespace aether::core
+} // namespace hemera::core

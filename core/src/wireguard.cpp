@@ -12,7 +12,7 @@
 #include <deque>
 #include <utility>
 
-namespace aether::core::wireguard {
+namespace hemera::core::wireguard {
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -926,7 +926,7 @@ std::uint64_t health_check_pause_ms(std::uint64_t offset) {
 
 std::uint64_t wg_stale_timeout_ms(const Settings& settings) {
     std::uint64_t secs = 0;
-    const std::optional<std::string_view> value = settings.get("AETHER_WG_STALE_SECS");
+    const std::optional<std::string_view> value = settings.get("HEMERA_WG_STALE_SECS");
     if (value && parse_rust_u64(*value, secs) && secs > 0) {
         secs = secs < wg_stale_max_secs ? secs : wg_stale_max_secs;
         return secs * 1000;
@@ -2186,19 +2186,19 @@ Session* Tunn::current_session() {
 }
 
 // ---------------------------------------------------------------------------
-// The socket loop's aethernoize call sites (wireguard.rs:243-264, :277-285, :573-575).
+// The socket loop's hemeranoize call sites (wireguard.rs:243-264, :277-285, :573-575).
 
 void send_data_packet(transport::UdpIo& sock, const SocketAddr& peer,
-                      const aethernoize::AetherNoizeConfig& cfg,
+                      const hemeranoize::HemeraNoizeConfig& cfg,
                       std::span<const std::uint8_t> packet, bool& obfuscation_sent,
                       bool& post_handshake_junk_sent) {
     // wireguard.rs:248-255. The latch goes up before the curtain runs, which is what `*sent = true;
     // drop(sent);` before the await at :251-252 buys: a second packet that arrives while the first
     // is still sleeping does not start a second curtain. apply_obfuscation guards on is_enabled()
-    // itself (aethernoize.rs:318); the Rust guards twice, at :250 and there, and so does this.
+    // itself (hemeranoize.rs:318); the Rust guards twice, at :250 and there, and so does this.
     if (!obfuscation_sent && cfg.is_enabled()) {
         obfuscation_sent = true;
-        aethernoize::apply_obfuscation(sock, peer, cfg);
+        hemeranoize::apply_obfuscation(sock, peer, cfg);
     }
 
     // wireguard.rs:257 `let _ = sock_w.send(&pkt_vec).await;` -- the tunnel's own packet, after the
@@ -2211,15 +2211,15 @@ void send_data_packet(transport::UdpIo& sock, const SocketAddr& peer,
     // second latch's branch at all.
     if (cfg.jc_after_hs > 0 && !post_handshake_junk_sent) {
         post_handshake_junk_sent = true;
-        aethernoize::send_post_handshake_junk(sock, peer, cfg);
+        hemeranoize::send_post_handshake_junk(sock, peer, cfg);
     }
 }
 
-void send_timer_packet(transport::UdpIo& sock, const aethernoize::AetherNoizeConfig& cfg,
+void send_timer_packet(transport::UdpIo& sock, const hemeranoize::HemeraNoizeConfig& cfg,
                        std::span<const std::uint8_t> packet) {
     // wireguard.rs:282-284: the junk first, then the keepalive. Behind it would be a cover story of
     // exactly nothing, and the Rust's order is the one the deep-packet box sees.
-    if (cfg.is_enabled()) aethernoize::send_keepalive_junk(sock, cfg);
+    if (cfg.is_enabled()) hemeranoize::send_keepalive_junk(sock, cfg);
 
     // wireguard.rs:285 `let _ = sock_t.send(&pkt_vec).await;`. The destination is unset because the
     // timer task has no peer to name -- wireguard.rs:271-272 moves only the tunnel and sock_t into
@@ -2229,14 +2229,14 @@ void send_timer_packet(transport::UdpIo& sock, const aethernoize::AetherNoizeCon
 }
 
 void pre_handshake_obfuscation(transport::UdpIo& sock, const SocketAddr& peer,
-                               const aethernoize::AetherNoizeConfig& cfg) {
+                               const hemeranoize::HemeraNoizeConfig& cfg) {
     // wireguard.rs:573-575, verify_endpoint_keep_session: the curtain on a fresh socket, after
     // bind_via_upstream at :568 and before Tunn::new at :580, so the initiation packet that leaves at
     // :606 is the first thing behind the noise. It is a different call site from send_data_packet's
     // latch, which is why it has no latch: this function runs once per verification, on a socket that
     // has never carried anything. The is_enabled() test is the Rust's own (:573) and apply_obfuscation
-    // repeats it (aethernoize.rs:318); both stay.
-    if (cfg.is_enabled()) aethernoize::apply_obfuscation(sock, peer, cfg);
+    // repeats it (hemeranoize.rs:318); both stay.
+    if (cfg.is_enabled()) hemeranoize::apply_obfuscation(sock, peer, cfg);
 }
 
-} // namespace aether::core::wireguard
+} // namespace hemera::core::wireguard

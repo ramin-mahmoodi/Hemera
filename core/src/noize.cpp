@@ -9,7 +9,7 @@
 #include <string>
 #include <thread>
 
-namespace aether::core::noize {
+namespace hemera::core::noize {
 namespace {
 
 std::mt19937_64& entropy() {
@@ -285,4 +285,4 @@ void pre_handshake(transport::UdpIo& io, const SocketAddr& peer, const NoizeConf
     if (note) note(Level::Trace, "obfuscation pre-handshake complete");
 }
 
-} // namespace aether::core::noize
+} // namespace hemera::core::noize

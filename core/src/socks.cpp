@@ -18,7 +18,7 @@
 #include <random>
 #include <utility>
 
-namespace aether::core::socks {
+namespace hemera::core::socks {
 namespace {
 
 void push16(std::vector<std::uint8_t>& into, std::uint16_t value) {
@@ -650,7 +650,7 @@ std::vector<Endpoint> parse_resolvers(std::string_view raw) {
 
 std::vector<Endpoint> resolver_addresses(const Settings& settings) {
     std::vector<Endpoint> servers =
-        parse_resolvers(settings.get("AETHER_DNS").value_or(std::string_view{}));
+        parse_resolvers(settings.get("HEMERA_DNS").value_or(std::string_view{}));
     if (servers.empty()) {
         for (const std::string_view seed : {"1.1.1.1", "1.0.0.1"}) {
             if (const auto ip = parse_address(seed)) servers.push_back(Endpoint{*ip, DNS_PORT});
@@ -765,13 +765,13 @@ routing::Action decide_route(const routing::RuleSet& set, const Target& target,
 }
 
 bool sniff_enabled(const Settings& settings) {
-    const auto value = settings.get("AETHER_ROUTE_SNIFF");
+    const auto value = settings.get("HEMERA_ROUTE_SNIFF");
     if (!value) return true;
     return !(*value == "0" || *value == "off" || *value == "false");
 }
 
 std::uint64_t sniff_window_ms(const Settings& settings) {
-    const auto value = settings.get("AETHER_ROUTE_SNIFF_MS");
+    const auto value = settings.get("HEMERA_ROUTE_SNIFF_MS");
     if (!value) return DEFAULT_SNIFF_WINDOW_MS;
     const auto ms = parse_u64(trim(*value));
     if (!ms || *ms == 0) return DEFAULT_SNIFF_WINDOW_MS;
@@ -779,7 +779,7 @@ std::uint64_t sniff_window_ms(const Settings& settings) {
 }
 
 std::uint64_t half_close_linger_secs(const Settings& settings) {
-    const auto value = settings.get("AETHER_HALF_CLOSE_SECS");
+    const auto value = settings.get("HEMERA_HALF_CLOSE_SECS");
     if (!value) return DEFAULT_HALF_CLOSE_LINGER_SECS;
     const auto secs = parse_u64(*value); // Rust parses this value without trimming it first
     if (!secs || *secs == 0) return DEFAULT_HALF_CLOSE_LINGER_SECS;
@@ -794,7 +794,7 @@ std::size_t client_limit(std::size_t by_tier, std::optional<std::size_t> open_fi
 }
 
 std::size_t client_limit_for(const Settings& settings, sysprofile::Tier tier) {
-    if (const auto value = settings.get("AETHER_MAX_CLIENTS")) {
+    if (const auto value = settings.get("HEMERA_MAX_CLIENTS")) {
         const auto limit = parse_u64(trim(*value));
         if (limit && *limit > 0 && *limit <= static_cast<std::uint64_t>(SIZE_MAX)) {
             return static_cast<std::size_t>(*limit);
@@ -813,4 +813,4 @@ std::size_t client_limit_for(const Settings& settings, sysprofile::Tier tier) {
     return client_limit(by_tier, std::nullopt);
 }
 
-} // namespace aether::core::socks
+} // namespace hemera::core::socks

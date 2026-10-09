@@ -8,7 +8,7 @@
 #include <iterator>
 #include <string_view>
 
-namespace aether::core {
+namespace hemera::core {
 namespace {
 
     constexpr std::uint8_t TLS_HANDSHAKE = 0x16;
@@ -231,4 +231,4 @@ std::optional<std::string> sniff_hostname(std::span<const std::uint8_t> buf) {
     return http_host(buf);
 }
 
-} // namespace aether::core
+} // namespace hemera::core

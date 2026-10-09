@@ -15,7 +15,7 @@
 #include <cctype>
 #include <mutex>
 
-namespace aether::core {
+namespace hemera::core {
 
 namespace {
 
@@ -296,7 +296,7 @@ enum ssl_verify_result_t pin_callback(SSL* ssl, uint8_t* out_alert) {
 } // namespace
 
 bool verify_enabled(const Settings& settings) {
-    const std::optional value = settings.get("AETHER_TLS_VERIFY");
+    const std::optional value = settings.get("HEMERA_TLS_VERIFY");
     return value.has_value() && is_truthy(*value);
 }
 
@@ -330,15 +330,15 @@ std::string install_verification(SSL_CTX* ctx, bool pin_endpoint, std::vector<Sp
 
 Fingerprint Fingerprint::configured(const Settings& settings) {
     Fingerprint out;
-    if (const std::optional ciphers = settings.get("AETHER_TLS_CIPHERS");
+    if (const std::optional ciphers = settings.get("HEMERA_TLS_CIPHERS");
         ciphers.has_value() && !trim(*ciphers).empty()) {
         out.ciphers = std::string(trim(*ciphers));
     }
-    if (const std::optional groups = settings.get("AETHER_TLS_GROUPS");
+    if (const std::optional groups = settings.get("HEMERA_TLS_GROUPS");
         groups.has_value() && !trim(*groups).empty()) {
         out.groups = std::string(trim(*groups));
     }
-    if (const std::optional grease = settings.get("AETHER_DISABLE_GREASE");
+    if (const std::optional grease = settings.get("HEMERA_DISABLE_GREASE");
         grease.has_value()) {
         out.grease = !is_truthy(*grease);
     }
@@ -532,7 +532,7 @@ std::expected<std::optional<std::vector<uint8_t>>, std::string> ech_key(
 
     // An empty value means no key was asked for. Whitespace is a different thing: it asks for a
     // key and cannot deliver one, so it is an error rather than a silent off.
-    const std::optional value = settings.get("AETHER_ECH");
+    const std::optional value = settings.get("HEMERA_ECH");
     if (!value.has_value() || value->empty()) return std::optional<std::vector<uint8_t>>{};
 
     // Rust folds every way of not getting a key — a lookup that missed, a value that is not
@@ -559,4 +559,4 @@ std::expected<std::optional<std::vector<uint8_t>>, std::string> ech_key(
     return std::optional<std::vector<uint8_t>>(std::move(*key));
 }
 
-} // namespace aether::core
+} // namespace hemera::core

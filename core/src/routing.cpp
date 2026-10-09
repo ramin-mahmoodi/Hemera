@@ -11,7 +11,7 @@
 #include <sstream>
 #include <system_error>
 
-namespace aether::core::routing {
+namespace hemera::core::routing {
 namespace {
 
 std::string lowered(std::string_view text) {
@@ -290,10 +290,10 @@ RuleSet RuleSet::parse(std::string_view block, std::string_view direct) {
 }
 
 RuleSet RuleSet::from_env(const Settings& settings, std::vector<std::string>& notes) {
-    std::string block(settings.get("AETHER_ROUTE_BLOCK").value_or(std::string_view{}));
-    std::string direct(settings.get("AETHER_ROUTE_DIRECT").value_or(std::string_view{}));
+    std::string block(settings.get("HEMERA_ROUTE_BLOCK").value_or(std::string_view{}));
+    std::string direct(settings.get("HEMERA_ROUTE_DIRECT").value_or(std::string_view{}));
 
-    if (const auto path = settings.get("AETHER_ROUTES_FILE")) {
+    if (const auto path = settings.get("HEMERA_ROUTES_FILE")) {
         std::ifstream file(std::string(*path), std::ios::binary);
         if (file) {
             std::stringstream text;
@@ -390,4 +390,4 @@ std::pair<std::string, std::string> RuleSet::split_sections(std::string_view tex
     return {block, direct};
 }
 
-} // namespace aether::core::routing
+} // namespace hemera::core::routing

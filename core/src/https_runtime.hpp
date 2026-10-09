@@ -1,6 +1,6 @@
 #pragma once
 
-// Port of the sending half of aether/src/https.rs: `send`, its `exchange`, and the two carriers the
+// Port of the sending half of hemera/src/https.rs: `send`, its `exchange`, and the two carriers the
 // handshake hands the request to. The shapes it sends with -- the request, the answer's grammar, the
 // header block -- are https.hpp's; the ClientHello it shapes is tls.hpp's `Fingerprint`, which is
 // what puts GREASE, the extension permutation, the groups and the cipher rule on the context. There
@@ -23,10 +23,10 @@
 #include <string>
 #include <vector>
 
-namespace aether::core::https {
+namespace hemera::core::https {
 
 // What the exchange reads without owning: the settings the Rust core takes off the process
-// environment at dial time -- AETHER_UPSTREAM among them -- and a sink for the lines it logs.
+// environment at dial time -- HEMERA_UPSTREAM among them -- and a sink for the lines it logs.
 struct Call {
     // Null means the environment, which is how https.rs's `dial` reaches `upstream::configured()`.
     const Settings* settings = nullptr;
@@ -41,7 +41,7 @@ struct Call {
 // once more with that one. A null `ech` -- or one pointing at an empty optional, which is the same
 // Rust `None` a caller gets out of `Option<Vec<u8>>::as_mut` -- asks for no ECH at all.
 //
-// The error is the text an `AetherError` would print, kind prefix and all: "tls: handshake with
+// The error is the text an `HemeraError` would print, kind prefix and all: "tls: handshake with
 // api.cloudflareclient.com: ...", "ech: the handshake went without ECH", "api: ... did not answer
 // within 20s".
 [[nodiscard]] std::expected<Response, std::string>
@@ -49,4 +49,4 @@ send(const Request& request, const Fingerprint& fingerprint,
      std::optional<std::vector<std::uint8_t>>* ech, std::chrono::milliseconds timeout,
      const Call& call = {});
 
-} // namespace aether::core::https
+} // namespace hemera::core::https

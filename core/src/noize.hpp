@@ -16,13 +16,13 @@
 // transport.hpp: the socket the junk goes out through. Forward-declared rather than included,
 // because transport.hpp reaches this header through quic.hpp and a cycle would decide which of the
 // two gets to name the other; the definition is only needed where the sends happen, in noize.cpp.
-namespace aether::core::transport {
+namespace hemera::core::transport {
 struct UdpIo;
 }
 
-namespace aether::core::noize {
+namespace hemera::core::noize {
 
-// Port of aether/src/noize.rs: the junk a handshake is wrapped in, so the first packets of a
+// Port of hemera/src/noize.rs: the junk a handshake is wrapped in, so the first packets of a
 // session look like nothing in particular. What is here is the whole of the Rust module: the
 // profile, the packets themselves and the <b>/<t>/<n>/<r> signature language they are written in
 // (noize.rs:8-145), and the sender that puts them on the wire before the ClientHello
@@ -115,4 +115,4 @@ send_junk(transport::UdpIo& io, const SocketAddr& peer, std::span<const std::uin
 void pre_handshake(transport::UdpIo& io, const SocketAddr& peer, const NoizeConfig& cfg,
                    const RelayTarget& relay = {}, const Note& note = {});
 
-} // namespace aether::core::noize
+} // namespace hemera::core::noize

@@ -9,7 +9,7 @@
 #include <mutex>
 #include <random>
 
-namespace aether::core::zerotrust {
+namespace hemera::core::zerotrust {
 
 namespace {
 
@@ -444,11 +444,11 @@ std::optional<std::uint64_t> jwt_expiry(std::string_view token) {
     // fraction or a trailing dot -- which serde_json reads as a float and `as_u64` refuses -- reads
     // back as the truncated integer here rather than as nothing.
     const std::string text(payload->begin(), payload->end());
-    const std::optional<aether::json::Value> parsed = aether::json::parse(text);
+    const std::optional<hemera::json::Value> parsed = hemera::json::parse(text);
     if (!parsed) return std::nullopt;
     if (!parsed->contains("exp")) return std::nullopt;
 
-    const aether::json::Value& claim = parsed->get("exp");
+    const hemera::json::Value& claim = parsed->get("exp");
     if (!claim.is_number()) return std::nullopt;
     const double raw = claim.as_double();
     if (!(raw >= 0.0) || !std::isfinite(raw) || raw != std::floor(raw)) return std::nullopt;
@@ -1109,4 +1109,4 @@ void clear_token() {
     cache_slot().reset();
 }
 
-} // namespace aether::core::zerotrust
+} // namespace hemera::core::zerotrust

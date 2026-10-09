@@ -11,7 +11,7 @@
 #include <variant>
 #include <vector>
 
-namespace aether::core::routing {
+namespace hemera::core::routing {
 
 // Port of routing.rs: the block/direct/proxy decision a connection gets before it leaves, from
 // the rule lists the environment and a rules file provide.
@@ -62,7 +62,7 @@ class RuleSet {
 public:
     static RuleSet parse(std::string_view block, std::string_view direct);
 
-    // AETHER_ROUTE_BLOCK and AETHER_ROUTE_DIRECT, with the sections of AETHER_ROUTES_FILE added
+    // HEMERA_ROUTE_BLOCK and HEMERA_ROUTE_DIRECT, with the sections of HEMERA_ROUTES_FILE added
     // behind them. A file that cannot be read is reported through `notes` and the rest carries
     // on, which is what the Rust core logs and does.
     [[nodiscard]] static RuleSet from_env(const Settings& settings, std::vector<std::string>& notes);
@@ -86,4 +86,4 @@ private:
     std::vector<Rule> direct_;
 };
 
-} // namespace aether::core::routing
+} // namespace hemera::core::routing

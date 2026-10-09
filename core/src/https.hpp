@@ -10,9 +10,9 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core {
+namespace hemera::core {
 
-// Port of aether/src/https.rs. This header holds the half that decides things rather than sends
+// Port of hemera/src/https.rs. This header holds the half that decides things rather than sends
 // them: the shape of a request, and the reading of an HTTP/1.1 answer as its bytes arrive. The
 // handshake, the socket and the h2 stream are https_runtime.hpp, which sends them. What is here is
 // the answer's grammar, which is where a truncated or malformed response is told apart from a whole
@@ -166,4 +166,4 @@ struct Response {
 
 } // namespace https
 
-} // namespace aether::core
+} // namespace hemera::core

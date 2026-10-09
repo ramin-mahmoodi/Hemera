@@ -53,11 +53,11 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::https {
+namespace hemera::core::https {
 namespace {
 
-// tls.hpp declares straight into aether::core; this is the alias transport.cpp uses for it.
-namespace tls = ::aether::core;
+// tls.hpp declares straight into hemera::core; this is the alias transport.cpp uses for it.
+namespace tls = ::hemera::core;
 
 using Millis = std::chrono::milliseconds;
 using Clock = std::chrono::steady_clock;
@@ -76,7 +76,7 @@ struct Stop {
     [[nodiscard]] static Stop timeout() { return Stop{{}, true}; }
 };
 
-// An `AetherError`'s printed text: the kind, then its message.
+// An `HemeraError`'s printed text: the kind, then its message.
 std::string prefixed(std::string_view kind, std::string_view text) {
     return std::string(kind) + ": " + std::string(text);
 }
@@ -222,7 +222,7 @@ private:
 
 // upstream.rs:279-281 -- `open` reaches the proxy with a plain egress::tcp_connect, never with
 // `open` again, so the proxy's own endpoint is dialled with no proxy in front of it. dial() reads
-// the proxy out of whatever Settings it is handed, which makes "this map without AETHER_UPSTREAM"
+// the proxy out of whatever Settings it is handed, which makes "this map without HEMERA_UPSTREAM"
 // exactly Rust's direct connect: the same egress race and the same socket marking, no recursion.
 Settings proxy_settings(const Settings& settings);
 
@@ -257,7 +257,7 @@ std::expected<Stream, Stop> dial(std::string_view address, std::uint16_t port,
                                                  never_asked);
         if (!connected) {
             if (deadline.passed()) return std::unexpected(Stop::timeout());
-            // AetherError::Io through `?`, which is what upstream.rs's `open` returns; the direct
+            // HemeraError::Io through `?`, which is what upstream.rs's `open` returns; the direct
             // path is the one https.rs wraps in "connect to {authority}".
             return std::unexpected(Stop::failed(prefixed(
                 "io", "connect to " + authority(host, number) + ": " + connected.error())));
@@ -304,7 +304,7 @@ std::expected<Stream, Stop> proxy_timed_out(const upstream::Upstream& proxy,
 
 Settings proxy_settings(const Settings& settings) {
     Settings cleared{settings};
-    cleared.values.erase("AETHER_UPSTREAM");
+    cleared.values.erase("HEMERA_UPSTREAM");
     return cleared;
 }
 
@@ -902,7 +902,7 @@ struct H2Answer {
     std::vector<std::pair<std::string, std::string>> block_fields;
     std::size_t block_size = 0;
 
-    // The failure this file has already put into AetherError's words, and the bare text of one the
+    // The failure this file has already put into HemeraError's words, and the bare text of one the
     // caller has yet to frame.
     std::optional<std::string> stop;
     std::optional<std::string> io;
@@ -1256,4 +1256,4 @@ std::expected<Response, std::string> send(const Request& request, const Fingerpr
     return std::unexpected(std::move(answer.error().text));
 }
 
-} // namespace aether::core::https
+} // namespace hemera::core::https

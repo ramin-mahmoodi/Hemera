@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::egress {
+namespace hemera::core::egress {
 
 // Port of egress.rs: what an outgoing socket carries before it is opened, and the opening itself.
 // The Rust borrows its sockets from tokio, which owns the event loop; this core has no runtime, so
@@ -211,14 +211,14 @@ tcp_connect_host(std::string_view host, std::uint16_t port, std::optional<Millis
 [[nodiscard]] std::expected<std::unique_ptr<DatagramSocket>, std::string>
 udp_bind(const SocketAddr& address);
 
-// `AETHER_MARK` as a firewall mark: decimal, or hex behind `0x`, and nothing else.
+// `HEMERA_MARK` as a firewall mark: decimal, or hex behind `0x`, and nothing else.
 [[nodiscard]] std::optional<std::uint32_t> parse_mark(std::string_view value);
 
 // The mark outgoing sockets carry, which `init` decides and leaves unset on a platform that
 // cannot mark.
 [[nodiscard]] std::uint32_t mark();
 
-// Reads `AETHER_MARK`. A mark that cannot be read is an error the caller stops on; a platform
+// Reads `HEMERA_MARK`. A mark that cannot be read is an error the caller stops on; a platform
 // that has no marking is a note, and the mark stays unset, which is what the Rust core does.
 [[nodiscard]] std::expected<std::uint32_t, std::string> init(const Settings& settings,
                                                               std::vector<std::string>& notes);
@@ -231,4 +231,4 @@ udp_bind(const SocketAddr& address);
 // How long an attempt runs alone before the next starts beside it (RFC 8305, 5).
 inline constexpr int CONNECTION_ATTEMPT_DELAY_MS = 250;
 
-} // namespace aether::core::egress
+} // namespace hemera::core::egress

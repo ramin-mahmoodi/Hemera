@@ -1,4 +1,4 @@
-// Port of aether/src/masque_h2.rs's decidable half; see masque_h2.hpp for what is left to the
+// Port of hemera/src/masque_h2.rs's decidable half; see masque_h2.hpp for what is left to the
 // engine's nghttp2/BoringSSL drive loop. The capsule and datagram framings come from masque.hpp,
 // which is the C++ stand-in for masque_h2.rs's `use crate::masque`.
 #include "masque_h2.hpp"
@@ -7,7 +7,7 @@
 #include <cctype>
 #include <limits>
 
-namespace aether::core::masque_h2 {
+namespace hemera::core::masque_h2 {
 namespace {
 
 std::string lowered(std::string_view text) {
@@ -54,7 +54,7 @@ std::vector<std::vector<std::uint8_t>> default_expected_pins() {
 H2TunnelConfig::H2TunnelConfig() : expected_pins(default_expected_pins()) {}
 
 bool enabled(const Settings& settings) {
-    const std::optional<std::string_view> raw = settings.get("AETHER_MASQUE_HTTP2");
+    const std::optional<std::string_view> raw = settings.get("HEMERA_MASQUE_HTTP2");
     if (!raw) return false;
     const std::string value = lowered(trim(*raw));
     // "h2" is this switch's own word; is_truthy() does not know it.
@@ -62,7 +62,7 @@ bool enabled(const Settings& settings) {
 }
 
 SocketAddr h2_peer(const Settings& settings, const SocketAddr& quic_peer) {
-    if (const std::optional<std::string_view> raw = settings.get("AETHER_MASQUE_H2_PEER")) {
+    if (const std::optional<std::string_view> raw = settings.get("HEMERA_MASQUE_H2_PEER")) {
         // A value that is no `ip:port` is ignored rather than fatal, as Rust's failed parse is.
         if (const auto addr = parse_socket_addr(trim(*raw))) return *addr;
     }
@@ -72,19 +72,19 @@ SocketAddr h2_peer(const Settings& settings, const SocketAddr& quic_peer) {
 bool data_check_enabled(const Settings& settings) {
     // The presence of the key is the whole switch: a value of "0" or an empty one still turns the
     // check off, because Rust only asks whether the variable is there at all.
-    return settings.find("AETHER_MASQUE_NO_DATA_CHECK") == nullptr;
+    return settings.find("HEMERA_MASQUE_NO_DATA_CHECK") == nullptr;
 }
 
 std::chrono::seconds validation_timeout(const Settings& settings) {
-    return env_secs(settings.get("AETHER_MASQUE_VALIDATE_SECS"), VALIDATE_SECS_DEFAULT);
+    return env_secs(settings.get("HEMERA_MASQUE_VALIDATE_SECS"), VALIDATE_SECS_DEFAULT);
 }
 
 std::chrono::seconds h2_keepalive_interval(const Settings& settings) {
-    return env_secs(settings.get("AETHER_MASQUE_H2_KEEPALIVE_SECS"), KEEPALIVE_INTERVAL_DEFAULT);
+    return env_secs(settings.get("HEMERA_MASQUE_H2_KEEPALIVE_SECS"), KEEPALIVE_INTERVAL_DEFAULT);
 }
 
 std::chrono::seconds h2_keepalive_timeout(const Settings& settings) {
-    return env_secs(settings.get("AETHER_MASQUE_H2_KEEPALIVE_TIMEOUT_SECS"),
+    return env_secs(settings.get("HEMERA_MASQUE_H2_KEEPALIVE_TIMEOUT_SECS"),
                     KEEPALIVE_TIMEOUT_DEFAULT);
 }
 
@@ -193,4 +193,4 @@ std::vector<std::uint8_t> probe_capsule(const H2TunnelConfig& cfg, std::optional
 // task pumping outbound capsules and the keepalive select are the engine's, and they take the Dial
 // callback above rather than open a socket from this module.
 
-} // namespace aether::core::masque_h2
+} // namespace hemera::core::masque_h2

@@ -1,4 +1,4 @@
-#include "aethernoize.hpp"
+#include "hemeranoize.hpp"
 
 #include "transport.hpp" // UdpIo, the socket the three senders below write through
 
@@ -11,7 +11,7 @@
 #include <string>
 #include <thread>
 
-namespace aether::core::aethernoize {
+namespace hemera::core::hemeranoize {
 namespace {
 
 std::mt19937_64& entropy() {
@@ -121,9 +121,9 @@ constexpr std::uint8_t IKE_HEADER[] = {0x00, 0x00, 0x00, 0x14, 0x01, 0x01, 0x00,
                                        0x00, 0x00, 0x00, 0x00};
 
 // ---------------------------------------------------------------------------
-// The two rules the three senders share, kept apart so they read like aethernoize.rs.
+// The two rules the three senders share, kept apart so they read like hemeranoize.rs.
 
-// aethernoize.rs:313-315 -- `async fn send_connected(sock, pkt) { let _ = sock.send(pkt).await; }`.
+// hemeranoize.rs:313-315 -- `async fn send_connected(sock, pkt) { let _ = sock.send(pkt).await; }`.
 // One write on the socket, its result dropped. Rust's sock.send() is the connected-socket write and
 // there is no send_to anywhere in :313-400, so the destination cannot matter; WinUdp::send already
 // makes that same choice internally (transport.cpp:249-259: a connected socket takes ::send and
@@ -135,7 +135,7 @@ void send_connected(transport::UdpIo& sock, const SocketAddr& peer,
     (void)sock.send(peer, std::span<const std::uint8_t>{packet});
 }
 
-// The `if !interval.is_zero() { sleep(interval) }` the loops repeat (aethernoize.rs:334-336,
+// The `if !interval.is_zero() { sleep(interval) }` the loops repeat (hemeranoize.rs:334-336,
 // 342-344, 370-372) and apply_obfuscation's closing handshake_delay shares (357-359). The pause
 // comes after the send, the last packet of a run included, because that is how the Rust loop is
 // written: the gap ahead of the caller's real packet is part of what the noise looks like.
@@ -145,12 +145,12 @@ void pause_between(std::chrono::milliseconds interval) {
 
 } // namespace
 
-AetherNoizeConfig AetherNoizeConfig::off() {
+HemeraNoizeConfig HemeraNoizeConfig::off() {
     return {};
 }
 
-AetherNoizeConfig AetherNoizeConfig::light() {
-    AetherNoizeConfig cfg;
+HemeraNoizeConfig HemeraNoizeConfig::light() {
+    HemeraNoizeConfig cfg;
     cfg.i1 = std::string("<b 0d0a0d0a><t><r 20-32>");
     cfg.i2 = std::string("<rc 24-48>");
     cfg.jc = 4;
@@ -164,8 +164,8 @@ AetherNoizeConfig AetherNoizeConfig::light() {
     return cfg;
 }
 
-AetherNoizeConfig AetherNoizeConfig::balanced() {
-    AetherNoizeConfig cfg;
+HemeraNoizeConfig HemeraNoizeConfig::balanced() {
+    HemeraNoizeConfig cfg;
     cfg.i1 = std::string("<b 0d0a0d0a><t><rc 20-40>");
     cfg.i2 = std::string("<b 504f5354><rd 10-20><rc 20-30>");
     cfg.i3 = std::string("<r 30-50>");
@@ -180,8 +180,8 @@ AetherNoizeConfig AetherNoizeConfig::balanced() {
     return cfg;
 }
 
-AetherNoizeConfig AetherNoizeConfig::aggressive() {
-    AetherNoizeConfig cfg;
+HemeraNoizeConfig HemeraNoizeConfig::aggressive() {
+    HemeraNoizeConfig cfg;
     cfg.i1 = std::string("<b 0d0a0d0a><t><rc 40-64>");
     cfg.i2 = std::string("<b 504f5354><t><rd 15-30><rc 30-50>");
     cfg.i3 = std::string("<b 474554><rc 40-60>");
@@ -198,8 +198,8 @@ AetherNoizeConfig AetherNoizeConfig::aggressive() {
     return cfg;
 }
 
-AetherNoizeConfig AetherNoizeConfig::firewall() {
-    AetherNoizeConfig cfg;
+HemeraNoizeConfig HemeraNoizeConfig::firewall() {
+    HemeraNoizeConfig cfg;
     cfg.i1 = std::string("<b 0d0a0d0a><t><rc 24-44>");
     cfg.i2 = std::string("<b 504f5354><c><rd 12-24><rc 24-36>");
     cfg.i3 = std::string("<b 474554><r 30-50>");
@@ -214,8 +214,8 @@ AetherNoizeConfig AetherNoizeConfig::firewall() {
     return cfg;
 }
 
-AetherNoizeConfig AetherNoizeConfig::gfw() {
-    AetherNoizeConfig cfg;
+HemeraNoizeConfig HemeraNoizeConfig::gfw() {
+    HemeraNoizeConfig cfg;
     cfg.i1 = std::string("<b 16030100><c><rc 48-72>");
     cfg.i2 = std::string("<b 0d0a0d0a><t><rd 20-40><rc 36-60>");
     cfg.i3 = std::string("<b 474554202f20485454502f312e31><rc 40-64>");
@@ -233,11 +233,11 @@ AetherNoizeConfig AetherNoizeConfig::gfw() {
     return cfg;
 }
 
-bool AetherNoizeConfig::is_enabled() const {
+bool HemeraNoizeConfig::is_enabled() const {
     return jc > 0 || i1.has_value();
 }
 
-AetherNoizeConfig from_profile(std::string_view name) {
+HemeraNoizeConfig from_profile(std::string_view name) {
     const std::string wanted = [&] {
         std::string text(trim(name));
         std::ranges::transform(text, text.begin(),
@@ -245,12 +245,12 @@ AetherNoizeConfig from_profile(std::string_view name) {
         return text;
     }();
 
-    if (wanted == "off" || wanted == "none") return AetherNoizeConfig::off();
-    if (wanted == "light") return AetherNoizeConfig::light();
-    if (wanted == "firewall") return AetherNoizeConfig::firewall();
-    if (wanted == "gfw") return AetherNoizeConfig::gfw();
-    if (wanted == "aggressive" || wanted == "heavy") return AetherNoizeConfig::aggressive();
-    return AetherNoizeConfig::balanced();
+    if (wanted == "off" || wanted == "none") return HemeraNoizeConfig::off();
+    if (wanted == "light") return HemeraNoizeConfig::light();
+    if (wanted == "firewall") return HemeraNoizeConfig::firewall();
+    if (wanted == "gfw") return HemeraNoizeConfig::gfw();
+    if (wanted == "aggressive" || wanted == "heavy") return HemeraNoizeConfig::aggressive();
+    return HemeraNoizeConfig::balanced();
 }
 
 std::vector<std::uint8_t> parse_cps(std::string_view spec) {
@@ -331,7 +331,7 @@ std::vector<std::uint8_t> wrap_ikev2(std::span<const std::uint8_t> payload) {
     return header;
 }
 
-std::vector<std::uint8_t> generate_junk(const AetherNoizeConfig& cfg) {
+std::vector<std::uint8_t> generate_junk(const HemeraNoizeConfig& cfg) {
     std::size_t min_size = cfg.jmin;
     std::size_t max_size = cfg.jmax;
 
@@ -361,11 +361,11 @@ std::vector<std::uint8_t> generate_junk(const AetherNoizeConfig& cfg) {
 }
 
 void apply_obfuscation(transport::UdpIo& sock, const SocketAddr& peer,
-                       const AetherNoizeConfig& cfg) {
-    // aethernoize.rs:318-320: an off profile neither sends nor sleeps nor says anything; it returns.
+                       const HemeraNoizeConfig& cfg) {
+    // hemeranoize.rs:318-320: an off profile neither sends nor sleeps nor says anything; it returns.
     if (!cfg.is_enabled()) return;
 
-    // aethernoize.rs:322-329: the i1 signature behind an IKE v2 header, and 2 ms after it. wrap_ikev2
+    // hemeranoize.rs:322-329: the i1 signature behind an IKE v2 header, and 2 ms after it. wrap_ikev2
     // of a payload is never empty when the payload is not, so the send is unconditional here.
     if (cfg.i1) {
         const std::vector<std::uint8_t> payload = parse_cps(*cfg.i1);
@@ -376,14 +376,14 @@ void apply_obfuscation(transport::UdpIo& sock, const SocketAddr& peer,
         }
     }
 
-    // aethernoize.rs:331-337.
+    // hemeranoize.rs:331-337.
     for (std::size_t i = 0; i < cfg.jc_after_i1; ++i) {
         const std::vector<std::uint8_t> junk = generate_junk(cfg);
         send_connected(sock, peer, junk);
         pause_between(cfg.junk_interval);
     }
 
-    // aethernoize.rs:339-345. A second loop rather than one over jc_after_i1 + jc_before_hs, because
+    // hemeranoize.rs:339-345. A second loop rather than one over jc_after_i1 + jc_before_hs, because
     // the Rust runs two and the counts come from different config fields.
     for (std::size_t i = 0; i < cfg.jc_before_hs; ++i) {
         const std::vector<std::uint8_t> junk = generate_junk(cfg);
@@ -391,7 +391,7 @@ void apply_obfuscation(transport::UdpIo& sock, const SocketAddr& peer,
         pause_between(cfg.junk_interval);
     }
 
-    // aethernoize.rs:347-355: i2, i3, i4, i5 in that order, 1 ms after each one that sends. A
+    // hemeranoize.rs:347-355: i2, i3, i4, i5 in that order, 1 ms after each one that sends. A
     // signature that parses to nothing is skipped without the pause, as the Rust's `if !payload.is_
     // empty()` guard makes it.
     for (const auto* sig : {&cfg.i2, &cfg.i3, &cfg.i4, &cfg.i5}) {
@@ -402,13 +402,13 @@ void apply_obfuscation(transport::UdpIo& sock, const SocketAddr& peer,
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    // aethernoize.rs:357-359: the caller's cue to start the real handshake is this pause.
+    // hemeranoize.rs:357-359: the caller's cue to start the real handshake is this pause.
     pause_between(cfg.handshake_delay);
 }
 
 void send_post_handshake_junk(transport::UdpIo& sock, const SocketAddr& peer,
-                              const AetherNoizeConfig& cfg) {
-    // aethernoize.rs:367-373. No is_enabled() guard, because aethernoize.rs:362-366 has none: the
+                              const HemeraNoizeConfig& cfg) {
+    // hemeranoize.rs:367-373. No is_enabled() guard, because hemeranoize.rs:362-366 has none: the
     // count decides on its own, and a zero jc_after_hs costs one empty loop.
     for (std::size_t i = 0; i < cfg.jc_after_hs; ++i) {
         const std::vector<std::uint8_t> junk = generate_junk(cfg);
@@ -417,17 +417,17 @@ void send_post_handshake_junk(transport::UdpIo& sock, const SocketAddr& peer,
     }
 }
 
-void send_keepalive_junk(transport::UdpIo& sock, const AetherNoizeConfig& cfg) {
-    // aethernoize.rs:377-379.
+void send_keepalive_junk(transport::UdpIo& sock, const HemeraNoizeConfig& cfg) {
+    // hemeranoize.rs:377-379.
     if (!cfg.is_enabled()) return;
 
-    // aethernoize.rs:381-383. `0..=base` is inclusive on both ends, which is the port's `between`,
+    // hemeranoize.rs:381-383. `0..=base` is inclusive on both ends, which is the port's `between`,
     // so the run is base+0 .. 2*base packets long -- never zero, never a fixed length.
     const std::size_t base = std::max<std::size_t>(cfg.jc_before_hs, 1);
     const std::size_t extra = between(0, base);
     const std::size_t count = base + extra;
 
-    // aethernoize.rs:385-399.
+    // hemeranoize.rs:385-399.
     for (std::size_t i = 0; i < count; ++i) {
         std::vector<std::uint8_t> junk = generate_junk(cfg);
         if (!junk.empty() && junk[0] >= 1 && junk[0] <= 4) {
@@ -436,14 +436,14 @@ void send_keepalive_junk(transport::UdpIo& sock, const AetherNoizeConfig& cfg) {
             // truncating cast below.
             junk[0] = static_cast<std::uint8_t>(junk[0] + 0x40);
         }
-        // The destination is an unset address, and that is the faithful reading: aethernoize.rs:376
+        // The destination is an unset address, and that is the faithful reading: hemeranoize.rs:376
         // is given no peer to name, only the socket and the config, and its send() writes through a
         // socket that is already connected -- wireguard.rs:156-157 clones self.sock, which :107 got
         // from bind_via_upstream, and every write to it is send() and never send_to(). WinUdp takes
         // ::send and ignores the destination in that case, so nothing is aimed at nothing.
         send_connected(sock, SocketAddr{}, junk);
 
-        // aethernoize.rs:394-398: the gap is the profile's interval plus up to 8 ms, so the
+        // hemeranoize.rs:394-398: the gap is the profile's interval plus up to 8 ms, so the
         // keepalive rhythm is never a clock tick either.
         const std::size_t jitter = between(0, 8);
         pause_between(cfg.junk_interval + std::chrono::milliseconds(
@@ -451,4 +451,4 @@ void send_keepalive_junk(transport::UdpIo& sock, const AetherNoizeConfig& cfg) {
     }
 }
 
-} // namespace aether::core::aethernoize
+} // namespace hemera::core::hemeranoize

@@ -8,7 +8,7 @@
 #include <span>
 #include <utility>
 
-namespace aether::core {
+namespace hemera::core {
 
 // Port of fragment.rs. Only the HTTP/2 (TCP) carrier uses this: it splits the TLS ClientHello so
 // a middlebox never sees a whole one. QUIC needs nothing here, its packets are already pieces.
@@ -58,4 +58,4 @@ class FragmentWriter {
     bool first_write_ = true;
 };
 
-} // namespace aether::core
+} // namespace hemera::core

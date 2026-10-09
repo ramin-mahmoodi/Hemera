@@ -23,7 +23,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-namespace aether::core {
+namespace hemera::core {
 
 namespace {
 
@@ -248,4 +248,4 @@ EchTransport default_ech_transport(const Settings& settings) {
     };
 }
 
-} // namespace aether::core
+} // namespace hemera::core

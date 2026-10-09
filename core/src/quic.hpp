@@ -13,15 +13,15 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core::quic {
+namespace hemera::core::quic {
 
-// Port of everything aether/src/quic.rs decides before it touches a socket: the sizes, the flags,
+// Port of everything hemera/src/quic.rs decides before it touches a socket: the sizes, the flags,
 // the timeouts, the environment knobs, the version-negotiation bait packet, and the QUIC transport
 // parameters the TLS config of tls.rs carries. The event loop, the h3 connection and the sockets
 // are the engine's; the numbers it must run on are all here, so a handshake cannot quietly drift
 // from what the Rust core does.
 
-using NoizeConfig = ::aether::core::noize::NoizeConfig;
+using NoizeConfig = ::hemera::core::noize::NoizeConfig;
 
 inline constexpr std::size_t MAX_DATAGRAM_SIZE = 1350;
 inline constexpr std::size_t MIN_DATAGRAM_SIZE = 1200;
@@ -157,4 +157,4 @@ struct VerifyParams {
     IpAddress local_ipv4;
 };
 
-} // namespace aether::core::quic
+} // namespace hemera::core::quic

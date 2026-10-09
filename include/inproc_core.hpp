@@ -8,7 +8,7 @@
 #include <string_view>
 #include <cstdint>
 
-namespace aether::core {
+namespace hemera::core {
 
 using localapi::Cancel;
 
@@ -18,10 +18,10 @@ struct InprocCallbacks {
     std::function<void(uint64_t up_bytes, uint64_t down_bytes, uint64_t uptime_secs)> on_stats;
 };
 
-// Runs the Aether proxy core engine synchronously on the calling thread until cancelled or terminated.
+// Runs the Hemera proxy core engine synchronously on the calling thread until cancelled or terminated.
 int run_inproc(const std::vector<std::string>& args,
                const std::map<std::string, std::string>& settings_env,
                Cancel& cancel,
                InprocCallbacks callbacks = InprocCallbacks{});
 
-} // namespace aether::core
+} // namespace hemera::core

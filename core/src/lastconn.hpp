@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core {
+namespace hemera::core {
 
 // Port of lastconn.rs: the gateways the tunnel last got through to, kept in a small TOML file so
 // a restart tries them before it goes probing again. Gateways are only carried over between runs
@@ -41,4 +41,4 @@ struct LastConnection {
 [[nodiscard]] std::vector<std::pair<std::string, std::uint16_t>> usable_peers(
     const LastConnection& cached, std::string_view carrier);
 
-} // namespace aether::core
+} // namespace hemera::core

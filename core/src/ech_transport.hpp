@@ -9,8 +9,8 @@
 #include "dns.hpp"
 #include "settings.hpp"
 
-namespace aether::core {
+namespace hemera::core {
 
 [[nodiscard]] EchTransport default_ech_transport(const Settings& settings);
 
-} // namespace aether::core
+} // namespace hemera::core

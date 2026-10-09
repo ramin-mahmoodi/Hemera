@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo =======================================================
-echo  Building Aether Native (C++26) - Zero Dependencies
+echo  Building Hemera Native (C++26) - Zero Dependencies
 echo =======================================================
 
 :: 0. Check and automatically initialize MSVC environment if cl is not in PATH

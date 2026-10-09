@@ -1,4 +1,4 @@
-// Port of aether/src/ffi.rs (commit 6175b67): the C ABI of core/include/aether_core.h. See
+// Port of hemera/src/ffi.rs (commit 6175b67): the C ABI of core/include/hemera_core.h. See
 // ffi.hpp for the shape of the port and for the one thing the Rust gets from its own crate that
 // the port takes from the supervisor instead (the Host). Everything else follows ffi.rs line for
 // line: the reply envelope, the serde wording of a refused payload, the three registries behind
@@ -42,14 +42,14 @@
 #include <thread>
 #include <utility>
 
-namespace aether::core::ffi {
+namespace hemera::core::ffi {
 namespace {
 
 // ffi.rs's "could not start the async runtime": the port's counterpart, for a call that would
 // do engine work with no host installed, or a job whose worker thread could not start.
 constexpr std::string_view RUNTIME_ERROR = "could not start the async runtime";
 
-// What aether_string_free-compatible replies are allocated with, and the reply a text with an
+// What hemera_string_free-compatible replies are allocated with, and the reply a text with an
 // embedded null byte is replaced by (ffi.rs::into_c_string's static fallback).
 constexpr const char* NULL_BYTE_REPLY = R"({"error":"the reply held a null byte","ok":false})";
 constexpr const char* PANIC_REPLY = R"({"error":"the core panicked","ok":false})";
@@ -181,7 +181,7 @@ json::Value error_value(std::string message) {
     return json::Value(std::move(object));
 }
 
-// ffi.rs::into_c_string: a malloc'd copy the caller must hand back to aether_string_free, and
+// ffi.rs::into_c_string: a malloc'd copy the caller must hand back to hemera_string_free, and
 // the static refusal for a text that holds a null byte (json::Value::dump escapes every control
 // character, so the fallback is unreachable through a reply -- kept because the Rust keeps it).
 char* into_c_string(const std::string& text) {
@@ -220,7 +220,7 @@ char* respond(Work&& work) {
 
 // The worker half of ffi.rs::spawn_job: the outcome of the work, folded into the envelope the
 // Rust folds it into -- including the catch-all that stands in for catch_unwind -- written
-// under the slot's mutex, where aether_job_poll reads it.
+// under the slot's mutex, where hemera_job_poll reads it.
 void run_job_work(const JobWork& work, localapi::Cancel cancel,
                   const std::shared_ptr<std::mutex>& state_mutex,
                   const std::shared_ptr<JobSlot>& slot) {
@@ -868,19 +868,19 @@ json::Value keep_identity(Identity identity) {
 
 extern "C" {
 
-char* aether_version() {
+char* hemera_version() {
     return respond([]() -> Reply {
         return object_reply("version", json::Value(std::string(CORE_VERSION)));
     });
 }
 
-void aether_string_free(char* raw) {
-    // ffi.rs::aether_string_free: NULL is ignored, and the string dies by the allocator that
+void hemera_string_free(char* raw) {
+    // ffi.rs::hemera_string_free: NULL is ignored, and the string dies by the allocator that
     // made it -- the malloc into_c_string used. free() throws nothing, so the C boundary holds.
     std::free(raw);
 }
 
-char* aether_job_poll(std::uint64_t id) {
+char* hemera_job_poll(std::uint64_t id) {
     return respond([id]() -> Reply {
         const std::lock_guard guard(jobs_mutex());
         const auto found = jobs().find(id);
@@ -896,7 +896,7 @@ char* aether_job_poll(std::uint64_t id) {
     });
 }
 
-char* aether_job_cancel(std::uint64_t id) {
+char* hemera_job_cancel(std::uint64_t id) {
     return respond([id]() -> Reply {
         const std::lock_guard guard(jobs_mutex());
         const auto found = jobs().find(id);
@@ -908,7 +908,7 @@ char* aether_job_cancel(std::uint64_t id) {
     });
 }
 
-char* aether_job_free(std::uint64_t id) {
+char* hemera_job_free(std::uint64_t id) {
     return respond([id]() -> Reply {
         // As the Rust removes first and cancels after: the job leaves the registry under the
         // lock, and the flag goes up outside it. Freeing an id that was never there is not an
@@ -928,7 +928,7 @@ char* aether_job_free(std::uint64_t id) {
     });
 }
 
-char* aether_identity_open(const char* payload) {
+char* hemera_identity_open(const char* payload) {
     return respond([payload]() -> Reply {
         auto parsed = read_json<OpenPayload>(payload, parse_open_payload);
         if (!parsed) return std::unexpected(parsed.error());
@@ -968,7 +968,7 @@ char* aether_identity_open(const char* payload) {
     });
 }
 
-char* aether_identity_summary(std::uint64_t id) {
+char* hemera_identity_summary(std::uint64_t id) {
     return respond([id]() -> Reply {
         auto identity = identity_of(id);
         if (!identity) return std::unexpected(identity.error());
@@ -976,7 +976,7 @@ char* aether_identity_summary(std::uint64_t id) {
     });
 }
 
-char* aether_identity_free(std::uint64_t id) {
+char* hemera_identity_free(std::uint64_t id) {
     return respond([id]() -> Reply {
         {
             const std::lock_guard guard(identities_mutex());
@@ -986,7 +986,7 @@ char* aether_identity_free(std::uint64_t id) {
     });
 }
 
-char* aether_scan_start(std::uint64_t identity, const char* payload) {
+char* hemera_scan_start(std::uint64_t identity, const char* payload) {
     return respond([identity, payload]() -> Reply {
         auto parsed = read_json<ScanPayload>(payload, parse_scan_payload);
         if (!parsed) return std::unexpected(parsed.error());
@@ -1031,7 +1031,7 @@ char* aether_scan_start(std::uint64_t identity, const char* payload) {
     });
 }
 
-char* aether_verify_start(std::uint64_t identity, const char* payload) {
+char* hemera_verify_start(std::uint64_t identity, const char* payload) {
     return respond([identity, payload]() -> Reply {
         auto parsed = read_json<TunnelPayload>(payload, parse_tunnel_payload);
         if (!parsed) return std::unexpected(parsed.error());
@@ -1059,7 +1059,7 @@ char* aether_verify_start(std::uint64_t identity, const char* payload) {
     });
 }
 
-char* aether_tunnel_start(std::uint64_t identity, const char* payload) {
+char* hemera_tunnel_start(std::uint64_t identity, const char* payload) {
     return respond([identity, payload]() -> Reply {
         auto parsed = read_json<TunnelPayload>(payload, parse_tunnel_payload);
         if (!parsed) return std::unexpected(parsed.error());
@@ -1092,7 +1092,7 @@ char* aether_tunnel_start(std::uint64_t identity, const char* payload) {
     });
 }
 
-char* aether_core_start(const char* arguments) {
+char* hemera_core_start(const char* arguments) {
     return respond([arguments]() -> Reply {
         std::vector<std::string> argument_list;
         if (arguments != nullptr) {
@@ -1141,7 +1141,7 @@ char* aether_core_start(const char* arguments) {
     });
 }
 
-char* aether_team_sign_in(const char* payload) {
+char* hemera_team_sign_in(const char* payload) {
     return respond([payload]() -> Reply {
         auto parsed = read_json<TeamPayload>(payload, parse_team_payload);
         if (!parsed) return std::unexpected(parsed.error());
@@ -1158,7 +1158,7 @@ char* aether_team_sign_in(const char* payload) {
     });
 }
 
-char* aether_team_code_request(const char* payload) {
+char* hemera_team_code_request(const char* payload) {
     return respond([payload]() -> Reply {
         auto parsed = read_json<TeamPayload>(payload, parse_team_payload);
         if (!parsed) return std::unexpected(parsed.error());
@@ -1191,7 +1191,7 @@ char* aether_team_code_request(const char* payload) {
     });
 }
 
-char* aether_team_code_resend(std::uint64_t session) {
+char* hemera_team_code_resend(std::uint64_t session) {
     return respond([session]() -> Reply {
         auto slot = session_of(session);
         if (!slot) return std::unexpected(slot.error());
@@ -1209,7 +1209,7 @@ char* aether_team_code_resend(std::uint64_t session) {
     });
 }
 
-char* aether_team_code_submit(std::uint64_t session, const char* code) {
+char* hemera_team_code_submit(std::uint64_t session, const char* code) {
     return respond([session, code]() -> Reply {
         // The Rust reads the code before it looks the session up, so a null code is reported
         // even against a session that does not exist.
@@ -1235,7 +1235,7 @@ char* aether_team_code_submit(std::uint64_t session, const char* code) {
     });
 }
 
-char* aether_team_session_free(std::uint64_t id) {
+char* hemera_team_session_free(std::uint64_t id) {
     return respond([id]() -> Reply {
         {
             const std::lock_guard guard(sessions_mutex());
@@ -1245,7 +1245,7 @@ char* aether_team_session_free(std::uint64_t id) {
     });
 }
 
-char* aether_team_token_set(const char* token) {
+char* hemera_team_token_set(const char* token) {
     return respond([token]() -> Reply {
         auto token_text = read_str(token);
         if (!token_text) return std::unexpected(token_text.error());
@@ -1259,7 +1259,7 @@ char* aether_team_token_set(const char* token) {
     });
 }
 
-char* aether_team_token_clear() {
+char* hemera_team_token_clear() {
     return respond([]() -> Reply {
         const auto host = current_host();
         if (!host) return std::unexpected(std::string(RUNTIME_ERROR));
@@ -1270,4 +1270,4 @@ char* aether_team_token_clear() {
 
 } // extern "C"
 
-} // namespace aether::core::ffi
+} // namespace hemera::core::ffi

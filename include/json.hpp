@@ -12,7 +12,7 @@
 #include <cctype>
 #include <format>
 
-namespace aether::json {
+namespace hemera::json {
 
 class Value;
 using Null = std::monostate;
@@ -427,6 +427,8 @@ inline Value profile_to_json(const ConnectionProfile& p, bool sanitize_credentia
     o["exit_loc"] = p.exit_loc;
     o["system_proxy"] = p.system_proxy;
     o["tun_mode"] = p.tun_mode;
+    o["fragment"] = p.fragment;
+    o["ech"] = p.ech;
     return Value(std::move(o));
 }
 
@@ -458,6 +460,8 @@ inline ConnectionProfile profile_from_json(const Value& val) {
     p.exit_loc = val.get("exit_loc").as_string("");
     p.system_proxy = val.get("system_proxy").as_bool(true);
     p.tun_mode = val.get("tun_mode").as_bool(false);
+    p.fragment = val.get("fragment").as_bool(false);
+    p.ech = val.get("ech").as_bool(false);
     return p;
 }
 
@@ -483,4 +487,4 @@ inline AppSettings settings_from_json(const Value& val) {
     return s;
 }
 
-} // namespace aether::json
+} // namespace hemera::json

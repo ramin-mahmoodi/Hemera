@@ -1,4 +1,4 @@
-// The socket half of aether/src/masque_h2.rs: the dial, the BoringSSL handshake over what it
+// The socket half of hemera/src/masque_h2.rs: the dial, the BoringSSL handshake over what it
 // dialled with its one ECH retry (masque_h2.rs:209-277), the nghttp2 connection and the connect-ip
 // request on stream 1, the data-plane probe verify_h2 runs on them (masque_h2.rs:279-377) and the
 // tunnel loop that carries traffic on them (masque_h2.rs:386-657).
@@ -53,11 +53,11 @@
 #include <string_view>
 #include <utility>
 
-namespace aether::core::masque_h2 {
+namespace hemera::core::masque_h2 {
 
-// tls.hpp declares its helpers directly in aether::core; transport.cpp:33 gives them the same
+// tls.hpp declares its helpers directly in hemera::core; transport.cpp:33 gives them the same
 // spelling, and it is what the Rust's `tls::` call sites (masque_h2.rs:226-258) read as.
-namespace tls = ::aether::core;
+namespace tls = ::hemera::core;
 
 namespace {
 
@@ -73,7 +73,7 @@ const struct Winsock {
 using Clock = std::chrono::steady_clock;
 using Millis = std::chrono::milliseconds;
 
-// AetherError's kinds this half can produce, so a failure reads exactly like the Rust's Display:
+// HemeraError's kinds this half can produce, so a failure reads exactly like the Rust's Display:
 // "io: ...", "tls: ...", "ech: ...", "masque: ...", "other: ..." (error.rs:3-38).
 std::string prefixed(std::string_view kind, std::string_view text) {
     return std::string(kind) + ": " + std::string(text);
@@ -211,7 +211,7 @@ using OwnedSsl = std::unique_ptr<SSL, SslFree>;
 // CONNECT and reads its answer to the empty line. Every step shares the one handshake budget,
 // which is HANDSHAKE_TIMEOUT_MS capped by what the caller still has -- a run's open-ended
 // deadline is not a license for a proxy handshake to take ten years.
-namespace up = ::aether::core::upstream;
+namespace up = ::hemera::core::upstream;
 
 namespace {
 
@@ -1322,7 +1322,7 @@ connect_tcp(const SocketAddr& peer, std::optional<Millis> budget) {
     if (socket == INVALID_SOCKET) {
         return std::unexpected(prefixed("io", winsock_reason(WSAGetLastError())));
     }
-    // Rust's dial() gives AetherError::Io for every way the stream does not come up; the error text
+    // Rust's dial() gives HemeraError::Io for every way the stream does not come up; the error text
     // a DialSocket hands back is already that, so it is built here and never re-prefixed.
     u_long mode = 1;
     ::ioctlsocket(socket, FIONBIO, &mode);
@@ -1421,7 +1421,7 @@ std::expected<Millis, std::string> verify_h2_with(const H2TunnelConfig& cfg, Mil
     const Prober probe(cfg);
 
     // connect_tls: the dial, the shaped handshake and its one ECH retry, all inside the run's
-    // deadline (masque_h2.rs:284). Its Err is already an AetherError's words; its timeout is the
+    // deadline (masque_h2.rs:284). Its Err is already an HemeraError's words; its timeout is the
     // Rust's one sentence.
     auto brought_up = connect_tls(cfg, settings, dial, deadline, observer);
     if (!brought_up) return std::unexpected(render(brought_up.error()));
@@ -1467,7 +1467,7 @@ std::expected<Millis, std::string> verify_h2_with(const H2TunnelConfig& cfg, Mil
     }
 
     if (!data_check) {
-        // AETHER_MASQUE_NO_DATA_CHECK: the answer's status is the whole check (masque_h2.rs:314-316).
+        // HEMERA_MASQUE_NO_DATA_CHECK: the answer's status is the whole check (masque_h2.rs:314-316).
         return std::chrono::duration_cast<Millis>(Clock::now() - start);
     }
 
@@ -1874,4 +1874,4 @@ std::expected<void, std::string> run_with(const H2TunnelConfig& cfg, const Setti
     }
 }
 
-} // namespace aether::core::masque_h2
+} // namespace hemera::core::masque_h2

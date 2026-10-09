@@ -12,7 +12,7 @@
 #include <string>
 #include <algorithm>
 
-namespace aether::gui::ds {
+namespace hemera::gui::ds {
 
 enum class ThemeMode {
     System,
@@ -258,7 +258,7 @@ struct MetricTokens {
 struct TypoTokens {
     int hero_status_title     = 26; // "Connected" / "Not connected"
     int view_title            = 20; // "Settings" / "Logs" / "About"
-    int app_title             = 15; // "Aether"
+    int app_title             = 15; // "Hemera"
     int body_label            = 14; // Labels & values
     int mono_value            = 13; // Monospace values
     int footnote              = 12; // "Free and open source"
@@ -292,4 +292,4 @@ inline float scale_f(float dip, UINT dpi) {
     return (dip * static_cast<float>(dpi)) / 96.0f;
 }
 
-} // namespace aether::gui::ds
+} // namespace hemera::gui::ds

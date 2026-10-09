@@ -11,9 +11,9 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core::zerotrust {
+namespace hemera::core::zerotrust {
 
-// Port of aether/src/zerotrust.rs, commit 6175b67: how a device signs in to a Cloudflare Zero
+// Port of hemera/src/zerotrust.rs, commit 6175b67: how a device signs in to a Cloudflare Zero
 // Trust team and comes back holding an enrolment token. What the token is then spent on -- the
 // registration body, the device keys, the account file -- is the account layer's, and identity.hpp
 // already carries the account itself.
@@ -28,7 +28,7 @@ namespace aether::core::zerotrust {
 // SECURITY. An access token, a client secret, a login code or a nonce never enters an error string,
 // a log line or a note -- zerotrust.rs never prints them either, and the checks here keep it that
 // way. `redacted()` is the only rendering of a value that carries one, and it reports lengths.
-// Nothing here reads or writes aether-masque.toml; the token goes to the account layer, which
+// Nothing here reads or writes hemera-masque.toml; the token goes to the account layer, which
 // decides where it lands (Identity's access_token field, written by save_identity()).
 
 // -- Names, paths and limits a caller reads --------------------------------------------------
@@ -71,11 +71,11 @@ inline constexpr std::string_view FCM_TOKEN_PREFIX = ":APA91b";
 
 // The settings the enrolment reads. `Settings` carries them under exactly these keys, which are
 // the environment names the Rust core reads.
-inline constexpr std::string_view TEAM_ENV = "AETHER_TEAM";
-inline constexpr std::string_view CLIENT_ID_ENV = "AETHER_ACCESS_CLIENT_ID";
-inline constexpr std::string_view CLIENT_SECRET_ENV = "AETHER_ACCESS_CLIENT_SECRET";
-inline constexpr std::string_view TOKEN_ENV = "AETHER_ACCESS_TOKEN";
-inline constexpr std::string_view EMAIL_ENV = "AETHER_ACCESS_EMAIL";
+inline constexpr std::string_view TEAM_ENV = "HEMERA_TEAM";
+inline constexpr std::string_view CLIENT_ID_ENV = "HEMERA_ACCESS_CLIENT_ID";
+inline constexpr std::string_view CLIENT_SECRET_ENV = "HEMERA_ACCESS_CLIENT_SECRET";
+inline constexpr std::string_view TOKEN_ENV = "HEMERA_ACCESS_TOKEN";
+inline constexpr std::string_view EMAIL_ENV = "HEMERA_ACCESS_EMAIL";
 
 // -- The team, and what the caller handed with it --------------------------------------------
 
@@ -170,7 +170,7 @@ struct AccessField {
 // A request the enrolment is asking for. The engine owns the client: it sends it with
 // `UA_REGISTER` (consts.hpp) as the user agent, `AUTH_TIMEOUT_MS` as the timeout, server-certificate
 // verification off -- zerotrust.rs sets `danger_accept_invalid_certs(true)` unconditionally -- and
-// through the `AETHER_UPSTREAM` proxy when one is configured, which is all `through_upstream` does.
+// through the `HEMERA_UPSTREAM` proxy when one is configured, which is all `through_upstream` does.
 // `follow_redirects` and `keep_cookies` say which of the two clients the Rust builds is meant: the
 // email flow's keeps a cookie jar and follows redirects, the service-token one keeps neither.
 // `form` is the urlencoded body, fields in the order they are listed, percent-encoded by the engine;
@@ -405,4 +405,4 @@ private:
 
 void clear_token();
 
-} // namespace aether::core::zerotrust
+} // namespace hemera::core::zerotrust

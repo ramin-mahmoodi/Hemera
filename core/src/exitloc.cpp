@@ -1,4 +1,4 @@
-// Port of aether/src/exitloc.rs.
+// Port of hemera/src/exitloc.rs.
 
 #include "exitloc.hpp"
 
@@ -8,7 +8,7 @@
 #include <format>
 #include <utility>
 
-namespace aether::core::exitloc {
+namespace hemera::core::exitloc {
 namespace {
 
 // to_ascii_uppercase: only A-Z move, whatever the locale says about the rest.
@@ -114,7 +114,7 @@ std::optional<Policy> Policy::parse(std::string_view raw, std::chrono::seconds i
 }
 
 std::optional<Policy> Policy::from_env(const Settings& settings) {
-    return parse(settings.get("AETHER_EXIT_LOC").value_or(std::string_view{}),
+    return parse(settings.get("HEMERA_EXIT_LOC").value_or(std::string_view{}),
                  interval_from_env(settings));
 }
 
@@ -138,7 +138,7 @@ std::chrono::seconds Policy::interval() const {
 }
 
 std::chrono::seconds interval_from_env(const Settings& settings) {
-    const auto value = settings.get("AETHER_EXIT_LOC_SECS");
+    const auto value = settings.get("HEMERA_EXIT_LOC_SECS");
     if (value) {
         std::string_view text = *value;
         // Rust's u64::from_str admits a leading '+'; spaces around the number it does not, and
@@ -190,7 +190,7 @@ Exit parse_exit(std::string_view body, std::chrono::milliseconds rtt) {
 
 std::string trace_request() {
     return std::format("GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: "
-                       "aether\r\n\r\n",
+                       "hemera\r\n\r\n",
                        TRACE_PATH, TRACE_HOST);
 }
 
@@ -247,4 +247,4 @@ WatchStep watch_step(const Policy& policy, const std::expected<std::string, std:
                      "exit location changed to " + loc};
 }
 
-} // namespace aether::core::exitloc
+} // namespace hemera::core::exitloc

@@ -23,7 +23,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 
-namespace aether {
+namespace hemera {
 
 namespace {
 
@@ -45,13 +45,13 @@ std::filesystem::path get_roaming_appdata_dir() {
     }
 
     std::filesystem::path hemera_dir = base / "Hemera";
-    std::filesystem::path old_aether_dir = base / "Aether";
+    std::filesystem::path old_hemera_dir = base / "Hemera";
 
     // Smooth migration: copy existing configuration if Hemera directory is fresh
-    if (!std::filesystem::exists(hemera_dir) && std::filesystem::exists(old_aether_dir)) {
+    if (!std::filesystem::exists(hemera_dir) && std::filesystem::exists(old_hemera_dir)) {
         std::error_code ec;
         std::filesystem::create_directories(hemera_dir, ec);
-        std::filesystem::copy(old_aether_dir, hemera_dir, std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing, ec);
+        std::filesystem::copy(old_hemera_dir, hemera_dir, std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing, ec);
     }
 
     return hemera_dir;
@@ -59,12 +59,12 @@ std::filesystem::path get_roaming_appdata_dir() {
 
 } // namespace
 
-struct AetherEngine::Impl {
+struct HemeraEngine::Impl {
     mutable std::recursive_mutex mutex;
     ConnectionState state;
     ConnectionProfile profile;
     LiveStats stats;
-    aether::core::Cancel cancel_token;
+    hemera::core::Cancel cancel_token;
     std::unique_ptr<std::thread> core_thread;
 
     StateCallback on_state_changed;
@@ -88,6 +88,17 @@ struct AetherEngine::Impl {
         settings_file = data_dir / "settings.json";
 
         state.kind = StateKind::Idle;
+
+        if (std::filesystem::exists(profile_file)) {
+            std::ifstream in(profile_file);
+            if (in.is_open()) {
+                std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                auto val = json::parse(content);
+                if (val) {
+                    profile = json::profile_from_json(*val);
+                }
+            }
+        }
     }
 
     ~Impl() {
@@ -130,45 +141,45 @@ struct AetherEngine::Impl {
     }
 };
 
-AetherEngine::AetherEngine() : impl_(std::make_unique<Impl>()) {
+HemeraEngine::HemeraEngine() : impl_(std::make_unique<Impl>()) {
     network::init();
 }
 
-AetherEngine::~AetherEngine() {
+HemeraEngine::~HemeraEngine() {
     shutdown_blocking();
     network::shutdown();
 }
 
-void AetherEngine::set_on_state_changed(StateCallback cb) {
+void HemeraEngine::set_on_state_changed(StateCallback cb) {
     std::lock_guard lock(impl_->mutex);
     impl_->on_state_changed = std::move(cb);
 }
 
-void AetherEngine::set_on_log(LogCallback cb) {
+void HemeraEngine::set_on_log(LogCallback cb) {
     std::lock_guard lock(impl_->mutex);
     impl_->on_log = std::move(cb);
 }
 
-void AetherEngine::set_on_scan_budget(BudgetCallback cb) {
+void HemeraEngine::set_on_scan_budget(BudgetCallback cb) {
     std::lock_guard lock(impl_->mutex);
     impl_->on_scan_budget = std::move(cb);
 }
 
-void AetherEngine::set_on_access_code_requested(AccessCodeCallback cb) {
+void HemeraEngine::set_on_access_code_requested(AccessCodeCallback cb) {
     std::lock_guard lock(impl_->mutex);
     impl_->on_access_code_requested = std::move(cb);
 }
 
-void AetherEngine::set_on_stats(StatsCallback cb) {
+void HemeraEngine::set_on_stats(StatsCallback cb) {
     std::lock_guard lock(impl_->mutex);
     impl_->on_stats = std::move(cb);
 }
 
-std::filesystem::path AetherEngine::app_data_dir() const {
+std::filesystem::path HemeraEngine::app_data_dir() const {
     return impl_->data_dir;
 }
 
-ConnectionProfile AetherEngine::load_profile() const {
+ConnectionProfile HemeraEngine::load_profile() const {
     if (std::filesystem::exists(impl_->profile_file)) {
         std::ifstream in(impl_->profile_file);
         if (in.is_open()) {
@@ -182,7 +193,11 @@ ConnectionProfile AetherEngine::load_profile() const {
     return ConnectionProfile{};
 }
 
-void AetherEngine::save_profile(const ConnectionProfile& profile) const {
+void HemeraEngine::save_profile(const ConnectionProfile& profile) const {
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->profile = profile;
+    }
     auto json_val = json::profile_to_json(profile, true);
     std::error_code ec;
     std::filesystem::create_directories(impl_->data_dir, ec);
@@ -192,7 +207,11 @@ void AetherEngine::save_profile(const ConnectionProfile& profile) const {
     }
 }
 
-AppSettings AetherEngine::load_settings() const {
+void HemeraEngine::set_active_profile(const ConnectionProfile& profile) {
+    save_profile(profile);
+}
+
+AppSettings HemeraEngine::load_settings() const {
     if (std::filesystem::exists(impl_->settings_file)) {
         std::ifstream in(impl_->settings_file);
         if (in.is_open()) {
@@ -206,7 +225,7 @@ AppSettings AetherEngine::load_settings() const {
     return AppSettings{};
 }
 
-void AetherEngine::save_settings(const AppSettings& settings) const {
+void HemeraEngine::save_settings(const AppSettings& settings) const {
     auto json_val = json::settings_to_json(settings);
     std::error_code ec;
     std::filesystem::create_directories(impl_->data_dir, ec);
@@ -216,22 +235,22 @@ void AetherEngine::save_settings(const AppSettings& settings) const {
     }
 }
 
-ConnectionState AetherEngine::current_state() const {
+ConnectionState HemeraEngine::current_state() const {
     std::lock_guard lock(impl_->mutex);
     return impl_->state;
 }
 
-ConnectionProfile AetherEngine::active_profile() const {
+ConnectionProfile HemeraEngine::active_profile() const {
     std::lock_guard lock(impl_->mutex);
     return impl_->profile;
 }
 
-LiveStats AetherEngine::current_stats() const {
+LiveStats HemeraEngine::current_stats() const {
     std::lock_guard lock(impl_->mutex);
     return impl_->stats;
 }
 
-std::expected<void, std::string> AetherEngine::connect(std::optional<ConnectionProfile> custom_profile) {
+std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionProfile> custom_profile) {
     std::lock_guard lock(impl_->mutex);
 
     if (impl_->state.kind == StateKind::Connected || impl_->state.kind == StateKind::Connecting) {
@@ -240,7 +259,7 @@ std::expected<void, std::string> AetherEngine::connect(std::optional<ConnectionP
 
     ConnectionProfile prof = custom_profile.value_or(load_profile());
     impl_->profile = prof;
-    impl_->cancel_token = aether::core::Cancel();
+    impl_->cancel_token = hemera::core::Cancel();
 
     // Clean up any old thread
     if (impl_->core_thread && impl_->core_thread->joinable()) {
@@ -252,13 +271,18 @@ std::expected<void, std::string> AetherEngine::connect(std::optional<ConnectionP
     impl_->core_thread = std::make_unique<std::thread>([this, prof, cancel = impl_->cancel_token]() mutable {
         std::vector<std::string> args = prof.as_args();
         std::map<std::string, std::string> env;
-        if (prof.masque_http2) env["AETHER_MASQUE_HTTP2"] = "1";
-        if (!prof.access_email.empty()) env["AETHER_ACCESS_EMAIL"] = prof.access_email;
-        if (!prof.access_client_id.empty()) env["AETHER_ACCESS_CLIENT_ID"] = prof.access_client_id;
-        if (!prof.access_client_secret.empty()) env["AETHER_ACCESS_CLIENT_SECRET"] = prof.access_client_secret;
-        if (!prof.access_token.empty()) env["AETHER_ACCESS_TOKEN"] = prof.access_token;
+        if (prof.masque_http2) env["HEMERA_MASQUE_HTTP2"] = "1";
+        if (prof.fragment) env["HEMERA_MASQUE_H2_FRAGMENT"] = "1";
+        if (prof.ech) env["HEMERA_ECH"] = "auto";
+        if (!prof.exit_loc.empty()) env["HEMERA_EXIT_LOC"] = prof.exit_loc;
+        if (!prof.dns.empty()) env["HEMERA_DNS"] = prof.dns;
+        if (!prof.route_direct.empty()) env["HEMERA_ROUTE_DIRECT"] = prof.route_direct;
+        if (!prof.access_email.empty()) env["HEMERA_ACCESS_EMAIL"] = prof.access_email;
+        if (!prof.access_client_id.empty()) env["HEMERA_ACCESS_CLIENT_ID"] = prof.access_client_id;
+        if (!prof.access_client_secret.empty()) env["HEMERA_ACCESS_CLIENT_SECRET"] = prof.access_client_secret;
+        if (!prof.access_token.empty()) env["HEMERA_ACCESS_TOKEN"] = prof.access_token;
 
-        aether::core::InprocCallbacks cbs;
+        hemera::core::InprocCallbacks cbs;
         cbs.on_log = [this](std::string_view l) {
             impl_->emit_log(l);
         };
@@ -296,7 +320,7 @@ std::expected<void, std::string> AetherEngine::connect(std::optional<ConnectionP
             }
         };
 
-        int rc = aether::core::run_inproc(args, env, cancel, cbs);
+        int rc = hemera::core::run_inproc(args, env, cancel, cbs);
         if (rc != 0 && !cancel.is_cancelled()) {
             if (prof.system_proxy) sysproxy::restore(impl_->backup_file);
             impl_->emit_state({
@@ -314,7 +338,7 @@ std::expected<void, std::string> AetherEngine::connect(std::optional<ConnectionP
     return {};
 }
 
-std::expected<void, std::string> AetherEngine::disconnect() {
+std::expected<void, std::string> HemeraEngine::disconnect() {
     impl_->emit_state({.kind = StateKind::Disconnecting});
     impl_->cancel_token.cancel();
 
@@ -331,18 +355,18 @@ std::expected<void, std::string> AetherEngine::disconnect() {
     return {};
 }
 
-std::expected<void, std::string> AetherEngine::submit_access_code(std::string_view /*code*/) {
+std::expected<void, std::string> HemeraEngine::submit_access_code(std::string_view /*code*/) {
     return {};
 }
 
-void AetherEngine::startup_cleanup() {
+void HemeraEngine::startup_cleanup() {
     sysproxy::restore_stale(impl_->backup_file);
 }
 
-void AetherEngine::shutdown_blocking() {
+void HemeraEngine::shutdown_blocking() {
     (void)disconnect();
     impl_->stop_core_thread();
     sysproxy::restore(impl_->backup_file);
 }
 
-} // namespace aether
+} // namespace hemera

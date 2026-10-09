@@ -19,7 +19,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-namespace aether::core::upstream {
+namespace hemera::core::upstream {
 namespace {
 
 std::string lowered(std::string_view text) {
@@ -252,7 +252,7 @@ std::expected<Upstream, std::string> Upstream::parse(std::string_view raw,
     } else {
         // The message carries the lower-cased scheme only — never the rest of the URL, so a
         // credential written before the endpoint cannot reach a log through it.
-        return std::unexpected(scheme + " is not an upstream proxy kind aether understands");
+        return std::unexpected(scheme + " is not an upstream proxy kind hemera understands");
     }
 
     // The last '@' of the rest splits credentials from the endpoint, so an unescaped '@' in a
@@ -269,11 +269,11 @@ std::expected<Upstream, std::string> Upstream::parse(std::string_view raw,
     if (scheme == "https") {
         if (credentials) {
             return std::unexpected(std::string(
-                "an https:// upstream with a password is refused: aether talks to its upstream "
+                "an https:// upstream with a password is refused: hemera talks to its upstream "
                 "over plain http, which would send the password in the clear; use http:// only "
                 "if that is acceptable, or socks5://"));
         }
-        notes.push_back("[-] the upstream is written as https:// but aether talks to it over "
+        notes.push_back("[-] the upstream is written as https:// but hemera talks to it over "
                         "plain http; the tunnel inside stays encrypted");
     }
 
@@ -394,7 +394,7 @@ std::optional<Upstream> configured(const Settings& settings, std::vector<std::st
     static std::mutex guard;
     static Seen seen;
 
-    const std::string raw(settings.get("AETHER_UPSTREAM").value_or(std::string_view{}));
+    const std::string raw(settings.get("HEMERA_UPSTREAM").value_or(std::string_view{}));
     const std::lock_guard<std::mutex> held(guard);
     return remembered(seen, raw, notes);
 }
@@ -402,7 +402,7 @@ std::optional<Upstream> configured(const Settings& settings, std::vector<std::st
 std::optional<Upstream> from_settings(const Settings& settings, std::vector<std::string>& notes) {
     // Rust's from_env: no setting at all answers None without a word; a set one goes through
     // the announcing parse every time it is asked.
-    const auto raw = settings.get("AETHER_UPSTREAM");
+    const auto raw = settings.get("HEMERA_UPSTREAM");
     if (!raw) return std::nullopt;
     return from_value(*raw, notes);
 }
@@ -477,7 +477,7 @@ std::expected<void, std::string> check_greeting(bool wants_auth,
     }
     return std::unexpected("the upstream proxy asked for authentication method " +
                            std::to_string(static_cast<unsigned>(answer[1])) +
-                           ", which aether cannot do");
+                           ", which hemera cannot do");
 }
 
 std::expected<std::vector<std::uint8_t>, std::string>
@@ -537,7 +537,7 @@ std::expected<std::uint8_t, std::string> check_reply_head(std::span<const std::u
     }
     return std::unexpected("the upstream proxy sent address type " +
                            std::to_string(static_cast<unsigned>(head[3])) +
-                           ", which aether cannot read");
+                           ", which hemera cannot read");
 }
 
 std::vector<std::uint8_t> encode_address(const SocketTarget& target) {
@@ -1246,4 +1246,4 @@ std::expected<BoundSocket, std::string> bind_via_upstream(const Upstream& proxy,
     return out;
 }
 
-} // namespace aether::core::upstream
+} // namespace hemera::core::upstream

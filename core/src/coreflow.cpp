@@ -1,22 +1,22 @@
-// Port of the orchestrator of aether/src/lib.rs (pinned commit 6175b67). See coreflow.hpp for
+// Port of the orchestrator of hemera/src/lib.rs (pinned commit 6175b67). See coreflow.hpp for
 // what is here, what is a seam, and what was deliberately left out.
 //
 // Two shapes of environment read appear throughout, and mixing them up changes behaviour:
 //
 //   raw(settings, key)     Rust's `std::env::var(k).ok()`. The value as it stands, present even
 //                          when it is the empty string, and no trimming. lib.rs uses this for
-//                          AETHER_PEER, AETHER_WG_PEER, AETHER_PROTOCOL, AETHER_NOIZE,
-//                          AETHER_GOOL_MODE, AETHER_REPROVISION, AETHER_QUICK_RECONNECT,
-//                          AETHER_CONFIG, AETHER_WG_CONFIG, AETHER_MASQUE_CONFIG, AETHER_SOCKS,
-//                          AETHER_SCAN, AETHER_IP, AETHER_ECH, AETHER_LOG_LEVEL, the presence
-//                          checks of AETHER_TEAM_ENDPOINT / AETHER_MASQUE_HTTP2 / AETHER_GATEWAY
-//                          / AETHER_WG_NO_PROFILE_RETRY, and the six second-valued knobs, which
+//                          HEMERA_PEER, HEMERA_WG_PEER, HEMERA_PROTOCOL, HEMERA_NOIZE,
+//                          HEMERA_GOOL_MODE, HEMERA_REPROVISION, HEMERA_QUICK_RECONNECT,
+//                          HEMERA_CONFIG, HEMERA_WG_CONFIG, HEMERA_MASQUE_CONFIG, HEMERA_SOCKS,
+//                          HEMERA_SCAN, HEMERA_IP, HEMERA_ECH, HEMERA_LOG_LEVEL, the presence
+//                          checks of HEMERA_TEAM_ENDPOINT / HEMERA_MASQUE_HTTP2 / HEMERA_GATEWAY
+//                          / HEMERA_WG_NO_PROFILE_RETRY, and the six second-valued knobs, which
 //                          are read raw and then parsed without trimming.
 //   env_value(settings, k) lib.rs's own helper: trimmed, and nothing when it trims to empty.
-//                          AETHER_REGISTER, the four warp-in-warp and four masque-in-masque
-//                          endpoint keys, AETHER_GOOL_INNER and the three gool_classic keys.
+//                          HEMERA_REGISTER, the four warp-in-warp and four masque-in-masque
+//                          endpoint keys, HEMERA_GOOL_INNER and the three gool_classic keys.
 //
-// One exception: AETHER_MASQUE_MTU is read raw and then trimmed before it is parsed, which is
+// One exception: HEMERA_MASQUE_MTU is read raw and then trimmed before it is parsed, which is
 // what masque_tunnel_mtu does in the Rust.
 
 #include "coreflow.hpp"
@@ -34,7 +34,7 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::coreflow {
+namespace hemera::core::coreflow {
 namespace {
 
 // ---- the two environment readings -----------------------------------------------------------
@@ -50,7 +50,7 @@ namespace {
 }
 
 [[nodiscard]] std::string trim_str(std::string_view text) {
-    return std::string(::aether::core::trim(text));
+    return std::string(::hemera::core::trim(text));
 }
 
 [[nodiscard]] std::string lower(std::string_view text) {
@@ -136,8 +136,8 @@ template <typename T>
 // entry that is no longer an address is dropped here, as usable_peers already dropped it there.
 [[nodiscard]] std::vector<SocketAddr> ring_of(const LastConnection& cached, std::string_view carrier) {
     std::vector<SocketAddr> ring;
-    for (const auto& entry : ::aether::core::usable_peers(cached, carrier)) {
-        if (auto ip = ::aether::core::parse_address(entry.first)) {
+    for (const auto& entry : ::hemera::core::usable_peers(cached, carrier)) {
+        if (auto ip = ::hemera::core::parse_address(entry.first)) {
             ring.push_back(SocketAddr{*ip, entry.second});
         }
     }
@@ -311,7 +311,7 @@ std::optional<std::uint64_t> parse_u64_strict(std::string_view text) {
 IpAddress parse_local_v4(std::string_view text) {
     const auto slash = text.find('/');
     const std::string_view head = slash == std::string_view::npos ? text : text.substr(0, slash);
-    if (const auto ip = ::aether::core::parse_address(head)) {
+    if (const auto ip = ::hemera::core::parse_address(head)) {
         if (ip->v4) return *ip;
     }
     return unspecified_v4();
@@ -338,8 +338,8 @@ std::size_t masque_tunnel_mtu(const Settings& settings) {
 }
 
 std::string_view masque_carrier(const Settings& settings) {
-    return masque_h2::enabled(settings) ? ::aether::core::CARRIER_MASQUE_H2
-                                        : ::aether::core::CARRIER_MASQUE_H3;
+    return masque_h2::enabled(settings) ? ::hemera::core::CARRIER_MASQUE_H2
+                                        : ::hemera::core::CARRIER_MASQUE_H3;
 }
 
 std::string derive_sibling_path(std::string_view base, std::string_view suffix) {
@@ -400,7 +400,7 @@ std::string noize_profile(const Settings& settings) {
     return raw(settings, NOIZE_ENV).value_or("firewall");
 }
 
-std::string aethernoize_profile(const Settings& settings) {
+std::string hemeranoize_profile(const Settings& settings) {
     return raw(settings, NOIZE_ENV).value_or("balanced");
 }
 
@@ -412,12 +412,12 @@ std::string noize_profile_line(std::string_view profile) {
     return "[+] obfuscation profile: " + std::string(profile);
 }
 
-std::string aethernoize_profile_line(std::string_view profile) {
-    return "[+] aethernoize profile: " + std::string(profile);
+std::string hemeranoize_profile_line(std::string_view profile) {
+    return "[+] hemeranoize profile: " + std::string(profile);
 }
 
 std::string wg_primary_profile_line(std::string_view profile) {
-    return "[+] aethernoize primary profile: " + std::string(profile);
+    return "[+] hemeranoize primary profile: " + std::string(profile);
 }
 
 NoizeConfig noize_config(const Settings& settings, Notes& notes) {
@@ -426,13 +426,13 @@ NoizeConfig noize_config(const Settings& settings, Notes& notes) {
     return noize::from_profile(profile);
 }
 
-AetherNoizeConfig aethernoize_config(const Settings& settings, Notes& notes) {
-    const std::string profile = aethernoize_profile(settings);
-    note_info(notes, aethernoize_profile_line(profile));
-    return aethernoize::from_profile(profile);
+HemeraNoizeConfig hemeranoize_config(const Settings& settings, Notes& notes) {
+    const std::string profile = hemeranoize_profile(settings);
+    note_info(notes, hemeranoize_profile_line(profile));
+    return hemeranoize::from_profile(profile);
 }
 
-std::vector<std::pair<std::string, AetherNoizeConfig>> wg_profile_candidates(const Settings& settings,
+std::vector<std::pair<std::string, HemeraNoizeConfig>> wg_profile_candidates(const Settings& settings,
                                                                             Notes& notes) {
     const std::string primary = wg_primary_profile(settings);
     note_info(notes, wg_primary_profile_line(primary));
@@ -451,9 +451,9 @@ std::vector<std::pair<std::string, AetherNoizeConfig>> wg_profile_candidates(con
         }
     }
 
-    std::vector<std::pair<std::string, AetherNoizeConfig>> out;
+    std::vector<std::pair<std::string, HemeraNoizeConfig>> out;
     out.reserve(names.size());
-    for (const auto& name : names) out.emplace_back(name, aethernoize::from_profile(name));
+    for (const auto& name : names) out.emplace_back(name, hemeranoize::from_profile(name));
     return out;
 }
 
@@ -463,9 +463,9 @@ std::string base_config_path(const Settings& settings) {
 
 SocketAddr socks_listen(const Settings& settings) {
     if (const auto value = raw(settings, SOCKS_ENV)) {
-        if (const auto parsed = ::aether::core::parse_socket_addr(*value)) return *parsed;
+        if (const auto parsed = ::hemera::core::parse_socket_addr(*value)) return *parsed;
     }
-    const auto fallback = ::aether::core::parse_socket_addr(DEFAULT_SOCKS_LISTEN);
+    const auto fallback = ::hemera::core::parse_socket_addr(DEFAULT_SOCKS_LISTEN);
     return fallback.value_or(SocketAddr{});
 }
 
@@ -474,7 +474,7 @@ HttpProxyListen http_proxy_listen(const Settings& settings) {
     if (!value.has_value()) return {};
     const std::string trimmed = trim_str(*value);
     if (trimmed.empty()) return {};
-    if (const auto parsed = ::aether::core::parse_socket_addr(trimmed)) {
+    if (const auto parsed = ::hemera::core::parse_socket_addr(trimmed)) {
         return HttpProxyListen{*parsed, std::nullopt};
     }
     return HttpProxyListen{std::nullopt, unparsable_http_proxy_warning(trimmed)};
@@ -496,10 +496,10 @@ std::string log_level_of(const Settings& settings) {
 }
 
 std::string log_default_filter(const Settings& settings) {
-    return "info,aether=" + log_level_of(settings);
+    return "info,hemera=" + log_level_of(settings);
 }
 
-std::string version_line() { return "Aether v" + std::string(CORE_VERSION); }
+std::string version_line() { return "Hemera v" + std::string(CORE_VERSION); }
 
 std::chrono::seconds env_secs(const Settings& settings, std::string_view key,
                               std::uint64_t fallback) {
@@ -586,11 +586,11 @@ std::expected<SocketAddr, Error> parse_endpoint(std::string_view raw_text) {
 
     // The one narrowing against the Rust: dns::parse_socket_addr refuses port 0, which std::net's
     // parse accepts. Nothing in lib.rs pins a hop on port 0, so no decision changes.
-    if (const auto peer = ::aether::core::parse_socket_addr(text)) return *peer;
+    if (const auto peer = ::hemera::core::parse_socket_addr(text)) return *peer;
 
-    std::optional<IpAddress> portless = ::aether::core::parse_address(text);
+    std::optional<IpAddress> portless = ::hemera::core::parse_address(text);
     if (!portless.has_value() && text.size() >= 2 && text.front() == '[' && text.back() == ']') {
-        portless = ::aether::core::parse_address(text.substr(1, text.size() - 2));
+        portless = ::hemera::core::parse_address(text.substr(1, text.size() - 2));
     }
 
     if (portless.has_value()) {
@@ -863,7 +863,7 @@ Protocol select_gool(Settings& settings, const PromptLine& prompt) {
 }
 
 void select_masque_transport(Settings& settings, const PromptLine& prompt, Notes&) {
-    // AETHER_MASQUE_HTTP2 and AETHER_PEER are presence checks: an empty value still skips the ask.
+    // HEMERA_MASQUE_HTTP2 and HEMERA_PEER are presence checks: an empty value still skips the ask.
     if (has_key(settings, MASQUE_HTTP2_ENV) || has_key(settings, PEER_ENV)) return;
 
     const std::string answer =
@@ -1018,7 +1018,7 @@ void enrol_zero_trust(Settings& settings, std::string_view base_config, const Te
 
 namespace {
 
-// The two errors config::load and config::save raise, which are AetherError::Other in the Rust.
+// The two errors config::load and config::save raise, which are HemeraError::Other in the Rust.
 [[nodiscard]] Error file_error(std::string_view message) {
     return Error::other(std::string(message));
 }
@@ -1088,7 +1088,7 @@ Identity adopt_team_profile(Settings& settings, Identity identity, const Account
             protocol.has_value() && (*protocol == "wg" || *protocol == "gool");
         const std::string peer =
             identity.assigned_endpoint + ":" + num(wireguard_port ? WG_EXAMPLE_PORT : 443);
-        if (::aether::core::parse_socket_addr(peer).has_value()) {
+        if (::hemera::core::parse_socket_addr(peer).has_value()) {
             note_info(notes, assigned_endpoint_line(peer));
             settings.set(TEAM_ENDPOINT_ENV, peer);
         }
@@ -1103,15 +1103,15 @@ std::expected<Identity, Error> provision_account(const Settings& settings, const
     if (team.has_value()) {
         note_info(notes, enrolling_team_line(*team));
         if (!seams.provision_team) return std::unexpected(Error::other(std::string(NO_ACCOUNT_SEAM)));
-        auto identity = seams.provision_team(::aether::core::DEFAULT_MODEL,
-                                             ::aether::core::DEFAULT_LOCALE, *team);
+        auto identity = seams.provision_team(::hemera::core::DEFAULT_MODEL,
+                                             ::hemera::core::DEFAULT_LOCALE, *team);
         if (!identity.has_value()) return std::unexpected(identity.error());
         if (seams.refresh_profile) return seams.refresh_profile(std::move(*identity));
         return *identity;
     }
 
     if (!seams.provision_wg) return std::unexpected(Error::other(std::string(NO_ACCOUNT_SEAM)));
-    return seams.provision_wg(::aether::core::DEFAULT_MODEL, ::aether::core::DEFAULT_LOCALE);
+    return seams.provision_wg(::hemera::core::DEFAULT_MODEL, ::hemera::core::DEFAULT_LOCALE);
 }
 
 std::string loaded_warp_identity_line(std::string_view config_path) {
@@ -1164,18 +1164,18 @@ std::string warp_enable_failed_line(std::string_view error) {
 std::expected<Identity, Error> load_or_provision_warp(const Settings& settings,
                                                      const std::string& config_path,
                                                      const AccountSeams& seams, Notes& notes) {
-    auto loaded = ::aether::core::load_identity(config_path);
+    auto loaded = ::hemera::core::load_identity(config_path);
     if (!loaded.has_value()) return std::unexpected(file_error(loaded.error()));
 
     if (loaded->has_value()) {
         note_info(notes, loaded_warp_identity_line(config_path));
-        // adopt_team_profile writes AETHER_TEAM_ENDPOINT, which MasqueFlow reads back from this
+        // adopt_team_profile writes HEMERA_TEAM_ENDPOINT, which MasqueFlow reads back from this
         // same Settings later; the const on `settings` only promises not to alter the caller's
         // view from here, and Rust's environment is global, so the write has to get through.
         Identity identity = adopt_team_profile(const_cast<Settings&>(settings),
                                                std::move(**loaded), seams, notes);
         if (!identity.refused) {
-            if (auto saved = ::aether::core::save_identity(config_path, identity); !saved.has_value()) {
+            if (auto saved = ::hemera::core::save_identity(config_path, identity); !saved.has_value()) {
                 return std::unexpected(file_error(saved.error()));
             }
             return identity;
@@ -1190,7 +1190,7 @@ std::expected<Identity, Error> load_or_provision_warp(const Settings& settings,
 
     Identity identity = adopt_team_profile(const_cast<Settings&>(settings),
                                            std::move(*provisioned), seams, notes);
-    if (auto saved = ::aether::core::save_identity(config_path, identity); !saved.has_value()) {
+    if (auto saved = ::hemera::core::save_identity(config_path, identity); !saved.has_value()) {
         return std::unexpected(file_error(saved.error()));
     }
     note_info(notes, saved_warp_identity_line(config_path));
@@ -1200,7 +1200,7 @@ std::expected<Identity, Error> load_or_provision_warp(const Settings& settings,
 std::expected<Identity, Error> load_or_enrol_masque(const Settings& settings,
                                                    const std::string& config_path,
                                                    const AccountSeams& seams, Notes& notes) {
-    auto loaded = ::aether::core::load_identity(config_path);
+    auto loaded = ::hemera::core::load_identity(config_path);
     if (!loaded.has_value()) return std::unexpected(file_error(loaded.error()));
 
     if (loaded->has_value()) {
@@ -1211,7 +1211,7 @@ std::expected<Identity, Error> load_or_enrol_masque(const Settings& settings,
             Identity identity = adopt_team_profile(const_cast<Settings&>(settings),
                                                    std::move(**loaded), seams, notes);
             if (!identity.refused) {
-                if (auto saved = ::aether::core::save_identity(config_path, identity);
+                if (auto saved = ::hemera::core::save_identity(config_path, identity);
                     !saved.has_value()) {
                     return std::unexpected(file_error(saved.error()));
                 }
@@ -1228,7 +1228,7 @@ std::expected<Identity, Error> load_or_enrol_masque(const Settings& settings,
             switch (outcome.kind) {
                 case EnrolOutcome::Kind::Enrolled: {
                     Identity enrolled = with_certificate(std::move(identity), outcome.enrollment);
-                    if (auto saved = ::aether::core::save_identity(config_path, enrolled);
+                    if (auto saved = ::hemera::core::save_identity(config_path, enrolled);
                         !saved.has_value()) {
                         return std::unexpected(file_error(saved.error()));
                     }
@@ -1262,7 +1262,7 @@ std::expected<Identity, Error> load_or_enrol_masque(const Settings& settings,
         with_certificate(std::move(*provisioned), *enrollment);
     identity = adopt_team_profile(const_cast<Settings&>(settings), std::move(identity),
                                   seams, notes);
-    if (auto saved = ::aether::core::save_identity(config_path, identity); !saved.has_value()) {
+    if (auto saved = ::hemera::core::save_identity(config_path, identity); !saved.has_value()) {
         return std::unexpected(file_error(saved.error()));
     }
     note_info(notes, saved_masque_identity_line(config_path));
@@ -1318,10 +1318,10 @@ std::expected<std::optional<std::vector<std::uint8_t>>, Error> resolve_ech(
         }
     }
 
-    const auto key = ::aether::core::ech_key(
-        settings, ::aether::core::EchPurpose::Session,
+    const auto key = ::hemera::core::ech_key(
+        settings, ::hemera::core::EchPurpose::Session,
         [&]() -> std::expected<std::vector<std::uint8_t>, std::string> {
-            return ::aether::core::fetch_ech_config(settings, transport);
+            return ::hemera::core::fetch_ech_config(settings, transport);
         });
     if (!key.has_value()) return std::unexpected(Error{ErrorKind::Ech, key.error()});
     if (!key->has_value()) note_info(notes, std::string(ECH_OFF_LINE));
@@ -1362,13 +1362,13 @@ std::expected<Startup, Error> startup(const std::vector<std::string>& args, Sett
     for (const auto& line : egress_notes) note_info(out.notes, line);
     if (!mark.has_value()) return std::unexpected(Error::other(mark.error()));
 
-    ::aether::core::init(settings); // stats::init
+    ::hemera::core::init(settings); // stats::init
     if (hooks.spawn_stats_reporter) hooks.spawn_stats_reporter();
     if (hooks.install_netstack_guard) hooks.install_netstack_guard();
 
     // A cipher string or a group list BoringSSL does not take, or an address the calls to the WARP
     // API cannot use, stops the core here, with its option named.
-    if (const auto checked = ::aether::core::check_tls_options(settings); !checked.has_value()) {
+    if (const auto checked = ::hemera::core::check_tls_options(settings); !checked.has_value()) {
         return std::unexpected(Error{ErrorKind::Tls, checked.error()});
     }
     if (const auto checked = account::check_enroll_address(settings); !checked.has_value()) {
@@ -1540,7 +1540,7 @@ std::vector<SocketAddr> masque_verified_ladder(const SocketAddr& outer, std::siz
 
     std::vector<IpAddress> verified;
     for (const std::string_view entry : prober::MASQUE_VERIFIED_GATEWAYS) {
-        if (const auto ip = ::aether::core::parse_address(entry)) verified.push_back(*ip);
+        if (const auto ip = ::hemera::core::parse_address(entry)) verified.push_back(*ip);
     }
 
     const auto push = [&](const IpAddress& ip, std::uint16_t port) {
@@ -1667,7 +1667,7 @@ MasqueProbeParams masque_probe_for(const Settings& settings, const Identity& ide
                                   const std::optional<std::vector<std::uint8_t>>& ech, IpScan ip,
                                   Notes& notes) {
     MasqueProbeParams params;
-    params.sni = std::string(::aether::core::CONNECT_SNI);
+    params.sni = std::string(::hemera::core::CONNECT_SNI);
     params.authority = std::string(quic::default_authority());
     params.path = std::string(quic::default_path());
     params.cert_pem = identity.cert_pem;
@@ -1681,14 +1681,14 @@ MasqueProbeParams masque_probe_for(const Settings& settings, const Identity& ide
 }
 
 std::expected<WgProbeParams, Error> wg_probe_for(const Settings&, const Identity& identity,
-                                                const AetherNoizeConfig& noise, IpScan ip,
+                                                const HemeraNoizeConfig& noise, IpScan ip,
                                                 std::vector<SocketAddr> excluded, Notes&) {
     WgProbeParams params;
     params.private_key = identity.wg_private_key;
     params.peer_public_key = identity.wg_peer_public_key;
     params.client_id = identity.client_id;
 
-    const auto local = ::aether::core::parse_address(identity.ipv4);
+    const auto local = ::hemera::core::parse_address(identity.ipv4);
     if (!local.has_value() || !local->v4) {
         return std::unexpected(Error::other(std::string(INVALID_IPV4)));
     }
@@ -1757,7 +1757,7 @@ std::optional<std::string> forced_peer_for(const Settings& settings, Protocol pr
 }
 
 std::expected<SocketAddr, Error> parse_forced_peer(std::string_view raw_peer) {
-    if (const auto parsed = ::aether::core::parse_socket_addr(raw_peer)) return *parsed;
+    if (const auto parsed = ::hemera::core::parse_socket_addr(raw_peer)) return *parsed;
     return std::unexpected(Error::other(bad_peer_address_error(raw_peer)));
 }
 
@@ -1769,7 +1769,7 @@ quic::VerifyParams quick_verify_quic_params(const Settings& settings, const Iden
                                            Notes& notes) {
     quic::VerifyParams params;
     params.peer = peer;
-    params.sni = std::string(::aether::core::CONNECT_SNI);
+    params.sni = std::string(::hemera::core::CONNECT_SNI);
     params.authority = std::string(quic::default_authority());
     params.path = std::string(quic::default_path());
     params.cert_pem = bytes(identity.cert_pem);
@@ -1787,7 +1787,7 @@ masque_h2::H2TunnelConfig quick_verify_h2_config(const Settings& settings, const
                                                 Notes& notes) {
     masque_h2::H2TunnelConfig config;
     config.peer = masque_h2::h2_peer(settings, peer);
-    config.sni = std::string(::aether::core::CONNECT_SNI);
+    config.sni = std::string(::hemera::core::CONNECT_SNI);
     config.authority = std::string(quic::default_authority());
     config.path = std::string(quic::default_path());
     config.cert_pem = bytes(identity.cert_pem);
@@ -1856,7 +1856,7 @@ MasqueHopParams establish_masque_params(const Settings& settings, const Identity
     if (h2) {
         masque_h2::H2TunnelConfig config;
         config.peer = peer;
-        config.sni = std::string(::aether::core::CONNECT_SNI);
+        config.sni = std::string(::hemera::core::CONNECT_SNI);
         config.authority = std::string(quic::default_authority());
         config.path = std::string(quic::default_path());
         config.cert_pem = bytes(identity.cert_pem);
@@ -1873,7 +1873,7 @@ MasqueHopParams establish_masque_params(const Settings& settings, const Identity
 
     quic::TunnelConfig config;
     config.peer = peer;
-    config.sni = std::string(::aether::core::CONNECT_SNI);
+    config.sni = std::string(::hemera::core::CONNECT_SNI);
     config.authority = std::string(quic::default_authority());
     config.path = std::string(quic::default_path());
     config.cert_pem = bytes(identity.cert_pem);
@@ -1933,15 +1933,15 @@ std::expected<WgEstablish, Error> establish_wg_params(const Settings& settings,
     establish.client_id = identity.client_id;
 
     // identity.ipv4.parse::<Ipv4Addr>() first, as in the Rust: a bad address stops the hop before
-    // aethernoize_config gets to log its profile line.
-    const auto local = ::aether::core::parse_address(identity.ipv4);
+    // hemeranoize_config gets to log its profile line.
+    const auto local = ::hemera::core::parse_address(identity.ipv4);
     if (!local.has_value() || !local->v4) {
         return std::unexpected(Error::other(std::string(INVALID_IPV4)));
     }
     establish.local_ipv4 = *local;
 
     establish.profile =
-        obfuscate ? aethernoize_config(settings, notes) : aethernoize::from_profile("off");
+        obfuscate ? hemeranoize_config(settings, notes) : hemeranoize::from_profile("off");
     establish.validate_timeout = wg_tunnel_validate_timeout(settings);
     return establish;
 }
@@ -2015,7 +2015,7 @@ std::string mim_too_small_warning(std::size_t outer_mtu) {
     // The Rust string is split across two source lines with a trailing-backslash continuation; the
     // text that reaches the log has one space between "quic" and "datagram".
     return "[-] the outer link carries " + num(outer_mtu) +
-           " bytes, too little for an inner quic datagram; raise AETHER_MASQUE_MTU or use --h2 "
+           " bytes, too little for an inner quic datagram; raise HEMERA_MASQUE_MTU or use --h2 "
            "for both hops";
 }
 
@@ -2093,7 +2093,7 @@ std::expected<std::vector<SocketAddr>, Error> gool_inner_peers(const Settings& s
         named.emplace_back(seed);
     }
     for (const std::string& host : named) {
-        const auto ip = ::aether::core::parse_address(host);
+        const auto ip = ::hemera::core::parse_address(host);
         if (!ip.has_value()) continue;
         const SocketAddr peer{*ip, WG_EXAMPLE_PORT};
         if (!contains(peers, peer)) peers.push_back(peer);
@@ -2130,7 +2130,7 @@ std::string gool_ready_line(const SocketAddr& peer, const SocketAddr& inner_peer
 bool gool_remembers(const Settings& settings, const Identity& inner_identity,
                     const IpAddress& inner_ip) {
     // The identity's assigned endpoint is replaced when it is not already the working address and
-    // AETHER_GOOL_INNER does not pin one.
+    // HEMERA_GOOL_INNER does not pin one.
     return inner_identity.assigned_endpoint != iptext(inner_ip) &&
            !env_value(settings, GOOL_INNER_ENV).has_value();
 }
@@ -2341,7 +2341,7 @@ std::string last_good_dead_line(const SocketAddr& peer) {
 }
 
 std::string saved_lastconn_profile(const Settings& settings) {
-    // run_masque saves AETHER_NOIZE as it stands, or "firewall": the same reading as noize_profile.
+    // run_masque saves HEMERA_NOIZE as it stands, or "firewall": the same reading as noize_profile.
     return noize_profile(settings);
 }
 
@@ -2394,12 +2394,12 @@ std::string wg_cooling_down_line(const SocketAddr& peer, std::uint32_t fails,
 
 std::string wg_hunt_profile_line(std::string_view name) {
     return "[*] hunting for a working WireGuard endpoint (handshake + data-plane verification, "
-           "aethernoize='" +
+           "hemeranoize='" +
            std::string(name) + "')";
 }
 
 std::string wg_hunt_selected_line(const SocketAddr& peer, std::string_view name) {
-    return "[+] selected WireGuard endpoint " + addr(peer) + " using aethernoize profile '" +
+    return "[+] selected WireGuard endpoint " + addr(peer) + " using hemeranoize profile '" +
            std::string(name) + "'";
 }
 
@@ -2411,7 +2411,7 @@ std::string wg_hunt_profile_failed_line(std::string_view name, std::string_view 
 }
 
 std::string wg_testing_forced_line(const SocketAddr& peer, std::string_view name) {
-    return "[*] testing forced peer " + addr(peer) + " with aethernoize profile '" +
+    return "[*] testing forced peer " + addr(peer) + " with hemeranoize profile '" +
            std::string(name) + "'";
 }
 
@@ -2426,7 +2426,7 @@ std::string wg_forced_profile_failed_line(std::string_view name, std::string_vie
 
 std::string wg_forced_exhausted_line(const SocketAddr& peer) {
     return "[-] forced peer " + addr(peer) +
-           " failed with every aethernoize profile; retrying shortly";
+           " failed with every hemeranoize profile; retrying shortly";
 }
 
 // run_gool
@@ -2480,7 +2480,7 @@ namespace {
 
 // verify_endpoint on a probe path: the keepalive is Rust's None on every check that does not run
 // a tunnel.
-[[nodiscard]] FlowRequest verify_wg_request(const SocketAddr& peer, const AetherNoizeConfig& noise,
+[[nodiscard]] FlowRequest verify_wg_request(const SocketAddr& peer, const HemeraNoizeConfig& noise,
                                             std::chrono::seconds timeout) {
     FlowRequest request;
     request.kind = FlowRequest::Kind::VerifyWgEndpoint;
@@ -2491,7 +2491,7 @@ namespace {
 }
 
 [[nodiscard]] FlowRequest hunt_wg_endpoint_request(const std::pair<std::string, IpScan>& scan,
-                                                  const AetherNoizeConfig& noise,
+                                                  const HemeraNoizeConfig& noise,
                                                   const std::vector<SocketAddr>& excluded) {
     FlowRequest request;
     request.kind = FlowRequest::Kind::HuntWgEndpoint;
@@ -2574,10 +2574,10 @@ FlowStep MasqueFlow::begin() {
 
     forced_ = raw(config_.settings, PEER_ENV);
 
-    // AETHER_TEAM_ENDPOINT, parsed and verified before anything else, unless a pin was given.
+    // HEMERA_TEAM_ENDPOINT, parsed and verified before anything else, unless a pin was given.
     if (phase_ == PH_NONE && !forced_.has_value()) {
         if (const auto value = raw(config_.settings, TEAM_ENDPOINT_ENV)) {
-            if (const auto parsed = ::aether::core::parse_socket_addr(*value)) {
+            if (const auto parsed = ::hemera::core::parse_socket_addr(*value)) {
                 assigned_ = *parsed;
                 FlowStep step;
                 note_info(step.notes, verifying_assigned_line(*assigned_));
@@ -2802,7 +2802,7 @@ FlowStep WireguardFlow::begin(TimePoint now) {
         if (!forced_.has_value()) forced_ = raw(config_.settings, PEER_ENV);
 
         // identity.ipv4.parse::<Ipv4Addr>() up front; a bad address stops the run.
-        const auto local = ::aether::core::parse_address(config_.identity.ipv4);
+        const auto local = ::hemera::core::parse_address(config_.identity.ipv4);
         if (!local.has_value() || !local->v4) {
             fatal_ = Error::other(std::string(INVALID_IPV4));
             done_ = true;
@@ -2811,7 +2811,7 @@ FlowStep WireguardFlow::begin(TimePoint now) {
 
         if (!forced_.has_value()) {
             if (const auto value = raw(config_.settings, TEAM_ENDPOINT_ENV)) {
-                if (const auto parsed = ::aether::core::parse_socket_addr(*value)) {
+                if (const auto parsed = ::hemera::core::parse_socket_addr(*value)) {
                     assigned_ = *parsed;
                     profile_index_ = 0;
                     note_info(step.notes, verifying_assigned_line(*assigned_));
@@ -2827,10 +2827,10 @@ FlowStep WireguardFlow::begin(TimePoint now) {
 
     if ((phase_ == PH_NONE || phase_ == WG_ASSIGNED_DONE) && !forced_.has_value() &&
         !quick_.has_value() && config_.cached.has_value()) {
-        ring_ = ring_peers(*config_.cached, std::string(::aether::core::CARRIER_WIREGUARD));
+        ring_ = ring_peers(*config_.cached, std::string(::hemera::core::CARRIER_WIREGUARD));
         if (!ring_.empty() &&
             want_quick_reconnect(config_.settings, *config_.cached, config_.prompt)) {
-            cached_profile_ = aethernoize::from_profile(config_.cached->profile);
+            cached_profile_ = hemeranoize::from_profile(config_.cached->profile);
             ring_index_ = 0;
             note_info(step.notes, wg_cached_verifying_line(ring_[0]));
             phase_ = WG_RING;
@@ -2932,7 +2932,7 @@ FlowStep WireguardFlow::use_peer(LastGood chosen) {
     if (!forced_.has_value()) {
         phase_ = WG_SAVE;
         pending_ = save_lastconn_request(config_.lastconn_path, chosen.peer, chosen.name,
-                                         std::string(::aether::core::CARRIER_WIREGUARD));
+                                         std::string(::hemera::core::CARRIER_WIREGUARD));
         step.request = pending_;
         return step;
     }
@@ -3200,8 +3200,8 @@ FlowStep GoolFlow::loop_top() {
 
     phase_ = GO_HUNT;
     pending_ = hunt_wg_peers_request(*scan_settings_, wanted, avoid);
-    // aethernoize_config() runs while select_wg_peers builds its probe, after the avoid line.
-    pending_.noise = aethernoize_config(config_.settings, step.notes);
+    // hemeranoize_config() runs while select_wg_peers builds its probe, after the avoid line.
+    pending_.noise = hemeranoize_config(config_.settings, step.notes);
     step.request = pending_;
     return step;
 }
@@ -3439,4 +3439,4 @@ FlowStep MimFlow::resume(const FlowReply& reply) {
     return loop_top();
 }
 
-} // namespace aether::core::coreflow
+} // namespace hemera::core::coreflow

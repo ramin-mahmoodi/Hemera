@@ -23,7 +23,7 @@
 #include <random>
 #include <string_view>
 
-namespace aether::core::account {
+namespace hemera::core::account {
 namespace {
 
 // The longest rejection detail `describe_rejection` keeps ahead of its ellipsis. Rust counts it in
@@ -35,7 +35,7 @@ constexpr std::size_t MAX_REJECTION_CHARS = 220;
 constexpr double INT64_MAX_AS_DOUBLE = 9223372036854775807.0;
 constexpr double INT64_MIN_AS_DOUBLE = -9223372036854775808.0;
 
-// error.rs's Display for AetherError::IdentityRefused.
+// error.rs's Display for HemeraError::IdentityRefused.
 std::string identity_refused(std::string_view reason) {
     return "identity refused: " + std::string(reason);
 }
@@ -224,8 +224,8 @@ std::int32_t local_offset_secs(std::time_t when) {
 
 // -- the account answer's reader ---------------------------------------------------------------
 
-using aether::json::Object;
-using aether::json::Value;
+using hemera::json::Object;
+using hemera::json::Value;
 
 // serde::de::Unexpected, which is how an "invalid type" message names what the reader found.
 std::string unexpected_text(const Value& value) {
@@ -482,8 +482,8 @@ Registration new_registration(std::string wg_public_key, std::string_view model,
 
 TeamRegistration team_registration_body(std::string public_key, std::string_view model,
                                         std::string_view locale) {
-    const std::string install_id = ::aether::core::zerotrust::generate_install_id();
-    const std::string fcm_token = ::aether::core::zerotrust::generate_fcm_token(install_id);
+    const std::string install_id = ::hemera::core::zerotrust::generate_install_id();
+    const std::string fcm_token = ::hemera::core::zerotrust::generate_fcm_token(install_id);
 
     TeamRegistration body;
     body.key = std::move(public_key);
@@ -501,9 +501,9 @@ TeamRegistration team_registration_body(std::string public_key, std::string_view
 DeviceUpdate device_update_body(std::span<const std::uint8_t> spki_der,
                                 const std::optional<std::string>& name) {
     DeviceUpdate body;
-    body.key = ::aether::core::base64_encode(spki_der);
-    body.key_type = std::string(::aether::core::KEY_TYPE_MASQUE);
-    body.tunnel_type = std::string(::aether::core::TUN_TYPE_MASQUE);
+    body.key = ::hemera::core::base64_encode(spki_der);
+    body.key_type = std::string(::hemera::core::KEY_TYPE_MASQUE);
+    body.tunnel_type = std::string(::hemera::core::TUN_TYPE_MASQUE);
     body.name = name;
     return body;
 }
@@ -511,7 +511,7 @@ DeviceUpdate device_update_body(std::span<const std::uint8_t> spki_der,
 // -- The answer a call gets back ----------------------------------------------------------------
 
 std::expected<AccountData, std::string> account_data_from_json(std::string_view body) {
-    const std::optional<Value> parsed = aether::json::parse(body);
+    const std::optional<Value> parsed = hemera::json::parse(body);
     if (!parsed) return std::unexpected("expected value");
     if (!parsed->is_object()) return std::unexpected(invalid_type(*parsed, "struct AccountData"));
 
@@ -592,7 +592,7 @@ std::optional<std::chrono::seconds> retry_after(const HeaderFields& headers) {
     // Rust's own: the integer parse takes nothing but digits after it.
     for (const auto& [name, value] : headers) {
         if (!name_matches(name, "Retry-After")) continue;
-        const std::optional<std::uint64_t> seconds = parse_u64(::aether::core::trim(value));
+        const std::optional<std::uint64_t> seconds = parse_u64(::hemera::core::trim(value));
         if (!seconds) return std::nullopt;
         return std::chrono::seconds(std::min(*seconds, API_RETRY_AFTER_CAP_SECS));
     }
@@ -613,7 +613,7 @@ bool worth_retrying(std::uint16_t status) {
 
 // -- Where the calls go, and what goes on them --------------------------------------------------
 
-std::string_view api_host() { return api_host_from(::aether::core::API_URL); }
+std::string_view api_host() { return api_host_from(::hemera::core::API_URL); }
 
 std::string_view api_host_from(std::string_view url) {
     std::string_view rest = strip_start(url, "https://");
@@ -627,8 +627,8 @@ HeaderFields front_headers(const std::optional<std::string_view>& bearer,
                            const std::optional<std::string_view>& jwt) {
     HeaderFields headers{
         {"Content-Type", "application/json; charset=UTF-8"},
-        {"User-Agent", std::string(::aether::core::UA_REGISTER)},
-        {"CF-Client-Version", std::string(::aether::core::CF_CLIENT_VERSION)},
+        {"User-Agent", std::string(::hemera::core::UA_REGISTER)},
+        {"CF-Client-Version", std::string(::hemera::core::CF_CLIENT_VERSION)},
         {"Accept", "application/json"},
     };
     if (bearer.has_value()) {
@@ -674,7 +674,7 @@ void forget_api_ech() {
 // -- What a refusal says ------------------------------------------------------------------------
 
 std::optional<std::string> extract_api_error(std::string_view body) {
-    const std::optional<Value> parsed = aether::json::parse(body);
+    const std::optional<Value> parsed = hemera::json::parse(body);
     if (!parsed || !parsed->is_object()) return std::nullopt;
 
     const Object& root = parsed->as_object();
@@ -721,7 +721,7 @@ std::string describe_rejection(std::uint16_t status, std::string_view body) {
     if (const auto found = extract_api_error(body)) {
         detail = *found;
     } else {
-        const std::string_view trimmed = ::aether::core::trim(body);
+        const std::string_view trimmed = ::hemera::core::trim(body);
         if (trimmed.empty()) {
             detail = "no details returned";
         } else if (char_count(trimmed) > MAX_REJECTION_CHARS) {
@@ -746,7 +746,7 @@ std::string describe_rejection(std::uint16_t status, std::string_view body) {
             hint = {};
     }
 
-    return "status " + ::aether::core::zerotrust::status_display(status) + ": " + detail +
+    return "status " + ::hemera::core::zerotrust::status_display(status) + ": " + detail +
            std::string(hint);
 }
 
@@ -799,13 +799,13 @@ std::expected<std::pair<std::string, std::uint16_t>, std::string> enroll_address
     // Rust reads the variable and then trims it, so a value of nothing but spaces is the same as
     // no value at all -- and the error names the trimmed one.
     const std::string_view raw = settings.get(ENROLL_ADDRESS_ENV).value_or(std::string_view{});
-    const std::string_view value = ::aether::core::trim(raw);
+    const std::string_view value = ::hemera::core::trim(raw);
     if (value.empty()) return std::pair{std::string(api_host()), DEFAULT_API_PORT};
 
     // dns.hpp's host_and_port is the same helper the Rust hands the value to, brackets included.
     // It refuses a port of zero and one above 65535, a scheme, a space, and a bare IPv6 with a
     // port, and it takes a plain IPv6 with no brackets at all.
-    if (const auto address = ::aether::core::host_and_port(value, DEFAULT_API_PORT)) {
+    if (const auto address = ::hemera::core::host_and_port(value, DEFAULT_API_PORT)) {
         return *address;
     }
     return std::unexpected(api_error("--enroll-address: " + std::string(value) +
@@ -831,7 +831,7 @@ std::string x25519_public_key_base64(const std::array<std::uint8_t, 32>& private
     const std::array<std::uint8_t, 32> clamped = clamp_x25519(private_key);
     std::array<std::uint8_t, X25519_PUBLIC_VALUE_LEN> public_key{};
     X25519_public_from_private(public_key.data(), clamped.data());
-    return ::aether::core::base64_encode(public_key);
+    return ::hemera::core::base64_encode(public_key);
 }
 
 std::pair<std::array<std::uint8_t, 32>, std::string> generate_x25519_keypair() {
@@ -898,7 +898,7 @@ std::expected<std::array<std::uint8_t, 32>, std::string> extract_wg_peer(const A
         return std::unexpected(api_error("no peers in registration response"));
     }
     const std::optional<std::vector<std::uint8_t>> decoded =
-        ::aether::core::base64_decode(reg.config.peers.front().public_key);
+        ::hemera::core::base64_decode(reg.config.peers.front().public_key);
     // encoding.hpp's decode says only that it refused, so the crate's own index-and-symbol reason
     // behind "decode peer pubkey: " is not repeated here.
     if (!decoded) return std::unexpected(api_error("decode peer pubkey: invalid base64"));
@@ -912,7 +912,7 @@ std::expected<std::array<std::uint8_t, 32>, std::string> extract_wg_peer(const A
 std::string endpoint_from(const AccountData& reg) {
     const std::string_view raw = reg.config.peers.empty()
                                       ? std::string_view{}
-                                      : ::aether::core::trim(reg.config.peers.front().endpoint.v4);
+                                      : ::hemera::core::trim(reg.config.peers.front().endpoint.v4);
     if (raw.empty()) return {};
 
     // rsplit_once(':') cuts at the LAST colon; only a cut that leaves something behind drops the
@@ -942,7 +942,7 @@ std::expected<Identity, std::string> finish_provision(const AccountData& reg,
         notes.push_back("[account] received client_id from API: " +
                         debug_quoted(reg.config.client_id));
         const std::optional<std::vector<std::uint8_t>> decoded =
-            ::aether::core::base64_decode(reg.config.client_id);
+            ::hemera::core::base64_decode(reg.config.client_id);
         if (!decoded) {
             notes.push_back("[account] failed to decode client_id base64");
         } else if (decoded->size() != 3) {
@@ -965,8 +965,8 @@ std::expected<Identity, std::string> finish_provision(const AccountData& reg,
     identity.wg_private_key = wg_private;
     identity.wg_peer_public_key = *wg_peer_public;
     identity.client_id = client_id;
-    identity.organization = std::string(::aether::core::trim(reg.account.organization));
-    identity.gateway_proxy = std::string(::aether::core::trim(reg.config.services.http_proxy));
+    identity.organization = std::string(::hemera::core::trim(reg.account.organization));
+    identity.gateway_proxy = std::string(::hemera::core::trim(reg.config.services.http_proxy));
     identity.assigned_endpoint = endpoint_from(reg);
     identity.refused = false;
     return identity;
@@ -994,10 +994,10 @@ Identity refresh_with_saved_profile(const Identity& identity, std::string_view e
 
 Identity refresh_from_profile(const AccountData& reg, const Identity& identity,
                               std::vector<std::string>& notes) {
-    const std::string ipv4(::aether::core::trim(reg.config.interface.addresses.v4));
-    const std::string ipv6(::aether::core::trim(reg.config.interface.addresses.v6));
-    const std::string organization(::aether::core::trim(reg.account.organization));
-    const std::string gateway_proxy(::aether::core::trim(reg.config.services.http_proxy));
+    const std::string ipv4(::hemera::core::trim(reg.config.interface.addresses.v4));
+    const std::string ipv6(::hemera::core::trim(reg.config.interface.addresses.v6));
+    const std::string organization(::hemera::core::trim(reg.account.organization));
+    const std::string gateway_proxy(::hemera::core::trim(reg.config.services.http_proxy));
     const std::string assigned_endpoint = endpoint_from(reg);
 
     if (!ipv4.empty() && ipv4 != identity.ipv4) {
@@ -1062,4 +1062,4 @@ std::expected<MasqueEnrollment, std::string> masque_enrollment_after_error(
     return kept;
 }
 
-} // namespace aether::core::account
+} // namespace hemera::core::account

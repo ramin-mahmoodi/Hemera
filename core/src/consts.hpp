@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <string_view>
 
-namespace aether::core {
+namespace hemera::core {
 
-// Port of aether/src/consts.rs: the names and numbers the WARP service is reached by.
+// Port of hemera/src/consts.rs: the names and numbers the WARP service is reached by.
 
 inline constexpr std::string_view API_URL = "https://api.cloudflareclient.com";
 inline constexpr std::string_view API_VERSION = "v0a4471";
@@ -57,4 +57,4 @@ inline constexpr std::uint8_t MASQUE_PINS[][32] = {
      0xb0, 0x40},
 };
 
-} // namespace aether::core
+} // namespace hemera::core

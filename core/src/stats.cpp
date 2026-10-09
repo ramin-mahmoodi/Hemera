@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-namespace aether::core {
+namespace hemera::core {
 namespace {
 
 std::atomic<std::uint64_t> up{0};
@@ -25,7 +25,7 @@ constexpr const char* UNITS[] = {"B", "KiB", "MiB", "GiB", "TiB"};
 } // namespace
 
 void init(const Settings& settings) {
-    on.store(is_truthy(settings.get("AETHER_STATS").value_or(std::string_view{})),
+    on.store(is_truthy(settings.get("HEMERA_STATS").value_or(std::string_view{})),
              std::memory_order_relaxed);
     if (!running.exchange(true, std::memory_order_relaxed)) {
         started = std::chrono::steady_clock::now();
@@ -80,7 +80,7 @@ std::string format_uptime(std::chrono::seconds uptime) {
 }
 
 std::chrono::seconds report_interval(const Settings& settings) {
-    const auto value = settings.get("AETHER_STATS_SECS");
+    const auto value = settings.get("HEMERA_STATS_SECS");
     if (!value) return DEFAULT_REPORT_SECS;
 
     std::string_view text = trim(*value);
@@ -93,4 +93,4 @@ std::chrono::seconds report_interval(const Settings& settings) {
         std::min<std::uint64_t>(secs, MAX_REPORT_SECS.count())));
 }
 
-} // namespace aether::core
+} // namespace hemera::core

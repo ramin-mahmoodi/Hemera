@@ -55,7 +55,7 @@
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "winmm.lib")
 
-namespace aether::gui {
+namespace hemera::gui {
 
 namespace {
 
@@ -200,7 +200,7 @@ struct RealSystemMetrics {
 struct MainWindow::Impl {
     HINSTANCE hInstance_ = nullptr;
     HWND hwnd_ = nullptr;
-    std::shared_ptr<AetherEngine> engine_;
+    std::shared_ptr<HemeraEngine> engine_;
     bool start_minimized_ = false;
 
     ActiveView view_ = ActiveView::Home;
@@ -241,7 +241,8 @@ struct MainWindow::Impl {
     float seg_target_x_ = 0.0f;
 
     // Settings Toggle Switch smooth animations (0.0 to 1.0)
-    float switch_anim_[3] = { 0.0f, 0.0f, 0.0f }; // [0]=autostart, [1]=close_to_tray, [2]=kill_switch
+    // [0]=autostart, [1]=close_to_tray, [2]=kill_switch, [3]=system_proxy, [4]=fragment, [5]=ech, [6]=route_direct
+    float switch_anim_[7] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 
     // About view hovers & state
     bool about_src_hovered_ = false;
@@ -318,11 +319,9 @@ struct MainWindow::Impl {
     std::deque<std::wstring> log_history_;
     std::mutex log_mutex_;
 
-    // System Tray & Custom Tray Popup
+    // System Tray
     NOTIFYICONDATAW nid_{};
     bool in_tray_ = false;
-    HWND hwnd_tray_popup_ = nullptr;
-    int tray_hovered_item_ = -1;
 
     // GDI+ Resources & Cached Fonts
     ULONG_PTR gdiplus_token_ = 0;
@@ -370,7 +369,7 @@ struct MainWindow::Impl {
         }
     }
 
-    Impl(HINSTANCE hInstance, std::shared_ptr<AetherEngine> engine, bool start_minimized)
+    Impl(HINSTANCE hInstance, std::shared_ptr<HemeraEngine> engine, bool start_minimized)
         : hInstance_(hInstance), engine_(std::move(engine)), start_minimized_(start_minimized) {
         timeBeginPeriod(1); // Set OS scheduler resolution to 1ms for rock-solid 100+ FPS!
         Gdiplus::GdiplusStartupInput gdiInput;
@@ -383,14 +382,19 @@ struct MainWindow::Impl {
             ram_history_.push_back(static_cast<float>(sys_metrics_.ram_mb));
         }
 
-        // Apply saved theme settings
+        // Apply saved theme settings and profile
+        edit_profile_ = engine_->active_profile();
         edit_settings_ = engine_->load_settings();
         apply_theme_setting(edit_settings_.theme);
 
-        // Initialize toggle switch animations
+        // Initialize toggle switch animations (7 toggles)
         switch_anim_[0] = edit_settings_.autostart ? 1.0f : 0.0f;
         switch_anim_[1] = edit_settings_.close_to_tray ? 1.0f : 0.0f;
         switch_anim_[2] = edit_settings_.kill_switch ? 1.0f : 0.0f;
+        switch_anim_[3] = edit_profile_.system_proxy ? 1.0f : 0.0f;
+        switch_anim_[4] = edit_profile_.fragment ? 1.0f : 0.0f;
+        switch_anim_[5] = edit_profile_.ech ? 1.0f : 0.0f;
+        switch_anim_[6] = (!edit_profile_.route_direct.empty()) ? 1.0f : 0.0f;
 
         // Initialize Appearance segment target
         int seg_idx = (edit_settings_.theme == "light") ? 1 : ((edit_settings_.theme == "dark") ? 2 : 0);
@@ -402,9 +406,6 @@ struct MainWindow::Impl {
     }
 
     ~Impl() {
-        if (hwnd_tray_popup_ && IsWindow(hwnd_tray_popup_)) {
-            DestroyWindow(hwnd_tray_popup_);
-        }
         remove_tray_icon();
         if (cached_mem_dc_) {
             if (cached_old_bmp_) SelectObject(cached_mem_dc_, cached_old_bmp_);
@@ -516,12 +517,20 @@ struct MainWindow::Impl {
     }
 
     void populate_settings_draft() {
-        edit_profile_ = engine_->load_profile();
+        edit_profile_ = engine_->active_profile();
         edit_settings_ = engine_->load_settings();
         socks_edit_buffer_ = std::wstring(edit_profile_.bind_address.begin(), edit_profile_.bind_address.end());
         int seg_idx = (edit_settings_.theme == "light") ? 1 : ((edit_settings_.theme == "dark") ? 2 : 0);
         seg_target_x_ = static_cast<float>(seg_idx);
         seg_anim_x_ = static_cast<float>(seg_idx);
+
+        switch_anim_[0] = edit_settings_.autostart ? 1.0f : 0.0f;
+        switch_anim_[1] = edit_settings_.close_to_tray ? 1.0f : 0.0f;
+        switch_anim_[2] = edit_settings_.kill_switch ? 1.0f : 0.0f;
+        switch_anim_[3] = edit_profile_.system_proxy ? 1.0f : 0.0f;
+        switch_anim_[4] = edit_profile_.fragment ? 1.0f : 0.0f;
+        switch_anim_[5] = edit_profile_.ech ? 1.0f : 0.0f;
+        switch_anim_[6] = (!edit_profile_.route_direct.empty()) ? 1.0f : 0.0f;
     }
 
     void commit_settings_save() {
@@ -534,8 +543,8 @@ struct MainWindow::Impl {
             edit_profile_.bind_address = s;
         }
         autostart::set_enabled(edit_settings_.autostart);
-        engine_->save_profile(edit_profile_);
         engine_->save_settings(edit_settings_);
+        engine_->set_active_profile(edit_profile_);
         apply_theme_setting(edit_settings_.theme);
     }
 
@@ -544,11 +553,15 @@ struct MainWindow::Impl {
         if (std::abs(hero_target_scale_ - hero_scale_) > 0.0005f) return true;
         if (std::abs(gear_anim_t_ - (settings_btn_hovered_ ? 1.0f : 0.0f)) > 0.001f) return true;
         if (std::abs(seg_target_x_ - seg_anim_x_) > 0.001f) return true;
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 7; ++i) {
             float t_val = 0.0f;
             if (i == 0) t_val = edit_settings_.autostart ? 1.0f : 0.0f;
             else if (i == 1) t_val = edit_settings_.close_to_tray ? 1.0f : 0.0f;
             else if (i == 2) t_val = edit_settings_.kill_switch ? 1.0f : 0.0f;
+            else if (i == 3) t_val = edit_profile_.system_proxy ? 1.0f : 0.0f;
+            else if (i == 4) t_val = edit_profile_.fragment ? 1.0f : 0.0f;
+            else if (i == 5) t_val = edit_profile_.ech ? 1.0f : 0.0f;
+            else if (i == 6) t_val = (!edit_profile_.route_direct.empty()) ? 1.0f : 0.0f;
             if (std::abs(t_val - switch_anim_[i]) > 0.001f) return true;
         }
         if (std::abs(target_scroll_y_ - scroll_anim_y_) > 0.1f) return true;
@@ -630,12 +643,16 @@ struct MainWindow::Impl {
             needs_repaint = true;
         }
 
-        // 6. Smooth Toggle Switch animation transitions
-        for (int i = 0; i < 3; ++i) {
+        // 6. Smooth Toggle Switch animation transitions (7 switches)
+        for (int i = 0; i < 7; ++i) {
             float t_val = 0.0f;
             if (i == 0) t_val = edit_settings_.autostart ? 1.0f : 0.0f;
             else if (i == 1) t_val = edit_settings_.close_to_tray ? 1.0f : 0.0f;
             else if (i == 2) t_val = edit_settings_.kill_switch ? 1.0f : 0.0f;
+            else if (i == 3) t_val = edit_profile_.system_proxy ? 1.0f : 0.0f;
+            else if (i == 4) t_val = edit_profile_.fragment ? 1.0f : 0.0f;
+            else if (i == 5) t_val = edit_profile_.ech ? 1.0f : 0.0f;
+            else if (i == 6) t_val = (!edit_profile_.route_direct.empty()) ? 1.0f : 0.0f;
 
             float s_diff = t_val - switch_anim_[i];
             if (std::abs(s_diff) > 0.001f) {
@@ -779,12 +796,12 @@ struct MainWindow::Impl {
 
         // Zero trace of legacy name in user-visible logs
         size_t p = 0;
-        while ((p = entry.message.find(L"Aether", p)) != std::wstring::npos) {
+        while ((p = entry.message.find(L"Hemera", p)) != std::wstring::npos) {
             entry.message.replace(p, 6, L"Hemera");
             p += 6;
         }
         p = 0;
-        while ((p = entry.message.find(L"aether", p)) != std::wstring::npos) {
+        while ((p = entry.message.find(L"hemera", p)) != std::wstring::npos) {
             entry.message.replace(p, 6, L"hemera");
             p += 6;
         }
@@ -869,7 +886,6 @@ struct MainWindow::Impl {
             if (x >= back_x && x <= back_x + back_sz && y >= back_y && y <= back_y + back_sz) return true;
 
             if (hovered_settings_row_ >= 0) return true;
-            if (save_btn_hovered_) return true;
             return false;
         }
 
@@ -1325,8 +1341,10 @@ struct MainWindow::Impl {
         float label_pad_y = (row_h - (float)scale(ds.typo.mono_value, cur_dpi)) / 2.0f;
 
         // Row 1: Protocol
-        std::wstring proto_name = L"WARP-in-WARP / gool";
+        std::wstring proto_name = L"Auto";
         switch (profile.protocol) {
+            case Protocol::Auto: proto_name = L"Auto"; break;
+            case Protocol::Gool: proto_name = L"WARP-in-WARP / gool"; break;
             case Protocol::Masque: proto_name = profile.masque_http2 ? L"MASQUE (H2)" : L"MASQUE (H3)"; break;
             case Protocol::Wireguard: proto_name = L"WireGuard"; break;
             case Protocol::Mim: proto_name = L"MiM"; break;
@@ -1335,13 +1353,19 @@ struct MainWindow::Impl {
         g.DrawString(L"Protocol", -1, font_body_.get(), Gdiplus::PointF(card_x + label_pad_x, card_y + label_pad_y), &muted_brush);
         g.DrawString(proto_name.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - label_pad_x, card_y + label_pad_y), &right_fmt, &text_pri_brush);
 
-        // Row 2: Transport
-        std::wstring transport_name = L"HTTP/2 · TLS mask";
-        if (profile.protocol == Protocol::Masque && !profile.masque_http2) {
-            transport_name = L"HTTP/3 · QUIC";
+        // Row 2: Route (Location & Scan Mode)
+        std::wstring loc_str = profile.exit_loc.empty() ? L"Auto" : std::wstring(profile.exit_loc.begin(), profile.exit_loc.end());
+        std::wstring scan_str = L"Balanced";
+        switch (profile.scan_mode) {
+            case ScanMode::Turbo: scan_str = L"Turbo"; break;
+            case ScanMode::Thorough: scan_str = L"Thorough"; break;
+            case ScanMode::Verified: scan_str = L"Verified"; break;
+            case ScanMode::Ironclad: scan_str = L"Ironclad"; break;
+            default: break;
         }
-        g.DrawString(L"Transport", -1, font_body_.get(), Gdiplus::PointF(card_x + label_pad_x, card_y + row_h + label_pad_y), &muted_brush);
-        g.DrawString(transport_name.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - label_pad_x, card_y + row_h + label_pad_y), &right_fmt, &text_pri_brush);
+        std::wstring route_display = loc_str + L" · " + scan_str;
+        g.DrawString(L"Route", -1, font_body_.get(), Gdiplus::PointF(card_x + label_pad_x, card_y + row_h + label_pad_y), &muted_brush);
+        g.DrawString(route_display.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - label_pad_x, card_y + row_h + label_pad_y), &right_fmt, &text_pri_brush);
 
         // Row 3: SOCKS5 Address + Copy Button
         std::wstring socks_str = std::wstring(profile.bind_address.begin(), profile.bind_address.end());
@@ -1506,19 +1530,21 @@ struct MainWindow::Impl {
             g.DrawString(seg_labels[i], -1, font_body_.get(), Gdiplus::PointF(sx + seg_w / 2.0f, seg_y + seg_h / 2.0f), &center_fmt, &seg_txt);
         }
 
-        // ── Card 1: GENERAL (3 Animated Toggles: Launch at login, System tray, Kill switch) ──
+        // ── Card 1: GENERAL (4 Animated Toggles) ──
         float sec1_y = card0_y + seg_box_h + scale_f(24, cur_dpi);
         g.DrawString(L"GENERAL", -1, font_metric_tag_.get(), Gdiplus::PointF(card_x + scale_f(4, cur_dpi), sec1_y), &sec_brush);
 
         float card1_y = sec1_y + scale_f(22, cur_dpi);
         float gen_row_h = (float)scale(64, cur_dpi);
-        fill_rounded_rect(g, card_bg, card_x, card1_y, card_w, gen_row_h * 3.0f, (float)scale(ds.metrics.radius_card, cur_dpi));
-        draw_rounded_rect(g, card_pen, card_x, card1_y, card_w, gen_row_h * 3.0f, (float)scale(ds.metrics.radius_card, cur_dpi));
+        float card1_h = gen_row_h * 4.0f;
+        fill_rounded_rect(g, card_bg, card_x, card1_y, card_w, card1_h, (float)scale(ds.metrics.radius_card, cur_dpi));
+        draw_rounded_rect(g, card_pen, card_x, card1_y, card_w, card1_h, (float)scale(ds.metrics.radius_card, cur_dpi));
 
-        g.DrawLine(&card_pen, card_x, card1_y + gen_row_h, card_x + card_w, card1_y + gen_row_h);
-        g.DrawLine(&card_pen, card_x, card1_y + gen_row_h * 2.0f, card_x + card_w, card1_y + gen_row_h * 2.0f);
+        for (int i = 1; i < 4; ++i) {
+            g.DrawLine(&card_pen, card_x, card1_y + gen_row_h * static_cast<float>(i), card_x + card_w, card1_y + gen_row_h * static_cast<float>(i));
+        }
 
-        if (hovered_settings_row_ >= 10 && hovered_settings_row_ <= 12) {
+        if (hovered_settings_row_ >= 10 && hovered_settings_row_ <= 13) {
             float hy = card1_y + static_cast<float>(hovered_settings_row_ - 10) * gen_row_h;
             fill_rounded_rect(g, row_hover_brush, card_x + 1.0f, hy + 1.0f, card_w - 2.0f, gen_row_h - 2.0f, (float)scale(10, cur_dpi));
         }
@@ -1543,29 +1569,41 @@ struct MainWindow::Impl {
         g.DrawString(L"Block all traffic if connection drops", -1, font_sub_label_.get(), Gdiplus::PointF(card_x + pad_x, gy2 + scale_f(20, cur_dpi)), &label_brush);
         draw_animated_toggle(sw_x, card1_y + gen_row_h * 2.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 2);
 
-        // ── Card 2: CONNECTION (Protocol, Scan mode, IP version) ──
-        float sec2_y = card1_y + gen_row_h * 3.0f + scale_f(24, cur_dpi);
-        g.DrawString(L"CONNECTION", -1, font_metric_tag_.get(), Gdiplus::PointF(card_x + scale_f(4, cur_dpi), sec2_y), &sec_brush);
+        // General Row 3: Windows system proxy
+        float gy3 = card1_y + gen_row_h * 3.0f + scale_f(12, cur_dpi);
+        g.DrawString(L"System proxy", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, gy3), &text_pri_brush);
+        g.DrawString(L"Route system Internet traffic through Hemera", -1, font_sub_label_.get(), Gdiplus::PointF(card_x + pad_x, gy3 + scale_f(20, cur_dpi)), &label_brush);
+        draw_animated_toggle(sw_x, card1_y + gen_row_h * 3.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 3);
+
+        // ── Card 2: CONNECTION & ROUTING (Protocol, Scan mode, Exit location, IP version, Bypass local) ──
+        float sec2_y = card1_y + card1_h + scale_f(24, cur_dpi);
+        g.DrawString(L"CONNECTION & ROUTING", -1, font_metric_tag_.get(), Gdiplus::PointF(card_x + scale_f(4, cur_dpi), sec2_y), &sec_brush);
 
         float card2_y = sec2_y + scale_f(22, cur_dpi);
-        fill_rounded_rect(g, card_bg, card_x, card2_y, card_w, row_h * 3.0f, (float)scale(ds.metrics.radius_card, cur_dpi));
-        draw_rounded_rect(g, card_pen, card_x, card2_y, card_w, row_h * 3.0f, (float)scale(ds.metrics.radius_card, cur_dpi));
+        float card2_h = row_h * 5.0f;
+        fill_rounded_rect(g, card_bg, card_x, card2_y, card_w, card2_h, (float)scale(ds.metrics.radius_card, cur_dpi));
+        draw_rounded_rect(g, card_pen, card_x, card2_y, card_w, card2_h, (float)scale(ds.metrics.radius_card, cur_dpi));
 
-        g.DrawLine(&card_pen, card_x, card2_y + row_h, card_x + card_w, card2_y + row_h);
-        g.DrawLine(&card_pen, card_x, card2_y + row_h * 2.0f, card_x + card_w, card2_y + row_h * 2.0f);
+        for (int i = 1; i < 5; ++i) {
+            g.DrawLine(&card_pen, card_x, card2_y + row_h * static_cast<float>(i), card_x + card_w, card2_y + row_h * static_cast<float>(i));
+        }
 
-        if (hovered_settings_row_ >= 0 && hovered_settings_row_ < 3) {
+        if (hovered_settings_row_ >= 0 && hovered_settings_row_ < 4) {
             float hy = card2_y + static_cast<float>(hovered_settings_row_) * row_h;
+            fill_rounded_rect(g, row_hover_brush, card_x + 1.0f, hy + 1.0f, card_w - 2.0f, row_h - 2.0f, (float)scale(10, cur_dpi));
+        } else if (hovered_settings_row_ == 16) {
+            float hy = card2_y + 4.0f * row_h;
             fill_rounded_rect(g, row_hover_brush, card_x + 1.0f, hy + 1.0f, card_w - 2.0f, row_h - 2.0f, (float)scale(10, cur_dpi));
         }
 
         // Row 0: Protocol
-        std::wstring proto_lbl = L"WARP-in-WARP / gool ▾";
+        std::wstring proto_lbl = L"Auto ▾";
         switch (edit_profile_.protocol) {
+            case Protocol::Auto: proto_lbl = L"Auto ▾"; break;
+            case Protocol::Gool: proto_lbl = L"WARP-in-WARP / gool ▾"; break;
             case Protocol::Masque: proto_lbl = edit_profile_.masque_http2 ? L"MASQUE (H2) ▾" : L"MASQUE (H3) ▾"; break;
             case Protocol::Wireguard: proto_lbl = L"WireGuard ▾"; break;
             case Protocol::Mim: proto_lbl = L"MiM ▾"; break;
-            default: break;
         }
         float row_y0 = card2_y + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
         g.DrawString(L"Protocol", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y0), &label_brush);
@@ -1574,69 +1612,102 @@ struct MainWindow::Impl {
         // Row 1: Scan mode
         std::wstring scan_lbl = L"Balanced (Recommended) ▾";
         switch (edit_profile_.scan_mode) {
-            case ScanMode::Turbo: scan_lbl = L"Fast ▾"; break;
+            case ScanMode::Turbo: scan_lbl = L"Turbo (Fastest) ▾"; break;
             case ScanMode::Thorough: scan_lbl = L"Thorough ▾"; break;
+            case ScanMode::Verified: scan_lbl = L"Verified (Stealth) ▾"; break;
+            case ScanMode::Ironclad: scan_lbl = L"Ironclad ▾"; break;
             default: break;
         }
         float row_y1 = card2_y + row_h + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
         g.DrawString(L"Scan mode", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y1), &label_brush);
         g.DrawString(scan_lbl.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, row_y1), &right_fmt, &text_pri_brush);
 
-        // Row 2: IP version
-        std::wstring ip_lbl = (edit_profile_.ip_version == IpVersion::V6) ? L"IPv6 ▾" : (edit_profile_.ip_version == IpVersion::Both ? L"Dual ▾" : L"IPv4 ▾");
+        // Row 2: Exit location
+        std::wstring exit_lbl = edit_profile_.exit_loc.empty() ? L"Auto (Fastest) ▾" : (std::wstring(edit_profile_.exit_loc.begin(), edit_profile_.exit_loc.end()) + L" ▾");
         float row_y2 = card2_y + row_h * 2.0f + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
-        g.DrawString(L"IP version", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y2), &label_brush);
-        g.DrawString(ip_lbl.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, row_y2), &right_fmt, &text_pri_brush);
+        g.DrawString(L"Exit location", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y2), &label_brush);
+        g.DrawString(exit_lbl.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, row_y2), &right_fmt, &text_pri_brush);
 
-        // ── Card 3: NETWORK (Transport, Obfuscation, SOCKS5) ──
-        float sec3_y = card2_y + row_h * 3.0f + scale_f(24, cur_dpi);
-        g.DrawString(L"NETWORK", -1, font_metric_tag_.get(), Gdiplus::PointF(card_x + scale_f(4, cur_dpi), sec3_y), &sec_brush);
+        // Row 3: IP version
+        std::wstring ip_lbl = (edit_profile_.ip_version == IpVersion::V6) ? L"IPv6 ▾" : (edit_profile_.ip_version == IpVersion::Both ? L"Dual ▾" : L"IPv4 ▾");
+        float row_y3 = card2_y + row_h * 3.0f + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
+        g.DrawString(L"IP version", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y3), &label_brush);
+        g.DrawString(ip_lbl.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, row_y3), &right_fmt, &text_pri_brush);
+
+        // Row 4: Bypass local traffic
+        float row_y4 = card2_y + row_h * 4.0f + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
+        g.DrawString(L"Bypass local traffic", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y4), &text_pri_brush);
+        draw_animated_toggle(sw_x, card2_y + row_h * 4.0f + (row_h - scale_f(24, cur_dpi)) / 2.0f, 6);
+
+        // ── Card 3: ANTI-CENSORSHIP & NETWORK ──
+        float sec3_y = card2_y + card2_h + scale_f(24, cur_dpi);
+        g.DrawString(L"ANTI-CENSORSHIP & NETWORK", -1, font_metric_tag_.get(), Gdiplus::PointF(card_x + scale_f(4, cur_dpi), sec3_y), &sec_brush);
 
         float card3_y = sec3_y + scale_f(22, cur_dpi);
-        fill_rounded_rect(g, card_bg, card_x, card3_y, card_w, row_h * 3.0f, (float)scale(ds.metrics.radius_card, cur_dpi));
-        draw_rounded_rect(g, card_pen, card_x, card3_y, card_w, row_h * 3.0f, (float)scale(ds.metrics.radius_card, cur_dpi));
+        float card3_h = row_h * 5.0f;
+        fill_rounded_rect(g, card_bg, card_x, card3_y, card_w, card3_h, (float)scale(ds.metrics.radius_card, cur_dpi));
+        draw_rounded_rect(g, card_pen, card_x, card3_y, card_w, card3_h, (float)scale(ds.metrics.radius_card, cur_dpi));
 
-        g.DrawLine(&card_pen, card_x, card3_y + row_h, card_x + card_w, card3_y + row_h);
-        g.DrawLine(&card_pen, card_x, card3_y + row_h * 2.0f, card_x + card_w, card3_y + row_h * 2.0f);
+        for (int i = 1; i < 5; ++i) {
+            g.DrawLine(&card_pen, card_x, card3_y + row_h * static_cast<float>(i), card_x + card_w, card3_y + row_h * static_cast<float>(i));
+        }
 
-        if (hovered_settings_row_ >= 3 && hovered_settings_row_ < 6) {
-            float hy = card3_y + static_cast<float>(hovered_settings_row_ - 3) * row_h;
+        if (hovered_settings_row_ == 14) {
+            fill_rounded_rect(g, row_hover_brush, card_x + 1.0f, card3_y + 1.0f, card_w - 2.0f, row_h - 2.0f, (float)scale(10, cur_dpi));
+        } else if (hovered_settings_row_ == 15) {
+            fill_rounded_rect(g, row_hover_brush, card_x + 1.0f, card3_y + row_h + 1.0f, card_w - 2.0f, row_h - 2.0f, (float)scale(10, cur_dpi));
+        } else if (hovered_settings_row_ >= 4 && hovered_settings_row_ <= 6) {
+            float hy = card3_y + static_cast<float>(hovered_settings_row_ - 2) * row_h;
             fill_rounded_rect(g, row_hover_brush, card_x + 1.0f, hy + 1.0f, card_w - 2.0f, row_h - 2.0f, (float)scale(10, cur_dpi));
         }
 
-        // Row 3: Transport
-        std::wstring trans_lbl = edit_profile_.masque_http2 ? L"HTTP/2 (TCP TLS mask) ▾" : L"HTTP/3 (QUIC) ▾";
-        float row_y3 = card3_y + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
-        g.DrawString(L"Transport", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y3), &label_brush);
-        g.DrawString(trans_lbl.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, row_y3), &right_fmt, &text_pri_brush);
+        // Card 3 Row 0: ClientHello Fragmentation
+        float r3_y0 = card3_y + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
+        g.DrawString(L"TLS fragmentation", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, r3_y0), &text_pri_brush);
+        draw_animated_toggle(sw_x, card3_y + (row_h - scale_f(24, cur_dpi)) / 2.0f, 4);
 
-        // Row 4: Obfuscation
+        // Card 3 Row 1: Encrypted Client Hello / ECH
+        float r3_y1 = card3_y + row_h + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
+        g.DrawString(L"Encrypted Client Hello (ECH)", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, r3_y1), &text_pri_brush);
+        draw_animated_toggle(sw_x, card3_y + row_h + (row_h - scale_f(24, cur_dpi)) / 2.0f, 5);
+
+        // Card 3 Row 2: Obfuscation
         std::wstring noize_lbl = L"Balanced ▾";
         switch (edit_profile_.masque_noize) {
-            case MasqueNoize::Gfw: noize_lbl = L"Light ▾"; break;
+            case MasqueNoize::Gfw: noize_lbl = L"Aggressive ▾"; break;
             case MasqueNoize::Off: noize_lbl = L"Off ▾"; break;
             default: break;
         }
-        float row_y4 = card3_y + row_h + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
-        g.DrawString(L"Obfuscation", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y4), &label_brush);
-        g.DrawString(noize_lbl.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, row_y4), &right_fmt, &text_pri_brush);
+        float r3_y2 = card3_y + row_h * 2.0f + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
+        g.DrawString(L"Obfuscation", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, r3_y2), &label_brush);
+        g.DrawString(noize_lbl.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, r3_y2), &right_fmt, &text_pri_brush);
 
-        // Row 5: SOCKS5 proxy (Inline Pure GDI+ Text Editing)
-        float row_y5 = card3_y + row_h * 2.0f + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
-        g.DrawString(L"SOCKS5 proxy", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, row_y5), &label_brush);
+        // Card 3 Row 3: DNS server
+        std::wstring dns_lbl = L"Auto (1.1.1.1) ▾";
+        if (edit_profile_.dns == "1.1.1.2") dns_lbl = L"Security (1.1.1.2) ▾";
+        else if (edit_profile_.dns == "8.8.8.8") dns_lbl = L"Google (8.8.8.8) ▾";
+        else if (edit_profile_.dns == "9.9.9.9") dns_lbl = L"Quad9 (9.9.9.9) ▾";
+        else if (!edit_profile_.dns.empty()) dns_lbl = std::wstring(edit_profile_.dns.begin(), edit_profile_.dns.end()) + L" ▾";
+        float r3_y3 = card3_y + row_h * 3.0f + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
+        g.DrawString(L"DNS server", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, r3_y3), &label_brush);
+        g.DrawString(dns_lbl.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, r3_y3), &right_fmt, &text_pri_brush);
+
+        // Card 3 Row 4: SOCKS5 proxy
+        float r3_y4 = card3_y + row_h * 4.0f + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
+        g.DrawString(L"SOCKS5 proxy", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, r3_y4), &label_brush);
 
         std::wstring socks_display = socks_edit_buffer_.empty() ? L"127.0.0.1:1819" : socks_edit_buffer_;
         if (is_editing_socks_) {
             bool show_caret = (std::fmod(caret_blink_timer_, 1.0f) < 0.5f);
             socks_display += show_caret ? L"|" : L" ";
             Gdiplus::SolidBrush active_txt_brush(ds.colors.accent);
-            g.DrawString(socks_display.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, row_y5), &right_fmt, &active_txt_brush);
+            g.DrawString(socks_display.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, r3_y4), &right_fmt, &active_txt_brush);
         } else {
-            g.DrawString(socks_display.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, row_y5), &right_fmt, &text_pri_brush);
+            g.DrawString(socks_display.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, r3_y4), &right_fmt, &text_pri_brush);
         }
 
-        // ── Card 4: ABOUT Row (Links to About View) ──
-        float sec4_y = card3_y + row_h * 3.0f + scale_f(24, cur_dpi);
+        // ── Card 4: ABOUT Row ──
+        float sec4_y = card3_y + card3_h + scale_f(24, cur_dpi);
         fill_rounded_rect(g, card_bg, card_x, sec4_y, card_w, row_h, (float)scale(ds.metrics.radius_card, cur_dpi));
         draw_rounded_rect(g, card_pen, card_x, sec4_y, card_w, row_h, (float)scale(ds.metrics.radius_card, cur_dpi));
 
@@ -1645,30 +1716,22 @@ struct MainWindow::Impl {
         }
 
         float about_y = sec4_y + (row_h - (float)scale(ds.typo.body_label, cur_dpi)) / 2.0f;
-        g.DrawString(L"About", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, about_y), &text_pri_brush);
-
-        std::wstring about_sub = L"v1.0.0   ›";
+        g.DrawString(L"About Hemera", -1, font_body_.get(), Gdiplus::PointF(card_x + pad_x, about_y), &text_pri_brush);
+        std::wstring about_sub = L"v1.0.1   ›";
         g.DrawString(about_sub.c_str(), -1, font_mono_.get(), Gdiplus::PointF(card_x + card_w - pad_x, about_y), &right_fmt, &label_brush);
 
-        // ── Save & Apply Button ──
-        float save_x = card_x;
-        float save_y = sec4_y + row_h + scale_f(24, cur_dpi);
-        float save_w = card_w;
-        float save_h = (float)scale(46, cur_dpi);
-
-        Gdiplus::Color save_bg = save_btn_hovered_ ? ds.colors.accent_hover : ds.colors.accent_bg;
-        Gdiplus::SolidBrush save_bg_brush(save_bg);
-        fill_rounded_rect(g, save_bg_brush, save_x, save_y, save_w, save_h, (float)scale(ds.metrics.radius_control, cur_dpi));
-
-        Gdiplus::Pen save_pen(ds.colors.accent, 1.2f);
-        draw_rounded_rect(g, save_pen, save_x, save_y, save_w, save_h, (float)scale(ds.metrics.radius_control, cur_dpi));
-
-        Gdiplus::SolidBrush save_txt_brush(ds.colors.accent);
-        g.DrawString(L"Save & Apply Settings", -1, font_body_bold_.get(), Gdiplus::PointF(save_x + save_w / 2.0f, save_y + save_h / 2.0f), &center_fmt, &save_txt_brush);
-
-        // Footer: "Free and open source"
+        // Footer: "Hemera · Free and open source proxy"
         Gdiplus::SolidBrush foot_brush(ds.colors.text_dim);
-        g.DrawString(L"Free and open source", -1, font_footnote_.get(), Gdiplus::PointF(w / 2.0f, save_y + save_h + scale_f(20, cur_dpi)), &center_fmt, &foot_brush);
+        g.DrawString(L"Hemera · Free and open source proxy", -1, font_footnote_.get(), Gdiplus::PointF(w / 2.0f, sec4_y + row_h + scale_f(24, cur_dpi)), &center_fmt, &foot_brush);
+
+        // Calculate max_scroll dynamically
+        float total_h = sec4_y + row_h + scale_f(50, cur_dpi);
+        float visible_h = h - clip_top;
+        if (total_h > visible_h) {
+            max_scroll_ = static_cast<int>((total_h - visible_h) / (static_cast<float>(cur_dpi) / 96.0f)) + 20;
+        } else {
+            max_scroll_ = 0;
+        }
 
         g.Restore(state_clip);
 
@@ -1693,23 +1756,27 @@ struct MainWindow::Impl {
         float sec1_y = card0_y + seg_box_h + scale_f(24, cur_dpi);
         float card1_y = sec1_y + scale_f(22, cur_dpi);
         float gen_row_h = (float)scale(64, cur_dpi);
+        float card1_h = gen_row_h * 4.0f;
 
-        float sec2_y = card1_y + gen_row_h * 3.0f + scale_f(24, cur_dpi);
+        float sec2_y = card1_y + card1_h + scale_f(24, cur_dpi);
         float card2_y = sec2_y + scale_f(22, cur_dpi);
+        float card2_h = row_h * 5.0f;
 
-        float sec3_y = card2_y + row_h * 3.0f + scale_f(24, cur_dpi);
+        float sec3_y = card2_y + card2_h + scale_f(24, cur_dpi);
         float card3_y = sec3_y + scale_f(22, cur_dpi);
 
         float sy = scale_f(scroll_anim_y_, cur_dpi);
         float anchor_y = card2_y - sy;
-        if (active_dropdown_ >= 0 && active_dropdown_ < 3) {
+        if (active_dropdown_ >= 0 && active_dropdown_ < 4) {
             anchor_y = card2_y + static_cast<float>(active_dropdown_) * row_h - sy;
-        } else if (active_dropdown_ >= 3 && active_dropdown_ < 5) {
-            anchor_y = card3_y + static_cast<float>(active_dropdown_ - 3) * row_h - sy;
+        } else if (active_dropdown_ == 4) {
+            anchor_y = card3_y + 2.0f * row_h - sy;
+        } else if (active_dropdown_ == 5) {
+            anchor_y = card3_y + 3.0f * row_h - sy;
         }
 
         float item_h = (float)scale(ds.metrics.dropdown_item_h, cur_dpi);
-        float pop_w = (float)scale(250, cur_dpi);
+        float pop_w = (float)scale(260, cur_dpi);
         float pop_h = item_h * static_cast<float>(dropdown_options_.size());
         float pop_x = card_x + card_w - pop_w;
         float pop_y = anchor_y + row_h + scale_f(4, cur_dpi);
@@ -1736,26 +1803,42 @@ struct MainWindow::Impl {
 
         auto is_option_selected = [&](int opt_id) -> bool {
             if (active_dropdown_ == 0) {
-                if (opt_id == 101) return (edit_profile_.protocol == Protocol::Gool && !edit_profile_.masque_http2);
-                if (opt_id == 102) return (edit_profile_.protocol == Protocol::Masque && !edit_profile_.masque_http2);
-                if (opt_id == 103) return (edit_profile_.protocol == Protocol::Masque && edit_profile_.masque_http2);
-                if (opt_id == 104) return (edit_profile_.protocol == Protocol::Wireguard);
-                if (opt_id == 105) return (edit_profile_.protocol == Protocol::Mim);
+                if (opt_id == 101) return (edit_profile_.protocol == Protocol::Auto);
+                if (opt_id == 102) return (edit_profile_.protocol == Protocol::Gool);
+                if (opt_id == 103) return (edit_profile_.protocol == Protocol::Masque && !edit_profile_.masque_http2);
+                if (opt_id == 104) return (edit_profile_.protocol == Protocol::Masque && edit_profile_.masque_http2);
+                if (opt_id == 105) return (edit_profile_.protocol == Protocol::Wireguard);
+                if (opt_id == 106) return (edit_profile_.protocol == Protocol::Mim);
             } else if (active_dropdown_ == 1) {
                 if (opt_id == 201) return (edit_profile_.scan_mode == ScanMode::Balanced);
                 if (opt_id == 202) return (edit_profile_.scan_mode == ScanMode::Turbo);
                 if (opt_id == 203) return (edit_profile_.scan_mode == ScanMode::Thorough);
+                if (opt_id == 204) return (edit_profile_.scan_mode == ScanMode::Verified);
+                if (opt_id == 205) return (edit_profile_.scan_mode == ScanMode::Ironclad);
             } else if (active_dropdown_ == 2) {
-                if (opt_id == 301) return (edit_profile_.ip_version == IpVersion::V4);
-                if (opt_id == 302) return (edit_profile_.ip_version == IpVersion::V6);
-                if (opt_id == 303) return (edit_profile_.ip_version == IpVersion::Both);
+                if (opt_id == 301) return edit_profile_.exit_loc.empty();
+                if (opt_id == 302) return (edit_profile_.exit_loc == "US");
+                if (opt_id == 303) return (edit_profile_.exit_loc == "DE");
+                if (opt_id == 304) return (edit_profile_.exit_loc == "GB");
+                if (opt_id == 305) return (edit_profile_.exit_loc == "NL");
+                if (opt_id == 306) return (edit_profile_.exit_loc == "FR");
+                if (opt_id == 307) return (edit_profile_.exit_loc == "SG");
+                if (opt_id == 308) return (edit_profile_.exit_loc == "JP");
+                if (opt_id == 309) return (edit_profile_.exit_loc == "TR");
+                if (opt_id == 310) return (edit_profile_.exit_loc == "CA");
             } else if (active_dropdown_ == 3) {
-                if (opt_id == 401) return edit_profile_.masque_http2;
-                if (opt_id == 402) return !edit_profile_.masque_http2;
+                if (opt_id == 401) return (edit_profile_.ip_version == IpVersion::V4);
+                if (opt_id == 402) return (edit_profile_.ip_version == IpVersion::V6);
+                if (opt_id == 403) return (edit_profile_.ip_version == IpVersion::Both);
             } else if (active_dropdown_ == 4) {
                 if (opt_id == 501) return (edit_profile_.masque_noize == MasqueNoize::Firewall);
                 if (opt_id == 502) return (edit_profile_.masque_noize == MasqueNoize::Gfw);
                 if (opt_id == 503) return (edit_profile_.masque_noize == MasqueNoize::Off);
+            } else if (active_dropdown_ == 5) {
+                if (opt_id == 601) return edit_profile_.dns.empty();
+                if (opt_id == 602) return (edit_profile_.dns == "1.1.1.2");
+                if (opt_id == 603) return (edit_profile_.dns == "8.8.8.8");
+                if (opt_id == 604) return (edit_profile_.dns == "9.9.9.9");
             }
             return false;
         };
@@ -1779,28 +1862,45 @@ struct MainWindow::Impl {
 
     void handle_dropdown_selection(int opt_id) {
         if (active_dropdown_ == 0) {
-            if (opt_id == 101) { edit_profile_.protocol = Protocol::Gool; edit_profile_.masque_http2 = false; }
-            else if (opt_id == 102) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = false; }
-            else if (opt_id == 103) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = true; }
-            else if (opt_id == 104) { edit_profile_.protocol = Protocol::Wireguard; }
-            else if (opt_id == 105) { edit_profile_.protocol = Protocol::Mim; }
+            if (opt_id == 101) { edit_profile_.protocol = Protocol::Auto; }
+            else if (opt_id == 102) { edit_profile_.protocol = Protocol::Gool; edit_profile_.masque_http2 = false; }
+            else if (opt_id == 103) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = false; }
+            else if (opt_id == 104) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = true; }
+            else if (opt_id == 105) { edit_profile_.protocol = Protocol::Wireguard; }
+            else if (opt_id == 106) { edit_profile_.protocol = Protocol::Mim; }
         } else if (active_dropdown_ == 1) {
             if (opt_id == 201) edit_profile_.scan_mode = ScanMode::Balanced;
             else if (opt_id == 202) edit_profile_.scan_mode = ScanMode::Turbo;
             else if (opt_id == 203) edit_profile_.scan_mode = ScanMode::Thorough;
+            else if (opt_id == 204) edit_profile_.scan_mode = ScanMode::Verified;
+            else if (opt_id == 205) edit_profile_.scan_mode = ScanMode::Ironclad;
         } else if (active_dropdown_ == 2) {
-            if (opt_id == 301) edit_profile_.ip_version = IpVersion::V4;
-            else if (opt_id == 302) edit_profile_.ip_version = IpVersion::V6;
-            else if (opt_id == 303) edit_profile_.ip_version = IpVersion::Both;
+            if (opt_id == 301) edit_profile_.exit_loc = "";
+            else if (opt_id == 302) edit_profile_.exit_loc = "US";
+            else if (opt_id == 303) edit_profile_.exit_loc = "DE";
+            else if (opt_id == 304) edit_profile_.exit_loc = "GB";
+            else if (opt_id == 305) edit_profile_.exit_loc = "NL";
+            else if (opt_id == 306) edit_profile_.exit_loc = "FR";
+            else if (opt_id == 307) edit_profile_.exit_loc = "SG";
+            else if (opt_id == 308) edit_profile_.exit_loc = "JP";
+            else if (opt_id == 309) edit_profile_.exit_loc = "TR";
+            else if (opt_id == 310) edit_profile_.exit_loc = "CA";
         } else if (active_dropdown_ == 3) {
-            if (opt_id == 401) edit_profile_.masque_http2 = true;
-            else if (opt_id == 402) edit_profile_.masque_http2 = false;
+            if (opt_id == 401) edit_profile_.ip_version = IpVersion::V4;
+            else if (opt_id == 402) edit_profile_.ip_version = IpVersion::V6;
+            else if (opt_id == 403) edit_profile_.ip_version = IpVersion::Both;
         } else if (active_dropdown_ == 4) {
-            if (opt_id == 501) edit_profile_.masque_noize = MasqueNoize::Firewall;
-            else if (opt_id == 502) edit_profile_.masque_noize = MasqueNoize::Gfw;
-            else if (opt_id == 503) edit_profile_.masque_noize = MasqueNoize::Off;
+            if (opt_id == 501) { edit_profile_.masque_noize = MasqueNoize::Firewall; edit_profile_.wg_noize = WgNoize::Balanced; }
+            else if (opt_id == 502) { edit_profile_.masque_noize = MasqueNoize::Gfw; edit_profile_.wg_noize = WgNoize::Aggressive; }
+            else if (opt_id == 503) { edit_profile_.masque_noize = MasqueNoize::Off; edit_profile_.wg_noize = WgNoize::Off; }
+        } else if (active_dropdown_ == 5) {
+            if (opt_id == 601) edit_profile_.dns = "";
+            else if (opt_id == 602) edit_profile_.dns = "1.1.1.2";
+            else if (opt_id == 603) edit_profile_.dns = "8.8.8.8";
+            else if (opt_id == 604) edit_profile_.dns = "9.9.9.9";
         }
         active_dropdown_ = -1;
+        commit_settings_save();
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
@@ -2290,261 +2390,58 @@ struct MainWindow::Impl {
         }
     }
 
-    // ── Reliable Native Tray Popup Window (Matching Tray.dc.html) ──
-    void show_tray_popup(int x, int y) {
-        if (hwnd_tray_popup_ && IsWindow(hwnd_tray_popup_)) {
-            DestroyWindow(hwnd_tray_popup_);
-            hwnd_tray_popup_ = nullptr;
-            return;
-        }
+    // ── Rock-Solid Standard Win32 Tray Context Menu ──
+    void show_tray_menu(int x, int y) {
+        HMENU hMenu = CreatePopupMenu();
+        if (!hMenu) return;
 
-        const UINT cur_dpi = dpi();
-        int pop_w = scale(280, cur_dpi);
-        int pop_h = scale(340, cur_dpi);
+        auto st = engine_->current_state();
+        bool is_connected = (st.kind == StateKind::Connected);
+        bool is_running = (is_connected || st.kind == StateKind::Connecting);
 
-        RECT work_area{};
-        SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0);
+        AppendMenuW(hMenu, MF_STRING, 1001, is_running ? L"Disconnect" : L"Connect");
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
-        int px = x - pop_w / 2;
-        int py = y - pop_h - 10;
-        if (px + pop_w > work_area.right) px = work_area.right - pop_w - 10;
-        if (px < work_area.left) px = work_area.left + 10;
-        if (py < work_area.top) py = y + 10;
+        auto s = engine_->load_settings();
+        AppendMenuW(hMenu, MF_STRING | (s.kill_switch ? MF_CHECKED : 0), 1002, L"Kill Switch");
+        AppendMenuW(hMenu, MF_STRING, 1003, L"Open Hemera");
+        AppendMenuW(hMenu, MF_STRING, 1004, L"Logs");
+        AppendMenuW(hMenu, MF_STRING, 1005, L"Settings");
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(hMenu, MF_STRING, 1006, L"Exit");
 
-        WNDCLASSEXW twc{};
-        twc.cbSize = sizeof(twc);
-        twc.style = CS_DROPSHADOW | CS_HREDRAW | CS_VREDRAW;
-        twc.lpfnWndProc = TrayPopupWndProc;
-        twc.hInstance = hInstance_;
-        twc.lpszClassName = L"HemeraTrayPopupClass";
-        twc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        RegisterClassExW(&twc);
+        // Per Microsoft KB135788:
+        SetForegroundWindow(hwnd_);
+        int cmd = TrackPopupMenuEx(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, x, y, hwnd_, nullptr);
+        PostMessageW(hwnd_, WM_NULL, 0, 0);
+        DestroyMenu(hMenu);
 
-        hwnd_tray_popup_ = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-            L"HemeraTrayPopupClass", L"Hemera Tray",
-            WS_POPUP,
-            px, py, pop_w, pop_h,
-            hwnd_, nullptr, hInstance_, this
-        );
-
-        if (hwnd_tray_popup_) {
-            ShowWindow(hwnd_tray_popup_, SW_SHOW);
-            UpdateWindow(hwnd_tray_popup_);
-            SetForegroundWindow(hwnd_tray_popup_);
-            SetFocus(hwnd_tray_popup_);
-        }
-    }
-
-    static LRESULT CALLBACK TrayPopupWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-        auto* impl = reinterpret_cast<MainWindow::Impl*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-
-        switch (msg) {
-            case WM_NCCREATE: {
-                auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-                return TRUE;
+        if (cmd == 1001) {
+            if (is_running) {
+                (void)engine_->disconnect();
+            } else {
+                (void)engine_->connect();
             }
-
-            case WM_ACTIVATE: {
-                if (LOWORD(wParam) == WA_INACTIVE) {
-                    DestroyWindow(hwnd);
-                }
-                return 0;
-            }
-
-            case WM_DESTROY: {
-                if (impl) impl->hwnd_tray_popup_ = nullptr;
-                return 0;
-            }
-
-            case WM_MOUSEMOVE: {
-                if (!impl) return 0;
-                TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
-                TrackMouseEvent(&tme);
-                int y = GET_Y_LPARAM(lParam);
-
-                const UINT cur_dpi = impl->dpi();
-                int prev_item = impl->tray_hovered_item_;
-                impl->tray_hovered_item_ = -1;
-
-                if (y >= scale(60, cur_dpi) && y <= scale(104, cur_dpi)) impl->tray_hovered_item_ = 0; // Connect/Disconnect
-                else if (y >= scale(115, cur_dpi) && y <= scale(163, cur_dpi)) impl->tray_hovered_item_ = 1; // Kill switch
-                else if (y >= scale(175, cur_dpi) && y <= scale(219, cur_dpi)) impl->tray_hovered_item_ = 2; // Open Hemera
-                else if (y >= scale(219, cur_dpi) && y <= scale(263, cur_dpi)) impl->tray_hovered_item_ = 3; // Logs
-                else if (y >= scale(263, cur_dpi) && y <= scale(307, cur_dpi)) impl->tray_hovered_item_ = 4; // Settings
-                else if (y >= scale(308, cur_dpi) && y <= scale(340, cur_dpi)) impl->tray_hovered_item_ = 5; // Quit
-
-                if (prev_item != impl->tray_hovered_item_) {
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                }
-                return 0;
-            }
-
-            case WM_MOUSELEAVE: {
-                if (impl) {
-                    impl->tray_hovered_item_ = -1;
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                }
-                return 0;
-            }
-
-            case WM_LBUTTONDOWN: {
-                if (!impl) return 0;
-                int item = impl->tray_hovered_item_;
-                if (item == 0) {
-                    auto st = impl->engine_->current_state();
-                    if (st.kind == StateKind::Connected || st.kind == StateKind::Connecting) {
-                        (void)impl->engine_->disconnect();
-                    } else {
-                        (void)impl->engine_->connect();
-                    }
-                    DestroyWindow(hwnd);
-                } else if (item == 1) {
-                    impl->edit_settings_.kill_switch = !impl->edit_settings_.kill_switch;
-                    impl->engine_->save_settings(impl->edit_settings_);
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                } else if (item == 2) {
-                    ShowWindow(impl->hwnd_, SW_RESTORE);
-                    SetForegroundWindow(impl->hwnd_);
-                    DestroyWindow(hwnd);
-                } else if (item == 3) {
-                    impl->switch_view(ActiveView::Logs);
-                    ShowWindow(impl->hwnd_, SW_RESTORE);
-                    SetForegroundWindow(impl->hwnd_);
-                    DestroyWindow(hwnd);
-                } else if (item == 4) {
-                    impl->switch_view(ActiveView::Settings);
-                    ShowWindow(impl->hwnd_, SW_RESTORE);
-                    SetForegroundWindow(impl->hwnd_);
-                    DestroyWindow(hwnd);
-                } else if (item == 5) {
-                    DestroyWindow(hwnd);
-                    DestroyWindow(impl->hwnd_);
-                }
-                return 0;
-            }
-
-            case WM_PAINT: {
-                PAINTSTRUCT ps;
-                HDC hdc = BeginPaint(hwnd, &ps);
-                if (impl) {
-                    RECT rc;
-                    GetClientRect(hwnd, &rc);
-                    int win_w = rc.right - rc.left;
-                    int win_h = rc.bottom - rc.top;
-
-                    HDC memDC = CreateCompatibleDC(hdc);
-                    HBITMAP memBmp = CreateCompatibleBitmap(hdc, win_w, win_h);
-                    HGDIOBJ oldBmp = SelectObject(memDC, memBmp);
-
-                    {
-                        Gdiplus::Graphics g(memDC);
-                        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-                        g.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
-
-                        const auto& ds = ds::DesignSystem::get();
-                        const UINT cur_dpi = impl->dpi();
-
-                        Gdiplus::SolidBrush s_brush(ds.colors.card_bg);
-                        fill_rounded_rect(g, s_brush, 0, 0, (float)win_w, (float)win_h, (float)scale(16, cur_dpi));
-                        Gdiplus::Pen s_pen(ds.colors.btn_border, 1.0f);
-                        draw_rounded_rect(g, s_pen, 0, 0, (float)win_w, (float)win_h, (float)scale(16, cur_dpi));
-
-                        auto state = impl->engine_->current_state();
-                        bool is_conn = (state.kind == StateKind::Connected);
-
-                        float dot_sz = scale_f(10, cur_dpi);
-                        Gdiplus::SolidBrush dot_b(is_conn ? ds.colors.accent : (state.kind == StateKind::Error ? ds.colors.error : ds.colors.text_dim));
-                        g.FillEllipse(&dot_b, scale_f(16, cur_dpi), scale_f(18, cur_dpi), dot_sz, dot_sz);
-
-                        Gdiplus::Font head_font(L"Segoe UI", (float)scale(14, cur_dpi), Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-                        Gdiplus::SolidBrush tx_b(ds.colors.text_primary);
-                        g.DrawString(L"Hemera", -1, &head_font, Gdiplus::PointF(scale_f(34, cur_dpi), scale_f(12, cur_dpi)), &tx_b);
-
-                        std::wstring st_txt = is_conn ? L"Connected" : (state.kind == StateKind::Connecting ? L"Connecting..." : L"Not connected");
-                        Gdiplus::Font st_font(L"Consolas", (float)scale(11, cur_dpi), Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-                        Gdiplus::SolidBrush mu_b(ds.colors.text_muted);
-                        g.DrawString(st_txt.c_str(), -1, &st_font, Gdiplus::PointF(scale_f(34, cur_dpi), scale_f(30, cur_dpi)), &mu_b);
-
-                        float btn_x = scale_f(12, cur_dpi);
-                        float btn_y = scale_f(58, cur_dpi);
-                        float btn_w = static_cast<float>(win_w) - btn_x * 2.0f;
-                        float btn_h = scale_f(44, cur_dpi);
-
-                        Gdiplus::SolidBrush cbtn_b(is_conn ? ds.colors.chip_bg : ds.colors.btn_on_bg);
-                        fill_rounded_rect(g, cbtn_b, btn_x, btn_y, btn_w, btn_h, (float)scale(12, cur_dpi));
-                        Gdiplus::Pen cbtn_p(is_conn ? ds.colors.btn_border_dim : ds.colors.accent, 1.0f);
-                        draw_rounded_rect(g, cbtn_p, btn_x, btn_y, btn_w, btn_h, (float)scale(12, cur_dpi));
-
-                        Gdiplus::StringFormat cf;
-                        cf.SetAlignment(Gdiplus::StringAlignmentCenter);
-                        cf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-                        Gdiplus::Font cbtn_f(L"Segoe UI", (float)scale(14, cur_dpi), Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-                        Gdiplus::SolidBrush cbtn_tx(is_conn ? ds.colors.text_primary : ds.colors.accent);
-                        g.DrawString(is_conn ? L"Disconnect" : L"Connect", -1, &cbtn_f, Gdiplus::PointF(btn_x + btn_w / 2.0f, btn_y + btn_h / 2.0f), &cf, &cbtn_tx);
-
-                        float div1_y = scale_f(112, cur_dpi);
-                        g.DrawLine(&s_pen, 0.0f, div1_y, static_cast<float>(win_w), div1_y);
-
-                        float ks_y = scale_f(115, cur_dpi);
-                        if (impl->tray_hovered_item_ == 1) {
-                            Gdiplus::SolidBrush hov(ds.colors.hover_bg);
-                            g.FillRectangle(&hov, 0, static_cast<INT>(ks_y), win_w, scale(48, cur_dpi));
-                        }
-                        Gdiplus::Font row_f(L"Segoe UI", (float)scale(13, cur_dpi), Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-                        g.DrawString(L"Kill switch", -1, &row_f, Gdiplus::PointF(scale_f(16, cur_dpi), ks_y + scale_f(14, cur_dpi)), &tx_b);
-
-                        float sw_w = scale_f(36, cur_dpi);
-                        float sw_h = scale_f(22, cur_dpi);
-                        float sw_x = static_cast<float>(win_w) - scale_f(16, cur_dpi) - sw_w;
-                        float sw_y = ks_y + scale_f(13, cur_dpi);
-                        bool ks_on = impl->edit_settings_.kill_switch;
-                        Gdiplus::SolidBrush sw_b(ks_on ? ds.colors.accent : ds.colors.btn_border_dim);
-                        fill_rounded_rect(g, sw_b, sw_x, sw_y, sw_w, sw_h, sw_h / 2.0f);
-                        float kn_r = scale_f(8, cur_dpi);
-                        float kn_x = ks_on ? (sw_x + sw_w - scale_f(3, cur_dpi) - kn_r) : (sw_x + scale_f(3, cur_dpi) + kn_r);
-                        Gdiplus::SolidBrush kn_b(ks_on ? ds.colors.bg : ds.colors.icon_color);
-                        g.FillEllipse(&kn_b, kn_x - kn_r, sw_y + sw_h / 2.0f - kn_r, kn_r * 2.0f, kn_r * 2.0f);
-
-                        float div2_y = scale_f(165, cur_dpi);
-                        g.DrawLine(&s_pen, 0.0f, div2_y, static_cast<float>(win_w), div2_y);
-
-                        const wchar_t* nav_labels[] = { L"Open Hemera", L"Logs", L"Settings" };
-                        float nav_start_y = scale_f(170, cur_dpi);
-                        float nav_row_h = scale_f(44, cur_dpi);
-
-                        for (int i = 0; i < 3; ++i) {
-                            float ny = nav_start_y + static_cast<float>(i) * nav_row_h;
-                            if (impl->tray_hovered_item_ == 2 + i) {
-                                Gdiplus::SolidBrush hov(ds.colors.hover_bg);
-                                g.FillRectangle(&hov, 0, static_cast<INT>(ny), win_w, static_cast<INT>(nav_row_h));
-                            }
-                            g.DrawString(nav_labels[i], -1, &row_f, Gdiplus::PointF(scale_f(16, cur_dpi), ny + scale_f(12, cur_dpi)), &tx_b);
-                        }
-
-                        float div3_y = nav_start_y + nav_row_h * 3.0f;
-                        g.DrawLine(&s_pen, 0.0f, div3_y, static_cast<float>(win_w), div3_y);
-
-                        float quit_y = div3_y + scale_f(2, cur_dpi);
-                        if (impl->tray_hovered_item_ == 5) {
-                            Gdiplus::SolidBrush hov(ds.colors.hover_bg);
-                            g.FillRectangle(&hov, 0, static_cast<INT>(quit_y), win_w, scale(40, cur_dpi));
-                        }
-                        g.DrawString(L"Quit Hemera", -1, &row_f, Gdiplus::PointF(scale_f(16, cur_dpi), quit_y + scale_f(10, cur_dpi)), &mu_b);
-                    }
-
-                    BitBlt(hdc, 0, 0, win_w, win_h, memDC, 0, 0, SRCCOPY);
-                    SelectObject(memDC, oldBmp);
-                    DeleteObject(memBmp);
-                    DeleteDC(memDC);
-                }
-                EndPaint(hwnd, &ps);
-                return 0;
-            }
-
-            default:
-                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (cmd == 1002) {
+            s.kill_switch = !s.kill_switch;
+            engine_->save_settings(s);
+            edit_settings_ = s;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (cmd == 1003) {
+            ShowWindow(hwnd_, SW_RESTORE);
+            SetForegroundWindow(hwnd_);
+            switch_view(ActiveView::Home);
+        } else if (cmd == 1004) {
+            ShowWindow(hwnd_, SW_RESTORE);
+            SetForegroundWindow(hwnd_);
+            switch_view(ActiveView::Logs);
+        } else if (cmd == 1005) {
+            ShowWindow(hwnd_, SW_RESTORE);
+            SetForegroundWindow(hwnd_);
+            switch_view(ActiveView::Settings);
+        } else if (cmd == 1006) {
+            DestroyWindow(hwnd_);
         }
     }
 
@@ -2669,11 +2566,11 @@ struct MainWindow::Impl {
 
             case WM_MOUSEWHEEL: {
                 short delta = GET_WHEEL_DELTA_WPARAM(wParam);
-                float steps = static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA);
+                float scroll_amount = static_cast<float>(delta) * 0.75f;
                 if (impl->view_ == ActiveView::Settings) {
-                    impl->target_scroll_y_ = std::clamp(impl->target_scroll_y_ - steps * 60.0f, 0.0f, static_cast<float>(impl->max_scroll_));
+                    impl->target_scroll_y_ = std::clamp(impl->target_scroll_y_ - scroll_amount, 0.0f, static_cast<float>(impl->max_scroll_));
                 } else if (impl->view_ == ActiveView::Logs) {
-                    impl->target_logs_scroll_y_ = std::clamp(impl->target_logs_scroll_y_ - steps * 60.0f, 0.0f, impl->max_logs_scroll_);
+                    impl->target_logs_scroll_y_ = std::clamp(impl->target_logs_scroll_y_ - scroll_amount, 0.0f, impl->max_logs_scroll_);
                 }
                 return 0;
             }
@@ -2784,30 +2681,37 @@ struct MainWindow::Impl {
                     float sec1_y = card0_y + seg_box_h + scale_f(24, cur_dpi);
                     float card1_y = sec1_y + scale_f(22, cur_dpi);
                     float gen_row_h = scale_f(64, cur_dpi);
+                    float card1_h = gen_row_h * 4.0f;
 
-                    float sec2_y = card1_y + gen_row_h * 3.0f + scale_f(24, cur_dpi);
+                    float sec2_y = card1_y + card1_h + scale_f(24, cur_dpi);
                     float card2_y = sec2_y + scale_f(22, cur_dpi);
+                    float card2_h = row_h * 5.0f;
 
-                    float sec3_y = card2_y + row_h * 3.0f + scale_f(24, cur_dpi);
+                    float sec3_y = card2_y + card2_h + scale_f(24, cur_dpi);
                     float card3_y = sec3_y + scale_f(22, cur_dpi);
+                    float card3_h = row_h * 5.0f;
 
-                    float sec4_y = card3_y + row_h * 3.0f + scale_f(24, cur_dpi);
+                    float sec4_y = card3_y + card3_h + scale_f(24, cur_dpi);
 
-                    float save_y = sec4_y + row_h + scale_f(24, cur_dpi);
-                    float save_h = scale_f(46, cur_dpi);
-
-                    impl->save_btn_hovered_ = (x >= card_x && x <= card_x + card_w && y >= save_y && y <= save_y + save_h);
+                    impl->save_btn_hovered_ = false;
 
                     impl->hovered_settings_row_ = -1;
-                    if (x >= card_x && x <= card_x + card_w) {
+                    if (y >= clip_top && x >= card_x && x <= card_x + card_w) {
                         if (y >= card0_y && y <= card0_y + seg_box_h) {
                             impl->hovered_settings_row_ = 100; // Appearance segments
-                        } else if (y >= card1_y && y <= card1_y + gen_row_h * 3.0f) {
+                        } else if (y >= card1_y && y <= card1_y + card1_h) {
                             impl->hovered_settings_row_ = 10 + static_cast<int>((y - card1_y) / gen_row_h);
-                        } else if (y >= card2_y && y <= card2_y + row_h * 3.0f) {
-                            impl->hovered_settings_row_ = static_cast<int>((y - card2_y) / row_h);
-                        } else if (y >= card3_y && y <= card3_y + row_h * 3.0f) {
-                            impl->hovered_settings_row_ = 3 + static_cast<int>((y - card3_y) / row_h);
+                        } else if (y >= card2_y && y <= card2_y + card2_h) {
+                            int r = static_cast<int>((y - card2_y) / row_h);
+                            if (r == 4) impl->hovered_settings_row_ = 16;
+                            else impl->hovered_settings_row_ = r;
+                        } else if (y >= card3_y && y <= card3_y + card3_h) {
+                            int r = static_cast<int>((y - card3_y) / row_h);
+                            if (r == 0) impl->hovered_settings_row_ = 14;
+                            else if (r == 1) impl->hovered_settings_row_ = 15;
+                            else if (r == 2) impl->hovered_settings_row_ = 4;
+                            else if (r == 3) impl->hovered_settings_row_ = 5;
+                            else if (r == 4) impl->hovered_settings_row_ = 6;
                         } else if (y >= sec4_y && y <= sec4_y + row_h) {
                             impl->hovered_settings_row_ = 20; // About row
                         }
@@ -2924,7 +2828,7 @@ struct MainWindow::Impl {
                 int x = GET_X_LPARAM(lParam);
                 int y = GET_Y_LPARAM(lParam);
 
-                if (impl->view_ == ActiveView::Settings && impl->is_editing_socks_ && impl->hovered_settings_row_ != 5) {
+                if (impl->view_ == ActiveView::Settings && impl->is_editing_socks_ && impl->hovered_settings_row_ != 6) {
                     impl->is_editing_socks_ = false;
                     impl->commit_settings_save();
                     InvalidateRect(hwnd, nullptr, FALSE);
@@ -2970,8 +2874,6 @@ struct MainWindow::Impl {
 
                 } else if (impl->view_ == ActiveView::Settings) {
                     if (impl->back_btn_hovered_) {
-                        impl->switch_view(ActiveView::Home);
-                    } else if (impl->save_btn_hovered_) {
                         impl->commit_settings_save();
                         impl->switch_view(ActiveView::Home);
                     } else if (impl->hovered_settings_row_ == 100) {
@@ -2991,22 +2893,40 @@ struct MainWindow::Impl {
                         else if (picked == 1) impl->edit_settings_.theme = "light";
                         else impl->edit_settings_.theme = "dark";
 
-                        // Persist theme choice immediately so it never resets to dark on re-entry!
-                        impl->engine_->save_settings(impl->edit_settings_);
-                        impl->apply_theme_setting(impl->edit_settings_.theme);
+                        impl->commit_settings_save();
                         InvalidateRect(hwnd, nullptr, FALSE);
 
                     } else if (impl->hovered_settings_row_ == 10) {
                         impl->edit_settings_.autostart = !impl->edit_settings_.autostart;
-                        impl->engine_->save_settings(impl->edit_settings_);
+                        impl->commit_settings_save();
                         InvalidateRect(hwnd, nullptr, FALSE);
                     } else if (impl->hovered_settings_row_ == 11) {
                         impl->edit_settings_.close_to_tray = !impl->edit_settings_.close_to_tray;
-                        impl->engine_->save_settings(impl->edit_settings_);
+                        impl->commit_settings_save();
                         InvalidateRect(hwnd, nullptr, FALSE);
                     } else if (impl->hovered_settings_row_ == 12) {
                         impl->edit_settings_.kill_switch = !impl->edit_settings_.kill_switch;
-                        impl->engine_->save_settings(impl->edit_settings_);
+                        impl->commit_settings_save();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    } else if (impl->hovered_settings_row_ == 13) {
+                        impl->edit_profile_.system_proxy = !impl->edit_profile_.system_proxy;
+                        impl->commit_settings_save();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    } else if (impl->hovered_settings_row_ == 16) {
+                        if (impl->edit_profile_.route_direct.empty()) {
+                            impl->edit_profile_.route_direct = "ir";
+                        } else {
+                            impl->edit_profile_.route_direct.clear();
+                        }
+                        impl->commit_settings_save();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    } else if (impl->hovered_settings_row_ == 14) {
+                        impl->edit_profile_.fragment = !impl->edit_profile_.fragment;
+                        impl->commit_settings_save();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    } else if (impl->hovered_settings_row_ == 15) {
+                        impl->edit_profile_.ech = !impl->edit_profile_.ech;
+                        impl->commit_settings_save();
                         InvalidateRect(hwnd, nullptr, FALSE);
                     } else if (impl->hovered_settings_row_ == 20) {
                         impl->switch_view(ActiveView::About);
@@ -3015,45 +2935,65 @@ struct MainWindow::Impl {
                         if (r == 0) {
                             impl->active_dropdown_ = 0;
                             impl->dropdown_options_ = {
-                                { L"WARP-in-WARP / gool", 101 },
-                                { L"MASQUE (HTTP/3 QUIC)", 102 },
-                                { L"MASQUE (HTTP/2 TCP)", 103 },
-                                { L"WireGuard", 104 },
-                                { L"MiM", 105 }
+                                { L"Auto (Best available)", 101 },
+                                { L"WARP-in-WARP / gool", 102 },
+                                { L"MASQUE (HTTP/3 QUIC)", 103 },
+                                { L"MASQUE (HTTP/2 TCP)", 104 },
+                                { L"WireGuard", 105 },
+                                { L"MiM", 106 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
                         } else if (r == 1) {
                             impl->active_dropdown_ = 1;
                             impl->dropdown_options_ = {
                                 { L"Balanced (Recommended)", 201 },
-                                { L"Fast (Turbo)", 202 },
-                                { L"Thorough (Exhaustive)", 203 }
+                                { L"Turbo (Fastest)", 202 },
+                                { L"Thorough (Exhaustive)", 203 },
+                                { L"Verified (Stealth)", 204 },
+                                { L"Ironclad (Anti-block)", 205 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
                         } else if (r == 2) {
                             impl->active_dropdown_ = 2;
                             impl->dropdown_options_ = {
-                                { L"IPv4", 301 },
-                                { L"IPv6", 302 },
-                                { L"Dual (Both)", 303 }
+                                { L"Auto (Fastest)", 301 },
+                                { L"United States (US)", 302 },
+                                { L"Germany (DE)", 303 },
+                                { L"United Kingdom (GB)", 304 },
+                                { L"Netherlands (NL)", 305 },
+                                { L"France (FR)", 306 },
+                                { L"Singapore (SG)", 307 },
+                                { L"Japan (JP)", 308 },
+                                { L"Turkey (TR)", 309 },
+                                { L"Canada (CA)", 310 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
                         } else if (r == 3) {
                             impl->active_dropdown_ = 3;
                             impl->dropdown_options_ = {
-                                { L"HTTP/2 (TCP TLS mask)", 401 },
-                                { L"HTTP/3 (QUIC)", 402 }
+                                { L"IPv4", 401 },
+                                { L"IPv6", 402 },
+                                { L"Dual (Both)", 403 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
                         } else if (r == 4) {
                             impl->active_dropdown_ = 4;
                             impl->dropdown_options_ = {
                                 { L"Balanced (Firewall)", 501 },
-                                { L"Light (GFW)", 502 },
+                                { L"Aggressive (GFW)", 502 },
                                 { L"Off", 503 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
                         } else if (r == 5) {
+                            impl->active_dropdown_ = 5;
+                            impl->dropdown_options_ = {
+                                { L"Auto (1.1.1.1)", 601 },
+                                { L"Cloudflare Security (1.1.1.2)", 602 },
+                                { L"Google (8.8.8.8)", 603 },
+                                { L"Quad9 (9.9.9.9)", 604 }
+                            };
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        } else if (r == 6) {
                             impl->is_editing_socks_ = true;
                             impl->caret_blink_timer_ = 0.0f;
                             InvalidateRect(hwnd, nullptr, FALSE);
@@ -3159,11 +3099,11 @@ struct MainWindow::Impl {
             }
 
             case WM_HEMERA_TRAY: {
-                if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU || lParam == WM_LBUTTONUP) {
+                if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
                     POINT pt;
                     GetCursorPos(&pt);
-                    impl->show_tray_popup(pt.x, pt.y);
-                } else if (lParam == WM_LBUTTONDBLCLK) {
+                    impl->show_tray_menu(pt.x, pt.y);
+                } else if (lParam == WM_LBUTTONUP || lParam == WM_LBUTTONDBLCLK) {
                     ShowWindow(hwnd, SW_RESTORE);
                     SetForegroundWindow(hwnd);
                 }
@@ -3192,7 +3132,7 @@ struct MainWindow::Impl {
     }
 };
 
-MainWindow::MainWindow(HINSTANCE hInstance, std::shared_ptr<AetherEngine> engine, bool start_minimized)
+MainWindow::MainWindow(HINSTANCE hInstance, std::shared_ptr<HemeraEngine> engine, bool start_minimized)
     : impl_(std::make_unique<Impl>(hInstance, std::move(engine), start_minimized)) {}
 
 MainWindow::~MainWindow() = default;
@@ -3333,4 +3273,4 @@ void MainWindow::hide() {
     }
 }
 
-} // namespace aether::gui
+} // namespace hemera::gui

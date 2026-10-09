@@ -1,6 +1,6 @@
 #pragma once
 
-// Port of aether/src/masque.rs, plus the protocol-codec surface of aether/src/masque_h2.rs: the
+// Port of hemera/src/masque.rs, plus the protocol-codec surface of hemera/src/masque_h2.rs: the
 // CONNECT-IP request either carrier puts on the wire, the capsule and datagram framings, and every
 // limit, flag and timeout a caller of the HTTP/2 carrier reads.
 //
@@ -8,7 +8,7 @@
 // itself: HPACK (h2 crate -> nghttp2), QPACK and the h3 request/response framing (quiche::h3 ->
 // nghttp3), the QUIC DATAGRAM frame around an h3 ip-datagram (quiche -> ngtcp2), TLS/ECH (BoringSSL,
 // see tls.hpp) and the tokio tasks, channels and socket dialing around run() and verify_h2().
-// Everything below is the aether-specific half: which fields go, in what order, with what values,
+// Everything below is the hemera-specific half: which fields go, in what order, with what values,
 // and how the payloads in front of them are framed.
 
 #include "consts.hpp"
@@ -27,11 +27,11 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::masque {
+namespace hemera::core::masque {
 
 // ---- errors ------------------------------------------------------------------
 
-// AetherError::Capsule / AetherError::Masque keep their prefixes, so a log line out of this port
+// HemeraError::Capsule / HemeraError::Masque keep their prefixes, so a log line out of this port
 // reads exactly like one out of the Rust core: "capsule: bad ip version 5".
 [[nodiscard]] std::string capsule_error(std::string_view reason);
 [[nodiscard]] std::string masque_error(std::string_view reason);
@@ -78,7 +78,7 @@ struct HeaderField {
     [[nodiscard]] bool operator==(const HeaderField&) const = default;
 };
 
-// The authority and path every aether MASQUE tunnel asks for -- quic.rs:784-790, which the tunnel
+// The authority and path every hemera MASQUE tunnel asks for -- quic.rs:784-790, which the tunnel
 // and the prober both feed into masque.
 inline constexpr std::string_view DEFAULT_AUTHORITY = "cloudflareaccess.com";
 inline constexpr std::string_view DEFAULT_PATH = "/";
@@ -306,22 +306,22 @@ struct H2Flow {
 
 [[nodiscard]] H2Flow h2_flow(const Settings& settings);
 
-// AETHER_MASQUE_HTTP2 (--h2 / --http2): HTTP/2 instead of HTTP/3, on the words Rust accepts --
+// HEMERA_MASQUE_HTTP2 (--h2 / --http2): HTTP/2 instead of HTTP/3, on the words Rust accepts --
 // 1, true, h2, yes, on, trimmed and lower cased. Note "h2" is accepted here and by nothing else:
 // settings.hpp's is_truthy does not know that word, so enabled() has its own reading.
 [[nodiscard]] bool enabled(const Settings& settings);
 
-// AETHER_MASQUE_H2_PEER (--h2-peer): the address the HTTP/2 carrier connects to instead of the
+// HEMERA_MASQUE_H2_PEER (--h2-peer): the address the HTTP/2 carrier connects to instead of the
 // QUIC one. A value that is no `ip:port` is ignored, as Rust ignores a failed parse, and the
 // quic_peer stands.
 [[nodiscard]] SocketAddr h2_peer(const Settings& settings, const SocketAddr& quic_peer);
 
-// AETHER_MASQUE_NO_DATA_CHECK (--no-data-check): the check runs unless the variable is there at
+// HEMERA_MASQUE_NO_DATA_CHECK (--no-data-check): the check runs unless the variable is there at
 // all, whatever it says.
 [[nodiscard]] bool data_check_enabled(const Settings& settings);
 
-// AETHER_MASQUE_VALIDATE_SECS, AETHER_MASQUE_H2_KEEPALIVE_SECS and
-// AETHER_MASQUE_H2_KEEPALIVE_TIMEOUT_SECS: a positive whole number of seconds, at most a day, or
+// HEMERA_MASQUE_VALIDATE_SECS, HEMERA_MASQUE_H2_KEEPALIVE_SECS and
+// HEMERA_MASQUE_H2_KEEPALIVE_TIMEOUT_SECS: a positive whole number of seconds, at most a day, or
 // the default. A leading '+' parses in Rust, so it parses here.
 [[nodiscard]] std::chrono::seconds validation_timeout(const Settings& settings);
 [[nodiscard]] std::chrono::seconds h2_keepalive_interval(const Settings& settings);
@@ -401,4 +401,4 @@ struct SendBatch {
 // Whether `message` says the handshake was rejected for its ECH config: masque_h2::rejected_ech.
 [[nodiscard]] bool rejected_ech(std::string_view message);
 
-} // namespace aether::core::masque
+} // namespace hemera::core::masque

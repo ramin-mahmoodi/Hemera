@@ -2,13 +2,13 @@
 
 #include <stdint.h>
 
-/* Aether core, embedding contract.
+/* Hemera core, embedding contract.
  *
- * This mirrors the C ABI of the Rust core (aether/src/ffi.rs) one call for one call, so the
+ * This mirrors the C ABI of the Rust core (hemera/src/ffi.rs) one call for one call, so the
  * GUI, the command line harness and the Rust engine all speak the same shapes.
  *
  * Every function that returns char* returns a heap-allocated, NUL-terminated UTF-8 JSON
- * string. The caller must release it with aether_string_free and must not free it any other
+ * string. The caller must release it with hemera_string_free and must not free it any other
  * way: it is allocated by the core, which may use a different heap than the caller.
  *
  * A reply is either
@@ -34,21 +34,21 @@ extern "C" {
 #endif
 
 /* {"version":"<core version>"} */
-char* aether_version(void);
+char* hemera_version(void);
 
 /* Releases a string returned by any other call in this header. NULL is ignored. */
-void aether_string_free(char* raw);
+void hemera_string_free(char* raw);
 
 /* --- jobs --- */
 
 /* Polls a job. Error when the id is unknown. */
-char* aether_job_poll(uint64_t id);
+char* hemera_job_poll(uint64_t id);
 
-/* Asks a running job to stop. It keeps its result until aether_job_free. */
-char* aether_job_cancel(uint64_t id);
+/* Asks a running job to stop. It keeps its result until hemera_job_free. */
+char* hemera_job_cancel(uint64_t id);
 
 /* Stops a job if it is still running and drops the handle. Freeing an unknown id is not an error. */
-char* aether_job_free(uint64_t id);
+char* hemera_job_free(uint64_t id);
 
 /* --- identity --- */
 
@@ -58,15 +58,15 @@ char* aether_job_free(uint64_t id);
  *                   "token":string,"email":string}}
  * result:  {"identity":handle,"summary":{...},"path":string,"lastconn_path":string}
  * Only "path" is required; the rest fall back to the core defaults. */
-char* aether_identity_open(const char* payload);
+char* hemera_identity_open(const char* payload);
 
 /* The non-secret view of an identity: device and tunnel addresses, organisation, gateway,
  * assigned endpoint, whether a MASQUE client certificate is present, when it was issued,
  * and whether it is still inside its lifetime. */
-char* aether_identity_summary(uint64_t id);
+char* hemera_identity_summary(uint64_t id);
 
 /* Drops the handle. The identity file on disk is left alone. */
-char* aether_identity_free(uint64_t id);
+char* hemera_identity_free(uint64_t id);
 
 /* --- route discovery --- */
 
@@ -75,43 +75,43 @@ char* aether_identity_free(uint64_t id);
  *           "ip":"v4"|"v6"|"both", "profile":string, "ports":[uint16], "excluded":[ip:port],
  *           "ech":bool}
  * result:  {"endpoint":"ip:port"} */
-char* aether_scan_start(uint64_t identity, const char* payload);
+char* hemera_scan_start(uint64_t identity, const char* payload);
 
 /* Opens a tunnel to one endpoint and proves traffic actually goes through it.
  * payload: {"peer":"ip:port", "transport":"masque"|"wg", "socks":"ip:port", "http":"ip:port",
  *           "profile":string, "keepalive":uint16, "ech":bool}
  * result:  {"reachable":bool} */
-char* aether_verify_start(uint64_t identity, const char* payload);
+char* hemera_verify_start(uint64_t identity, const char* payload);
 
 /* Carries traffic until it is cancelled or the tunnel dies. "peer" is required.
  * result:  {"state":"closed"} on a clean shutdown, {"state":"stopped"} when cancelled */
-char* aether_tunnel_start(uint64_t identity, const char* payload);
+char* hemera_tunnel_start(uint64_t identity, const char* payload);
 
-/* Runs the whole core from command-line arguments, exactly as the aether binary would.
+/* Runs the whole core from command-line arguments, exactly as the hemera binary would.
  * arguments: a JSON array of strings, or NULL for an empty list.
  * result:    {"state":"closed"} or {"state":"stopped"} */
-char* aether_core_start(const char* arguments);
+char* hemera_core_start(const char* arguments);
 
 /* --- Zero Trust enrolment --- */
 
 /* payload: {"team":string,"client_id":string,"client_secret":string,"token":string,"email":string}
  * result:  {"token":"<enrolment jwt>"} */
-char* aether_team_sign_in(const char* payload);
+char* hemera_team_sign_in(const char* payload);
 
 /* Starts an emailed one-time-code sign-in. "email" is required.
  * result:  {"session":handle,"email":string} */
-char* aether_team_code_request(const char* payload);
+char* hemera_team_code_request(const char* payload);
 
-char* aether_team_code_resend(uint64_t session);
+char* hemera_team_code_resend(uint64_t session);
 
 /* result: {"token":"<enrolment jwt>"} */
-char* aether_team_code_submit(uint64_t session, const char* code);
+char* hemera_team_code_submit(uint64_t session, const char* code);
 
-char* aether_team_session_free(uint64_t id);
+char* hemera_team_session_free(uint64_t id);
 
-char* aether_team_token_set(const char* token);
+char* hemera_team_token_set(const char* token);
 
-char* aether_team_token_clear(void);
+char* hemera_team_token_clear(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -8,7 +8,7 @@
 #include <random>
 #include <system_error>
 
-namespace aether::core::prober {
+namespace hemera::core::prober {
 namespace {
 
 std::string lowered(std::string_view text) {
@@ -113,7 +113,7 @@ std::string rtt_str(const ProbeResult& pr) {
 // ---- zero-trust prioritisation --------------------------------------------------------------
 
 bool zero_trust_mode(const Settings& settings) {
-    const auto value = settings.get("AETHER_TEAM");
+    const auto value = settings.get("HEMERA_TEAM");
     return value && !trim(*value).empty();
 }
 
@@ -748,7 +748,7 @@ WgHuntStep WgHunt::on_exhausted() {
 std::uint16_t http_probe_port(const Settings& settings) {
     // Rust does not trim here: `var().and_then(|v| v.parse()).unwrap_or(80)`, so " 80 " or "80\n"
     // fail their u16 parse and fall back to 80. The raw value is read strictly for that reason.
-    const auto raw = settings.get("AETHER_IRONCLAD_PORT");
+    const auto raw = settings.get("HEMERA_IRONCLAD_PORT");
     if (!raw || raw->empty()) return 80;
     std::uint32_t value = 0;
     const auto parsed = std::from_chars(raw->data(), raw->data() + raw->size(), value);
@@ -760,7 +760,7 @@ std::uint16_t http_probe_port(const Settings& settings) {
 
 std::string http_probe_request() {
     return "GET " + std::string(HTTP_PROBE_PATH) + " HTTP/1.1\r\nHost: " +
-           std::string(HTTP_PROBE_HOST) + "\r\nConnection: close\r\nUser-Agent: aether-ironclad\r\n\r\n";
+           std::string(HTTP_PROBE_HOST) + "\r\nConnection: close\r\nUser-Agent: hemera-ironclad\r\n\r\n";
 }
 
 bool http_probe_should_stop(std::string_view buffer) {
@@ -936,4 +936,4 @@ std::string wg_ironclad_verified_line(const WgProbeResult& pr) {
     return "[+] ironclad verified wg " + ip_port(pr) + " real http round trip" + rtt_str(pr);
 }
 
-} // namespace aether::core::prober
+} // namespace hemera::core::prober

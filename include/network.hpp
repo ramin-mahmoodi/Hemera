@@ -3,7 +3,7 @@
 #include <string_view>
 #include <chrono>
 
-namespace aether::network {
+namespace hemera::network {
 
 // Initialize and cleanup network subsystem (Winsock)
 void init();
@@ -16,4 +16,4 @@ bool port_is_live(std::string_view addr_str, std::chrono::milliseconds timeout =
 // Parse host and port from address string (e.g., "127.0.0.1:1819")
 bool parse_address(std::string_view addr_str, std::string& host, uint16_t& port);
 
-} // namespace aether::network
+} // namespace hemera::network

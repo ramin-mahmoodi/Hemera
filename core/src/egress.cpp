@@ -24,7 +24,7 @@
 #include <ws2tcpip.h>
 #include <mstcpip.h>
 
-namespace aether::core::egress {
+namespace hemera::core::egress {
 namespace {
 
 std::atomic<std::uint32_t> current_mark{0};
@@ -193,7 +193,7 @@ std::uint32_t mark() {
 
 std::expected<std::uint32_t, std::string> init(const Settings& settings,
                                                std::vector<std::string>& notes) {
-    const auto raw = settings.get("AETHER_MARK");
+    const auto raw = settings.get("HEMERA_MARK");
     if (!raw || trim(*raw).empty()) {
         current_mark.store(0, std::memory_order_relaxed);
         return 0;
@@ -739,4 +739,4 @@ std::expected<void, std::string> DatagramSocket::send_to(const SocketAddr& to,
     }
 }
 
-} // namespace aether::core::egress
+} // namespace hemera::core::egress

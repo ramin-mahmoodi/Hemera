@@ -13,7 +13,7 @@
 #include <cctype>
 #include <random>
 
-namespace aether::core {
+namespace hemera::core {
 namespace {
 
 // inet_pton and inet_ntop are Winsock calls, so winsock has to be started even where no socket is
@@ -499,11 +499,11 @@ std::expected<std::vector<std::uint8_t>, std::string> answer_ech(
 
 std::expected<std::vector<std::uint8_t>, std::string> fetch_ech_config(const Settings& settings,
                                                                        const EchTransport& transport) {
-    const std::string_view dns_value = trim(settings.get("AETHER_ECH_DNS").value_or(""));
+    const std::string_view dns_value = trim(settings.get("HEMERA_ECH_DNS").value_or(""));
     const auto dns = EchDns::parse(dns_value.empty() ? DEFAULT_ECH_DNS : dns_value);
     if (!dns) return std::unexpected("--ech-dns: " + dns.error());
 
-    const std::string_view domain_value = trim(settings.get("AETHER_ECH_DOMAIN").value_or(""));
+    const std::string_view domain_value = trim(settings.get("HEMERA_ECH_DOMAIN").value_or(""));
     const std::string_view domain =
         domain_value.empty() ? std::string_view{DEFAULT_ECH_DOMAIN} : domain_value;
     if (!valid_domain(domain)) {
@@ -522,4 +522,4 @@ std::expected<std::vector<std::uint8_t>, std::string> fetch_ech_config(const Set
     return *answer;
 }
 
-} // namespace aether::core
+} // namespace hemera::core

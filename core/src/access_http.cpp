@@ -12,7 +12,7 @@
 #include <cctype>
 #include <map>
 
-namespace aether::core {
+namespace hemera::core {
 
 namespace {
 
@@ -219,4 +219,4 @@ zerotrust::AccessHttp access_http(const Settings& settings) {
     };
 }
 
-} // namespace aether::core
+} // namespace hemera::core

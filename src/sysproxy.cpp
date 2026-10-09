@@ -13,7 +13,7 @@
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "advapi32.lib")
 
-namespace aether::sysproxy {
+namespace hemera::sysproxy {
 
 namespace {
 
@@ -249,4 +249,4 @@ bool is_applied() noexcept {
     return g_applied.load(std::memory_order_relaxed);
 }
 
-} // namespace aether::sysproxy
+} // namespace hemera::sysproxy

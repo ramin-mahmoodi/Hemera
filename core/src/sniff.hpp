@@ -6,9 +6,9 @@
 #include <span>
 #include <string>
 
-namespace aether::core {
+namespace hemera::core {
 
-// Port of aether/src/sniff.rs: the name a connection is for, read out of the first bytes of
+// Port of hemera/src/sniff.rs: the name a connection is for, read out of the first bytes of
 // either a TLS ClientHello or a plain HTTP request, so a rule can match before the traffic
 // goes anywhere.
 
@@ -28,4 +28,4 @@ inline constexpr std::size_t PEEK_BUDGET = 4096;
 // One or the other: what `buf` is a connection to.
 [[nodiscard]] std::optional<std::string> sniff_hostname(std::span<const std::uint8_t> buf);
 
-} // namespace aether::core
+} // namespace hemera::core

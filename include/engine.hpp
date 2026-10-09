@@ -11,7 +11,7 @@
 #include <thread>
 #include <expected>
 
-namespace aether {
+namespace hemera {
 
 struct LiveStats {
     uint64_t up = 0;
@@ -19,7 +19,7 @@ struct LiveStats {
     uint64_t uptime = 0;
 };
 
-class AetherEngine {
+class HemeraEngine {
 public:
     using StateCallback = std::function<void(const ConnectionState& state)>;
     using LogCallback = std::function<void(const LogLine& log)>;
@@ -27,11 +27,11 @@ public:
     using AccessCodeCallback = std::function<void()>;
     using StatsCallback = std::function<void(const LiveStats& stats)>;
 
-    AetherEngine();
-    ~AetherEngine();
+    HemeraEngine();
+    ~HemeraEngine();
 
-    AetherEngine(const AetherEngine&) = delete;
-    AetherEngine& operator=(const AetherEngine&) = delete;
+    HemeraEngine(const HemeraEngine&) = delete;
+    HemeraEngine& operator=(const HemeraEngine&) = delete;
 
     // Callbacks registration
     void set_on_state_changed(StateCallback cb);
@@ -44,6 +44,7 @@ public:
     [[nodiscard]] std::filesystem::path app_data_dir() const;
     [[nodiscard]] ConnectionProfile load_profile() const;
     void save_profile(const ConnectionProfile& profile) const;
+    void set_active_profile(const ConnectionProfile& profile);
     [[nodiscard]] AppSettings load_settings() const;
     void save_settings(const AppSettings& settings) const;
 
@@ -66,8 +67,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-using HemeraEngine = AetherEngine;
-
-} // namespace aether
-
-namespace hemera = aether;
+} // namespace hemera

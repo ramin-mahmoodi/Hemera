@@ -1,12 +1,12 @@
 #pragma once
 
-// Port of the LIVE half of aether/src/wireguard.rs (pinned commit 6175b67): the socket that
+// Port of the LIVE half of hemera/src/wireguard.rs (pinned commit 6175b67): the socket that
 // bind_via_upstream produces, the synchronous verify_endpoint / verify_endpoint_keep_session
 // handshake drive (:526-721), the dataplane confirmation it runs inside them (:431-524), and the
 // four-task run loop of WgTunnel::run (:154-349).
 //
 // wireguard.hpp holds the protocol -- the Noise_IK state machine, the wire layout, Tunn's timers --
-// and already holds the three aethernoize call sites the loop reaches (wireguard.hpp:589-606,
+// and already holds the three hemeranoize call sites the loop reaches (wireguard.hpp:589-606,
 // implemented at wireguard.cpp:2191-2241). Nothing is re-decided here: this module supplies the
 // bytes, the waiting, the socket and the order, and calls those helpers where wireguard.rs writes
 // the bare send.
@@ -31,15 +31,15 @@
 #include <string>
 #include <vector>
 
-#include "coreflow.hpp"    // Cancel, Error, the AetherError Display every {e} in a Rust line needs
+#include "coreflow.hpp"    // Cancel, Error, the HemeraError Display every {e} in a Rust line needs
 #include "dns.hpp"         // SocketAddr, IpAddress
 #include "prober.hpp"      // format_duration_debug -- Rust's {:?} on a Duration
-#include "settings.hpp"    // Settings, for AETHER_WG_NO_DATA_CHECK and AETHER_WG_STALE_SECS
+#include "settings.hpp"    // Settings, for HEMERA_WG_NO_DATA_CHECK and HEMERA_WG_STALE_SECS
 #include "transport.hpp"   // UdpIo, WinUdp, Arrived, InboundSink
 #include "upstream.hpp"    // relay_target
 #include "wireguard.hpp"   // Key, ClientId, Tunn, TunnResult, the three call sites
 
-namespace aether::core::wg_live {
+namespace hemera::core::wg_live {
 
 // Cancel is coreflow's shared cancel flag (coreflow.hpp:262, itself an alias for localapi::Cancel);
 // this path names it bare in every signature, so pull it in rather than re-qualify ten times.
@@ -48,7 +48,7 @@ using coreflow::Cancel;
 // ---------------------------------------------------------------------------
 // The log seam.
 //
-// Rust's log level for this crate defaults to info (lib.rs:82-88: "info,aether={AETHER_LOG_LEVEL}"),
+// Rust's log level for this crate defaults to info (lib.rs:82-88: "info,hemera={HEMERA_LOG_LEVEL}"),
 // so the lines this path prints by default are the warn!, error! and info! ones; the trace! and
 // debug! lines are carried at their own level rather than dropped, so a host running with
 // --log-level debug sees exactly what the Rust would and a host at info sees exactly what it
@@ -169,11 +169,11 @@ struct VerifyParams {
     wireguard::Key peer_public{};   // key material: never logged, never echoed
     wireguard::ClientId client_id{};
     IpAddress local_ipv4{};
-    aethernoize::AetherNoizeConfig noise{};
+    hemeranoize::HemeraNoizeConfig noise{};
     std::chrono::milliseconds timeout{10000};
     // Rust's Option<u16>: verify_endpoint_keep_session turns None into Some(25) at :584.
     std::optional<std::uint16_t> keepalive{};
-    // AETHER_WG_NO_DATA_CHECK, read the way :560 reads it: present disables, absent enables.
+    // HEMERA_WG_NO_DATA_CHECK, read the way :560 reads it: present disables, absent enables.
     const Settings* settings = nullptr;
 };
 
@@ -208,7 +208,7 @@ struct LiveSession {
 };
 
 // wireguard.rs:550-721. Returns the elapsed time the Rust returns -- the handshake's own when
-// AETHER_WG_NO_DATA_CHECK is set (:646) and the dataplane round trip when it is not (:638, :663),
+// HEMERA_WG_NO_DATA_CHECK is set (:646) and the dataplane round trip when it is not (:638, :663),
 // which is the default -- and the session the tunnel runs on.
 [[nodiscard]] std::expected<LiveSession, coreflow::Error>
 verify_endpoint_keep_session(const VerifyParams& params, WgSocket& sock, const VerifyEnv& env,
@@ -283,7 +283,7 @@ struct TunnelConfig {
     wireguard::ClientId client_id{};
     std::optional<wireguard::Key> preshared_key;
     std::optional<std::uint16_t> persistent_keepalive;
-    aethernoize::AetherNoizeConfig noise{};
+    hemeranoize::HemeraNoizeConfig noise{};
 
     // WgTunnel::new starts this false (:128); from_established starts it true (:147), because that
     // socket already ran the curtain during the verify. It is per-tunnel state, shared by the four
@@ -316,7 +316,7 @@ struct RunEnv {
     Wait wait;
     Random random;
     Note note;
-    // AETHER_WG_STALE_SECS through wireguard.hpp's wg_stale_timeout_ms (:556-558).
+    // HEMERA_WG_STALE_SECS through wireguard.hpp's wg_stale_timeout_ms (:556-558).
     const Settings* settings = nullptr;
     // The tick the timer task runs on; wireguard.hpp's timer_tick_ms (250 ms) when unset.
     std::chrono::milliseconds tick{static_cast<long long>(wireguard::timer_tick_ms)};
@@ -348,8 +348,8 @@ struct Tunnel {
                                         std::unique_ptr<transport::UdpIo> owned, DataPlane plane,
                                         RunEnv env);
 [[nodiscard]] Tunnel tunnel_from_session(LiveSession&& session,
-                                         const aethernoize::AetherNoizeConfig& noise,
+                                         const hemeranoize::HemeraNoizeConfig& noise,
                                          DataPlane plane, RunEnv env,
                                          const IpAddress& local_ipv4);
 
-} // namespace aether::core::wg_live
+} // namespace hemera::core::wg_live

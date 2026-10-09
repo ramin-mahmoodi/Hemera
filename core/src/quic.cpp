@@ -9,12 +9,12 @@
 #include <charconv>
 #include <random>
 
-namespace aether::core::quic {
+namespace hemera::core::quic {
 namespace {
 
-constexpr std::string_view kNoDataCheck = "AETHER_MASQUE_NO_DATA_CHECK";
-constexpr std::string_view kValidateSecs = "AETHER_MASQUE_VALIDATE_SECS";
-constexpr std::string_view kQuicV2 = "AETHER_QUIC_V2";
+constexpr std::string_view kNoDataCheck = "HEMERA_MASQUE_NO_DATA_CHECK";
+constexpr std::string_view kValidateSecs = "HEMERA_MASQUE_VALIDATE_SECS";
+constexpr std::string_view kQuicV2 = "HEMERA_QUIC_V2";
 
 // Rust's `str::parse::<u64>()`: digits only, with a leading `+` that from_chars refuses. Anything
 // else, an empty string, stray text or an overflow included, is no value at all.
@@ -140,4 +140,4 @@ const TransportParams& transport_params() {
     return params;
 }
 
-} // namespace aether::core::quic
+} // namespace hemera::core::quic

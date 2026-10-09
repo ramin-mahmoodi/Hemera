@@ -7,7 +7,7 @@
 #include <random>
 #include <string_view>
 
-namespace aether::core {
+namespace hemera::core {
 namespace {
 
 std::mt19937_64& entropy() {
@@ -60,17 +60,17 @@ FragmentConfig FragmentConfig::disabled() {
 
 FragmentConfig FragmentConfig::configured(const Settings& settings) {
     const auto [size_lo, size_hi] =
-        parse_range(settings.get("AETHER_MASQUE_H2_FRAGMENT_SIZE").value_or(""), {8, 16});
+        parse_range(settings.get("HEMERA_MASQUE_H2_FRAGMENT_SIZE").value_or(""), {8, 16});
     const auto [delay_lo, delay_hi] =
-        parse_range(settings.get("AETHER_MASQUE_H2_FRAGMENT_DELAY").value_or(""), {2, 10});
+        parse_range(settings.get("HEMERA_MASQUE_H2_FRAGMENT_DELAY").value_or(""), {2, 10});
 
     FragmentConfig config;
-    config.enabled = flag(settings, "AETHER_MASQUE_H2_FRAGMENT");
+    config.enabled = flag(settings, "HEMERA_MASQUE_H2_FRAGMENT");
     config.size_min = static_cast<std::size_t>(std::max<std::uint64_t>(size_lo, 1));
     config.size_max = static_cast<std::size_t>(std::max<std::uint64_t>(size_hi, config.size_min));
     config.delay_min_ms = delay_lo;
     config.delay_max_ms = std::max(delay_hi, delay_lo);
-    config.sni_split = flag(settings, "AETHER_MASQUE_H2_FRAGMENT_SNI");
+    config.sni_split = flag(settings, "HEMERA_MASQUE_H2_FRAGMENT_SNI");
     return config;
 }
 
@@ -161,4 +161,4 @@ void FragmentWriter::stop() {
     fragmenting_ = false;
 }
 
-} // namespace aether::core
+} // namespace hemera::core

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace aether::autostart {
+namespace hemera::autostart {
 
 namespace {
 
@@ -71,4 +71,4 @@ bool set_enabled(bool enable) {
     return ok;
 }
 
-} // namespace aether::autostart
+} // namespace hemera::autostart

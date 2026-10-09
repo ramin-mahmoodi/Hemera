@@ -1,6 +1,6 @@
 #pragma once
 
-// Port of the orchestrator of aether/src/lib.rs (pinned commit 6175b67): the argument and
+// Port of the orchestrator of hemera/src/lib.rs (pinned commit 6175b67): the argument and
 // environment resolution that turns a command line into a run configuration, the start-up sequence
 // and its ordering constraints, the four reconnect loops and everything they decide -- what is
 // retried, in what order, with which timeout, mark and profile -- the cancellation wiring, and
@@ -28,17 +28,17 @@
 //   * install_netstack_panic_guard's body -- it filters smoltcp panics, and this core has no
 //     smoltcp; the hook is kept so the ordering is right and the engine can install its own.
 //   * tor and psiphon -- removed from this product. Their modes, their two reverse-carrier error
-//     strings, their two protocol-menu entries and the AETHER_UPSTREAM / AETHER_MASQUE_HTTP2
+//     strings, their two protocol-menu entries and the HEMERA_UPSTREAM / HEMERA_MASQUE_HTTP2
 //     mutations they make are not ported. Nothing else was dropped.
 //
 // SECURITY. No note, error string or log line here ever carries a certificate, a private key, an
 // access token or an ECH key. The two PEM blocks and the WireGuard scalars travel only inside
 // request structs the engine reads, and the ECH key is logged as its byte length alone, exactly as
-// lib.rs does. Nothing here opens, reads or writes aether-masque.toml; identity.hpp owns the
+// lib.rs does. Nothing here opens, reads or writes hemera-masque.toml; identity.hpp owns the
 // account file and quarantines a damaged one.
 
 #include "account.hpp"
-#include "aethernoize.hpp"
+#include "hemeranoize.hpp"
 #include "dns.hpp"
 #include "identity.hpp"
 #include "lastconn.hpp"
@@ -64,23 +64,23 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::coreflow {
+namespace hemera::core::coreflow {
 
-using AetherNoizeConfig = ::aether::core::aethernoize::AetherNoizeConfig;
+using HemeraNoizeConfig = ::hemera::core::hemeranoize::HemeraNoizeConfig;
 // dns.hpp, tls.hpp, identity.hpp, lastconn.hpp, stats.hpp and consts.hpp all declare into
-// aether::core itself rather than a namespace of their own, so the names they own are aliased
+// hemera::core itself rather than a namespace of their own, so the names they own are aliased
 // here one by one instead of by a namespace.
-using EchTransport = ::aether::core::EchTransport;
-using IpAddress = ::aether::core::IpAddress;
-using IpScan = ::aether::core::prober::IpScan;
-using LastConnection = ::aether::core::LastConnection;
-using NoizeConfig = ::aether::core::noize::NoizeConfig;
-using ProbeResult = ::aether::core::prober::ProbeResult;
-using Random = ::aether::core::prober::Random;
-using ScanMode = ::aether::core::prober::ScanMode;
-using SocketAddr = ::aether::core::SocketAddr;
-using TimePoint = ::aether::core::prober::time_point;
-using WgProbeResult = ::aether::core::prober::WgProbeResult;
+using EchTransport = ::hemera::core::EchTransport;
+using IpAddress = ::hemera::core::IpAddress;
+using IpScan = ::hemera::core::prober::IpScan;
+using LastConnection = ::hemera::core::LastConnection;
+using NoizeConfig = ::hemera::core::noize::NoizeConfig;
+using ProbeResult = ::hemera::core::prober::ProbeResult;
+using Random = ::hemera::core::prober::Random;
+using ScanMode = ::hemera::core::prober::ScanMode;
+using SocketAddr = ::hemera::core::SocketAddr;
+using TimePoint = ::hemera::core::prober::time_point;
+using WgProbeResult = ::hemera::core::prober::WgProbeResult;
 
 // ---- constants of lib.rs -------------------------------------------------------------------
 
@@ -88,7 +88,7 @@ inline constexpr std::size_t TUNNEL_MTU = 1280;
 inline constexpr std::size_t INNER_MTU = 1200;
 inline constexpr std::size_t H2_TUNNEL_MTU = 1500;
 
-inline constexpr std::string_view DEFAULT_CONFIG = "aether.toml";
+inline constexpr std::string_view DEFAULT_CONFIG = "hemera.toml";
 inline constexpr std::uint16_t WG_EXAMPLE_PORT = 2408;
 
 // quic::MAX_DATAGRAM_SIZE - TUNNEL_MTU, the room a MASQUE datagram capsule and its headers take.
@@ -136,43 +136,43 @@ inline constexpr std::string_view OUTER_TASK = "outer";
 inline constexpr std::string_view INNER_TASK = "inner";
 
 // The settings keys lib.rs reads. Every read goes through Settings; none through std::getenv.
-inline constexpr std::string_view LOG_LEVEL_ENV = "AETHER_LOG_LEVEL";
-inline constexpr std::string_view CONFIG_ENV = "AETHER_CONFIG";
-inline constexpr std::string_view WG_CONFIG_ENV = "AETHER_WG_CONFIG";
-inline constexpr std::string_view MASQUE_CONFIG_ENV = "AETHER_MASQUE_CONFIG";
-inline constexpr std::string_view SOCKS_ENV = "AETHER_SOCKS";
-inline constexpr std::string_view HTTP_PROXY_ENV = "AETHER_HTTP_PROXY";
-inline constexpr std::string_view PROTOCOL_ENV = "AETHER_PROTOCOL";
-inline constexpr std::string_view PEER_ENV = "AETHER_PEER";
-inline constexpr std::string_view WG_PEER_ENV = "AETHER_WG_PEER";
-inline constexpr std::string_view REGISTER_ENV = "AETHER_REGISTER";
-inline constexpr std::string_view SCAN_ENV = "AETHER_SCAN";
-inline constexpr std::string_view IP_ENV = "AETHER_IP";
-inline constexpr std::string_view NOIZE_ENV = "AETHER_NOIZE";
-inline constexpr std::string_view MTU_ENV = "AETHER_MASQUE_MTU";
-inline constexpr std::string_view REPROVISION_ENV = "AETHER_REPROVISION";
-inline constexpr std::string_view TEAM_ENDPOINT_ENV = "AETHER_TEAM_ENDPOINT";
-inline constexpr std::string_view GATEWAY_ENV = "AETHER_GATEWAY";
-inline constexpr std::string_view QUICK_RECONNECT_ENV = "AETHER_QUICK_RECONNECT";
-inline constexpr std::string_view GOOL_MODE_ENV = "AETHER_GOOL_MODE";
-inline constexpr std::string_view GOOL_INNER_ENV = "AETHER_GOOL_INNER";
-inline constexpr std::string_view NO_PROFILE_RETRY_ENV = "AETHER_WG_NO_PROFILE_RETRY";
-inline constexpr std::string_view ECH_ENV = "AETHER_ECH";
-inline constexpr std::string_view WIW_LIST_ENV = "AETHER_WIW_PEERS";
-inline constexpr std::string_view WIW_OUTER_ENV = "AETHER_WIW_OUTER_PEER";
-inline constexpr std::string_view WIW_INNER_ENV = "AETHER_WIW_INNER_PEER";
-inline constexpr std::string_view MIM_LIST_ENV = "AETHER_MIM_PEERS";
-inline constexpr std::string_view MIM_OUTER_ENV = "AETHER_MIM_OUTER_PEER";
-inline constexpr std::string_view MIM_INNER_ENV = "AETHER_MIM_INNER_PEER";
-inline constexpr std::string_view MASQUE_RECONNECT_ENV = "AETHER_MASQUE_RECONNECT_SECS";
-inline constexpr std::string_view MASQUE_STARTUP_ENV = "AETHER_MASQUE_STARTUP_SECS";
-inline constexpr std::string_view WG_RECONNECT_ENV = "AETHER_WG_RECONNECT_SECS";
-inline constexpr std::string_view WG_COOLDOWN_ENV = "AETHER_WG_ENDPOINT_COOLDOWN_SECS";
-inline constexpr std::string_view WG_VALIDATE_ENV = "AETHER_WG_VALIDATE_SECS";
-inline constexpr std::string_view WG_KEEPALIVE_ENV = "AETHER_WG_KEEPALIVE";
-inline constexpr std::string_view MASQUE_HTTP2_ENV = "AETHER_MASQUE_HTTP2";
-inline constexpr std::string_view TEAM_ENV = "AETHER_TEAM";
-inline constexpr std::string_view ACCESS_EMAIL_ENV = "AETHER_ACCESS_EMAIL";
+inline constexpr std::string_view LOG_LEVEL_ENV = "HEMERA_LOG_LEVEL";
+inline constexpr std::string_view CONFIG_ENV = "HEMERA_CONFIG";
+inline constexpr std::string_view WG_CONFIG_ENV = "HEMERA_WG_CONFIG";
+inline constexpr std::string_view MASQUE_CONFIG_ENV = "HEMERA_MASQUE_CONFIG";
+inline constexpr std::string_view SOCKS_ENV = "HEMERA_SOCKS";
+inline constexpr std::string_view HTTP_PROXY_ENV = "HEMERA_HTTP_PROXY";
+inline constexpr std::string_view PROTOCOL_ENV = "HEMERA_PROTOCOL";
+inline constexpr std::string_view PEER_ENV = "HEMERA_PEER";
+inline constexpr std::string_view WG_PEER_ENV = "HEMERA_WG_PEER";
+inline constexpr std::string_view REGISTER_ENV = "HEMERA_REGISTER";
+inline constexpr std::string_view SCAN_ENV = "HEMERA_SCAN";
+inline constexpr std::string_view IP_ENV = "HEMERA_IP";
+inline constexpr std::string_view NOIZE_ENV = "HEMERA_NOIZE";
+inline constexpr std::string_view MTU_ENV = "HEMERA_MASQUE_MTU";
+inline constexpr std::string_view REPROVISION_ENV = "HEMERA_REPROVISION";
+inline constexpr std::string_view TEAM_ENDPOINT_ENV = "HEMERA_TEAM_ENDPOINT";
+inline constexpr std::string_view GATEWAY_ENV = "HEMERA_GATEWAY";
+inline constexpr std::string_view QUICK_RECONNECT_ENV = "HEMERA_QUICK_RECONNECT";
+inline constexpr std::string_view GOOL_MODE_ENV = "HEMERA_GOOL_MODE";
+inline constexpr std::string_view GOOL_INNER_ENV = "HEMERA_GOOL_INNER";
+inline constexpr std::string_view NO_PROFILE_RETRY_ENV = "HEMERA_WG_NO_PROFILE_RETRY";
+inline constexpr std::string_view ECH_ENV = "HEMERA_ECH";
+inline constexpr std::string_view WIW_LIST_ENV = "HEMERA_WIW_PEERS";
+inline constexpr std::string_view WIW_OUTER_ENV = "HEMERA_WIW_OUTER_PEER";
+inline constexpr std::string_view WIW_INNER_ENV = "HEMERA_WIW_INNER_PEER";
+inline constexpr std::string_view MIM_LIST_ENV = "HEMERA_MIM_PEERS";
+inline constexpr std::string_view MIM_OUTER_ENV = "HEMERA_MIM_OUTER_PEER";
+inline constexpr std::string_view MIM_INNER_ENV = "HEMERA_MIM_INNER_PEER";
+inline constexpr std::string_view MASQUE_RECONNECT_ENV = "HEMERA_MASQUE_RECONNECT_SECS";
+inline constexpr std::string_view MASQUE_STARTUP_ENV = "HEMERA_MASQUE_STARTUP_SECS";
+inline constexpr std::string_view WG_RECONNECT_ENV = "HEMERA_WG_RECONNECT_SECS";
+inline constexpr std::string_view WG_COOLDOWN_ENV = "HEMERA_WG_ENDPOINT_COOLDOWN_SECS";
+inline constexpr std::string_view WG_VALIDATE_ENV = "HEMERA_WG_VALIDATE_SECS";
+inline constexpr std::string_view WG_KEEPALIVE_ENV = "HEMERA_WG_KEEPALIVE";
+inline constexpr std::string_view MASQUE_HTTP2_ENV = "HEMERA_MASQUE_HTTP2";
+inline constexpr std::string_view TEAM_ENV = "HEMERA_TEAM";
+inline constexpr std::string_view ACCESS_EMAIL_ENV = "HEMERA_ACCESS_EMAIL";
 
 // ---- log lines ------------------------------------------------------------------------------
 
@@ -200,7 +200,7 @@ void note_error(Notes& notes, std::string text);
 
 // ---- errors ---------------------------------------------------------------------------------
 
-// error.rs's AetherError. Every `{e}` in a lib.rs log line prints Display, which is the variant's
+// error.rs's HemeraError. Every `{e}` in a lib.rs log line prints Display, which is the variant's
 // own prefix and the message together, so the port keeps the two apart and never logs one for the
 // other.
 enum class ErrorKind {
@@ -259,7 +259,7 @@ using BindListener =
 // the wiring here so a library build can stop a run the way the binary does.
 using SignalInstaller = std::function<void(const localapi::Cancel& cancel)>;
 
-using Cancel = ::aether::core::localapi::Cancel;
+using Cancel = ::hemera::core::localapi::Cancel;
 
 // Installs `installer` so a signal raises `cancel`. A missing installer means nothing is wired,
 // which is what a test wants.
@@ -282,10 +282,10 @@ void unset(Settings& settings, std::string_view key);
 
 // scan_keyword: the five words that mean "let the scan pick".
 [[nodiscard]] bool scan_keyword(std::string_view value);
-// wiw_scan_requested: AETHER_WIW_PEERS says one of those words.
+// wiw_scan_requested: HEMERA_WIW_PEERS says one of those words.
 [[nodiscard]] bool wiw_scan_requested(const Settings& settings);
 
-// masque_tunnel_mtu: AETHER_MASQUE_MTU trimmed and inside 576..=1500, else 1500 on the HTTP/2
+// masque_tunnel_mtu: HEMERA_MASQUE_MTU trimmed and inside 576..=1500, else 1500 on the HTTP/2
 // carrier and 1280 on QUIC.
 [[nodiscard]] std::size_t masque_tunnel_mtu(const Settings& settings);
 // masque_carrier: the lastconn carrier the session's gateways are filed under.
@@ -295,38 +295,38 @@ void unset(Settings& settings, std::string_view key);
 [[nodiscard]] std::string derive_sibling_path(std::string_view base, std::string_view suffix);
 [[nodiscard]] std::string lastconn_path(std::string_view config_path);
 
-// team_scope: the normalized team name of AETHER_TEAM, nothing when there is none.
+// team_scope: the normalized team name of HEMERA_TEAM, nothing when there is none.
 [[nodiscard]] std::optional<std::string> team_scope(const Settings& settings);
 
 [[nodiscard]] std::string warp_config_path(const Settings& settings, std::string_view base);
 [[nodiscard]] std::string masque_config_path(const Settings& settings, std::string_view base);
 
-// keep_saved_identity: a refused identity is replaced unless AETHER_REPROVISION is exactly one of
+// keep_saved_identity: a refused identity is replaced unless HEMERA_REPROVISION is exactly one of
 // "0", "off" or "false".
 [[nodiscard]] bool keep_saved_identity(const Settings& settings);
 
-// gool_classic: AETHER_GOOL_MODE is exactly "wiw", "wg" or "classic", or any of the three
+// gool_classic: HEMERA_GOOL_MODE is exactly "wiw", "wg" or "classic", or any of the three
 // warp-in-warp endpoint settings names a hop.
 [[nodiscard]] bool gool_classic(const Settings& settings);
 
 // The three profile readings, each with its own default, and the log line each writes.
 [[nodiscard]] std::string noize_profile(const Settings& settings);        // or "firewall"
-[[nodiscard]] std::string aethernoize_profile(const Settings& settings);  // or "balanced"
+[[nodiscard]] std::string hemeranoize_profile(const Settings& settings);  // or "balanced"
 [[nodiscard]] std::string wg_primary_profile(const Settings& settings);   // or "balanced"
 [[nodiscard]] NoizeConfig noize_config(const Settings& settings, Notes& notes);
-[[nodiscard]] AetherNoizeConfig aethernoize_config(const Settings& settings, Notes& notes);
+[[nodiscard]] HemeraNoizeConfig hemeranoize_config(const Settings& settings, Notes& notes);
 [[nodiscard]] std::string noize_profile_line(std::string_view profile);
-[[nodiscard]] std::string aethernoize_profile_line(std::string_view profile);
+[[nodiscard]] std::string hemeranoize_profile_line(std::string_view profile);
 [[nodiscard]] std::string wg_primary_profile_line(std::string_view profile);
 
 // wg_profile_candidates: the primary profile, then balanced/aggressive/light/off unless
-// AETHER_WG_NO_PROFILE_RETRY is set, case-insensitively de-duplicated.
-[[nodiscard]] std::vector<std::pair<std::string, AetherNoizeConfig>> wg_profile_candidates(
+// HEMERA_WG_NO_PROFILE_RETRY is set, case-insensitively de-duplicated.
+[[nodiscard]] std::vector<std::pair<std::string, HemeraNoizeConfig>> wg_profile_candidates(
     const Settings& settings, Notes& notes);
 
-// base_config: AETHER_CONFIG as it stands, or DEFAULT_CONFIG.
+// base_config: HEMERA_CONFIG as it stands, or DEFAULT_CONFIG.
 [[nodiscard]] std::string base_config_path(const Settings& settings);
-// AETHER_SOCKS parsed as an address and a port, or 127.0.0.1:1819.
+// HEMERA_SOCKS parsed as an address and a port, or 127.0.0.1:1819.
 [[nodiscard]] SocketAddr socks_listen(const Settings& settings);
 
 struct HttpProxyListen {
@@ -337,7 +337,7 @@ struct HttpProxyListen {
 [[nodiscard]] HttpProxyListen http_proxy_listen(const Settings& settings);
 [[nodiscard]] std::string unparsable_http_proxy_warning(std::string_view trimmed);
 
-// log_default_filter: "info,aether={level}", the level AETHER_LOG_LEVEL names when it is one of the
+// log_default_filter: "info,hemera={level}", the level HEMERA_LOG_LEVEL names when it is one of the
 // five words env_logger takes, else "info".
 [[nodiscard]] std::string log_level_of(const Settings& settings);
 [[nodiscard]] std::string log_default_filter(const Settings& settings);
@@ -353,7 +353,7 @@ struct HttpProxyListen {
 [[nodiscard]] std::chrono::seconds wg_reconnect_delay(const Settings& settings);       // 2
 [[nodiscard]] std::chrono::seconds wg_endpoint_cooldown(const Settings& settings);     // 300
 [[nodiscard]] std::chrono::seconds wg_tunnel_validate_timeout(const Settings& settings); // 10
-// AETHER_WG_KEEPALIVE as u16, above zero, no cap, default 5.
+// HEMERA_WG_KEEPALIVE as u16, above zero, no cap, default 5.
 [[nodiscard]] std::uint16_t wg_keepalive_secs(const Settings& settings);
 
 // ---- the two-hop endpoints ------------------------------------------------------------------
@@ -389,7 +389,7 @@ inline constexpr std::string_view NO_ENDPOINT_GIVEN =
                                                                     std::string_view inner_key);
 [[nodiscard]] std::expected<WiwEndpoints, Error> wiw_endpoints_of(const Settings& settings);
 [[nodiscard]] std::expected<WiwEndpoints, Error> mim_endpoints_of(const Settings& settings);
-// The classic-gool reading: the warp-in-warp settings first, then AETHER_WG_PEER, then AETHER_PEER.
+// The classic-gool reading: the warp-in-warp settings first, then HEMERA_WG_PEER, then HEMERA_PEER.
 [[nodiscard]] std::expected<WiwEndpoints, Error> wiw_endpoints_with_fallback(const Settings& settings);
 
 // ---- protocols ------------------------------------------------------------------------------
@@ -416,7 +416,7 @@ struct RegisterSet {
 
 [[nodiscard]] std::string register_bad_value_error(std::string_view other);
 [[nodiscard]] std::expected<RegisterSet, Error> register_set_parse(std::string_view value);
-// AETHER_REGISTER, trimmed and non-empty, as the set it names. An unparsable value is an error, so
+// HEMERA_REGISTER, trimmed and non-empty, as the set it names. An unparsable value is an error, so
 // `--register everything` stops the core rather than registering nothing.
 [[nodiscard]] std::expected<std::optional<RegisterSet>, Error> register_request(const Settings& settings);
 
@@ -445,12 +445,12 @@ inline constexpr std::string_view SCAN_MODE_PROMPT =
     "candidate, guaranteed working)\nChoose [1-5] (default 2): ";
 
 inline constexpr std::string_view MIM_MANUAL_TIP =
-    "\n(tip: you can skip this scan and give the two masque hops yourself:\n        aether --mim "
+    "\n(tip: you can skip this scan and give the two masque hops yourself:\n        hemera --mim "
     "--mim-outer <ip:port> --mim-inner <ip:port>\n      the port is required, and naming just the "
-    "outer one lets aether pick\n      the inner edge for you)\n";
+    "outer one lets hemera pick\n      the inner edge for you)\n";
 
 inline constexpr std::string_view WIW_MANUAL_TIP =
-    "\n(tip: you can skip this scan and give the two gool hops yourself:\n        aether --gool "
+    "\n(tip: you can skip this scan and give the two gool hops yourself:\n        hemera --gool "
     "--wiw-outer <ip:port> --wiw-inner <ip:port>\n      the port is required, and naming just one "
     "of the two lets the scan\n      find the other)\n";
 
@@ -481,7 +481,7 @@ inline constexpr std::string_view TEAM_EMAIL_PROMPT =
 [[nodiscard]] std::string team_enrol_prompt(const std::vector<std::string>& known);
 [[nodiscard]] std::string quick_reconnect_prompt(const LastConnection& cached);
 
-// select_scan_mode_str: AETHER_SCAN as it stands when the key is there at all, else the answer read
+// select_scan_mode_str: HEMERA_SCAN as it stands when the key is there at all, else the answer read
 // off the prompt, mapped to a profile name.
 [[nodiscard]] std::string select_scan_mode_str(const Settings& settings, std::string_view tip,
                                               const PromptLine& prompt);
@@ -490,13 +490,13 @@ inline constexpr std::string_view TEAM_EMAIL_PROMPT =
 // scan_settings_from_env: the pair a run reads when it is not going to ask.
 [[nodiscard]] std::pair<std::string, IpScan> scan_settings_from_env(const Settings& settings);
 using ScanSettings = std::optional<std::pair<std::string, IpScan>>;
-// verified_scan_selected: the cached scan settings, or AETHER_SCAN, name the verified mode.
+// verified_scan_selected: the cached scan settings, or HEMERA_SCAN, name the verified mode.
 [[nodiscard]] bool verified_scan_selected(const Settings& settings, const ScanSettings& cached);
 
-// select_gool: answer "2" writes AETHER_GOOL_MODE=classic. Either way the protocol is WarpInWarp.
+// select_gool: answer "2" writes HEMERA_GOOL_MODE=classic. Either way the protocol is WarpInWarp.
 [[nodiscard]] Protocol select_gool(Settings& settings, const PromptLine& prompt);
-// select_masque_transport: skipped when AETHER_MASQUE_HTTP2 or AETHER_PEER is set at all; answer
-// "2" writes AETHER_MASQUE_HTTP2=1.
+// select_masque_transport: skipped when HEMERA_MASQUE_HTTP2 or HEMERA_PEER is set at all; answer
+// "2" writes HEMERA_MASQUE_HTTP2=1.
 void select_masque_transport(Settings& settings, const PromptLine& prompt, Notes& notes);
 // select_protocol, the whole loop: the menu, the Zero Trust enrolment on answer 5, and the answer
 // that ends it.
@@ -520,7 +520,7 @@ struct TeamDeps {
                                                                 const std::vector<std::string>& names);
 [[nodiscard]] std::vector<std::string> enrolled_teams(std::string_view base, const ListDir& list_dir);
 
-// enrol_zero_trust. Writes AETHER_TEAM and AETHER_ACCESS_EMAIL into `settings` and removes them
+// enrol_zero_trust. Writes HEMERA_TEAM and HEMERA_ACCESS_EMAIL into `settings` and removes them
 // again on every failure path, exactly as the Rust writes and removes the environment. Never fails:
 // a refusal is a note and a return to personal WARP.
 void enrol_zero_trust(Settings& settings, std::string_view base_config, const TeamDeps& team,
@@ -560,7 +560,7 @@ struct EnrolOutcome {
 [[nodiscard]] std::string gateway_proxy_debug_line(std::string_view gateway_proxy);
 [[nodiscard]] std::string assigned_endpoint_line(std::string_view peer);
 // adopt_team_profile: refresh, then the gateway proxy, then the endpoint the organization assigned.
-// Writes AETHER_TEAM_ENDPOINT when the assigned address and port parse.
+// Writes HEMERA_TEAM_ENDPOINT when the assigned address and port parse.
 [[nodiscard]] Identity adopt_team_profile(Settings& settings, Identity identity,
                                          const AccountSeams& seams, Notes& notes);
 [[nodiscard]] std::expected<Identity, Error> provision_account(const Settings& settings,
@@ -630,7 +630,7 @@ struct Startup {
     Kind kind = Kind::Run;
     CliOutcome cli = CliOutcome::Run;
     std::string log_filter;
-    std::string banner;         // "Aether v{version}"
+    std::string banner;         // "Hemera v{version}"
     std::string sysprofile;     // sysprofile::summary
     std::string base_config;
     std::optional<RegisterSet> register_set;
@@ -738,7 +738,7 @@ struct WgProbeParams {
     std::array<std::uint8_t, 32> peer_public_key{};
     std::array<std::uint8_t, 3> client_id{};
     IpAddress local_ipv4;
-    AetherNoizeConfig noise;
+    HemeraNoizeConfig noise;
     std::vector<std::uint16_t> ports;
     IpScan ip = IpScan::V4;
     std::vector<SocketAddr> excluded;
@@ -746,7 +746,7 @@ struct WgProbeParams {
 
 [[nodiscard]] std::expected<WgProbeParams, Error> wg_probe_for(const Settings& settings,
                                                               const Identity& identity,
-                                                              const AetherNoizeConfig& noise,
+                                                              const HemeraNoizeConfig& noise,
                                                               IpScan ip,
                                                               std::vector<SocketAddr> excluded,
                                                               Notes& notes);
@@ -760,8 +760,8 @@ struct WgProbeParams {
 [[nodiscard]] std::expected<std::vector<SocketAddr>, Error> pick_wg_peers(
     const std::vector<WgProbeResult>& found, const std::vector<IpAddress>& avoid, std::size_t want);
 
-// select_peer's forced-peer reading: AETHER_PEER on the two MASQUE protocols, AETHER_WG_PEER then
-// AETHER_PEER on the two WireGuard ones. The raw value, as lib.rs takes it.
+// select_peer's forced-peer reading: HEMERA_PEER on the two MASQUE protocols, HEMERA_WG_PEER then
+// HEMERA_PEER on the two WireGuard ones. The raw value, as lib.rs takes it.
 [[nodiscard]] std::optional<std::string> forced_peer_for(const Settings& settings, Protocol protocol);
 [[nodiscard]] std::expected<SocketAddr, Error> parse_forced_peer(std::string_view raw);
 
@@ -779,7 +779,7 @@ struct WgProbeParams {
                                                               const SocketAddr& peer,
                                                               const std::optional<std::vector<std::uint8_t>>& ech,
                                                               Notes& notes);
-// want_quick_reconnect: AETHER_QUICK_RECONNECT's eight exact words, else the prompt, where anything
+// want_quick_reconnect: HEMERA_QUICK_RECONNECT's eight exact words, else the prompt, where anything
 // but "n" or "no" says yes.
 [[nodiscard]] bool want_quick_reconnect(const Settings& settings, const LastConnection& cached,
                                        const PromptLine& prompt);
@@ -839,7 +839,7 @@ struct WgEstablish {
     std::size_t mtu = TUNNEL_MTU;
     bool obfuscate = true;
     std::uint16_t keepalive = WIW_OUTER_KEEPALIVE;
-    AetherNoizeConfig profile;
+    HemeraNoizeConfig profile;
     std::chrono::seconds validate_timeout{10};
     // Key material: the engine reads these, nothing logs them.
     std::array<std::uint8_t, 32> private_key{};
@@ -917,7 +917,7 @@ inline constexpr std::string_view WIW_INNER_LINE =
 
 // ---- gool over masque -----------------------------------------------------------------------
 
-// gool_inner_peers: AETHER_GOOL_INNER alone when it is set, else the identity's assigned endpoint
+// gool_inner_peers: HEMERA_GOOL_INNER alone when it is set, else the identity's assigned endpoint
 // and the WireGuard v4 seeds, each on port 2408, de-duplicated.
 [[nodiscard]] std::expected<std::vector<SocketAddr>, Error> gool_inner_peers(const Settings& settings,
                                                                             const Identity& identity);
@@ -1000,7 +1000,7 @@ struct FlowRequest {
     std::size_t want = 0;
     std::string mode_str;
     IpScan ip = IpScan::V4;
-    AetherNoizeConfig noise;
+    HemeraNoizeConfig noise;
     std::string profile_name;
     std::chrono::seconds timeout{0};
     // Nothing is Rust's `None` keepalive, which the checks that only probe pass.
@@ -1023,7 +1023,7 @@ struct FlowReply {
     std::vector<WgProbeResult> results;
     std::chrono::milliseconds rtt{0};
     // HuntWgEndpoint: the profile that found the endpoint, which the loop then keeps.
-    AetherNoizeConfig profile;
+    HemeraNoizeConfig profile;
     std::string profile_name;
 };
 
@@ -1165,7 +1165,7 @@ public:
 private:
     struct LastGood {
         SocketAddr peer;
-        AetherNoizeConfig profile;
+        HemeraNoizeConfig profile;
         std::string name;
     };
 
@@ -1175,7 +1175,7 @@ private:
     FlowStep use_peer(LastGood chosen);
 
     Config config_;
-    std::vector<std::pair<std::string, AetherNoizeConfig>> candidates_;
+    std::vector<std::pair<std::string, HemeraNoizeConfig>> candidates_;
     std::optional<std::string> forced_;
     std::optional<LastGood> quick_;
     std::optional<LastGood> last_good_;
@@ -1186,7 +1186,7 @@ private:
     ScanSettings scan_settings_;
     std::uint32_t consecutive_fails_ = 0;
     std::vector<std::pair<SocketAddr, TimePoint>> endpoint_cooldowns_;
-    AetherNoizeConfig cached_profile_;
+    HemeraNoizeConfig cached_profile_;
     FlowRequest pending_;
     int phase_ = 0;
     bool done_ = false;
@@ -1342,4 +1342,4 @@ inline constexpr std::string_view GOOL_ONE_EDGE =
 [[nodiscard]] std::string mim_outer_rescan_line(const SocketAddr& peer, std::uint32_t fails);
 [[nodiscard]] std::string mim_inner_another_line(const SocketAddr& peer, std::uint32_t fails);
 
-} // namespace aether::core::coreflow
+} // namespace hemera::core::coreflow

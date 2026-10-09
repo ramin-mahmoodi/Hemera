@@ -40,7 +40,7 @@ namespace {
     return args;
 }
 
-const aether::core::Cancel* g_cli_cancel = nullptr;
+const hemera::core::Cancel* g_cli_cancel = nullptr;
 
 BOOL WINAPI cli_ctrl_handler(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT ||
@@ -55,9 +55,9 @@ BOOL WINAPI cli_ctrl_handler(DWORD type) {
 
 int main(int, char**) {
     const std::vector<std::string> args = command_line_args();
-    aether::core::Cancel cancel;
+    hemera::core::Cancel cancel;
     g_cli_cancel = &cancel;
     SetConsoleCtrlHandler(cli_ctrl_handler, TRUE);
 
-    return aether::core::run_inproc(args, {}, cancel, {});
+    return hemera::core::run_inproc(args, {}, cancel, {});
 }

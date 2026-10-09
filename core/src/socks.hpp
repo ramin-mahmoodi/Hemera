@@ -15,7 +15,7 @@
 #include <variant>
 #include <vector>
 
-namespace aether::core::socks {
+namespace hemera::core::socks {
 
 // Port of socks.rs: the proxy protocol codec. Everything here is bytes in, decision out; the
 // listeners, the relay loops, the timeouts that fire and the netstack round trips that
@@ -243,7 +243,7 @@ struct HttpRequestLine {
 
 // --- the DNS the tunnel does itself ------------------------------------------------------
 
-// A resolver list the way resolver_addresses/parse_resolvers read AETHER_DNS: tokens on ',', ' '
+// A resolver list the way resolver_addresses/parse_resolvers read HEMERA_DNS: tokens on ',', ' '
 // and ';', each `ip:port` or a bare address on port 53, duplicates and junk dropped.
 [[nodiscard]] std::vector<Endpoint> parse_resolvers(std::string_view raw);
 // The same over the settings, falling back to Cloudflare when nothing usable is configured.
@@ -289,17 +289,17 @@ struct HttpRequestLine {
                                            std::optional<std::string_view> sniffed,
                                            std::uint16_t port);
 
-// The AETHER_ROUTE_SNIFF switch: on unless the value is exactly "0", "off" or "false".
+// The HEMERA_ROUTE_SNIFF switch: on unless the value is exactly "0", "off" or "false".
 [[nodiscard]] bool sniff_enabled(const Settings& settings);
-// AETHER_ROUTE_SNIFF_MS in milliseconds; a non-number or 0 is the default.
+// HEMERA_ROUTE_SNIFF_MS in milliseconds; a non-number or 0 is the default.
 [[nodiscard]] std::uint64_t sniff_window_ms(const Settings& settings);
-// AETHER_HALF_CLOSE_SECS: a plain u64, trimmed by nobody, at most 86400 seconds.
+// HEMERA_HALF_CLOSE_SECS: a plain u64, trimmed by nobody, at most 86400 seconds.
 [[nodiscard]] std::uint64_t half_close_linger_secs(const Settings& settings);
 
-// client_limit()'s arithmetic: an AETHER_MAX_CLIENTS value wins when it parses above 0; the
+// client_limit()'s arithmetic: an HEMERA_MAX_CLIENTS value wins when it parses above 0; the
 // tier's number stands unless a file-descriptor limit caps it, and that limit is one only
 // Unix answers (see sysprofile.hpp), so on Windows open_files is empty.
 [[nodiscard]] std::size_t client_limit(std::size_t by_tier, std::optional<std::size_t> open_files);
 [[nodiscard]] std::size_t client_limit_for(const Settings& settings, sysprofile::Tier tier);
 
-} // namespace aether::core::socks
+} // namespace hemera::core::socks

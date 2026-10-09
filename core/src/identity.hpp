@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-namespace aether::core {
+namespace hemera::core {
 
 // One enrolled tunnel account, exactly as the Rust core keeps it.
 struct Identity {
@@ -66,4 +66,4 @@ using TomlFields = std::map<std::string, std::string>;
 // `text` as TOML writes it: in double quotes, with the escapes that survive a read back.
 [[nodiscard]] std::string toml_quote(std::string_view text);
 
-} // namespace aether::core
+} // namespace hemera::core

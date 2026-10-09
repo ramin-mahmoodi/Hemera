@@ -1,6 +1,6 @@
 #pragma once
 
-// Port of aether/src/masque_h2.rs: the HTTP/2 MASQUE carrier -- CONNECT-IP carried over HTTP/2
+// Port of hemera/src/masque_h2.rs: the HTTP/2 MASQUE carrier -- CONNECT-IP carried over HTTP/2
 // datagram capsules on a request stream instead of HTTP/3, with the same certificate / pinning /
 // ECH surface as the QUIC carrier. Everything this file decides is kept here: the tunnel config,
 // the on/off switch and its exact env reading, the h2 peer and connect target, the connect-ip
@@ -34,7 +34,7 @@
 #include <utility>
 #include <vector>
 
-namespace aether::core::masque_h2 {
+namespace hemera::core::masque_h2 {
 
 // ---- the constants of masque_h2.rs, with their Rust lines -----------------------------------
 
@@ -106,21 +106,21 @@ struct H2TunnelConfig {
 
 // ---- the switches and their exact env reading -------------------------------------------------
 
-// AETHER_MASQUE_HTTP2 (--h2 / --http2): HTTP/2 instead of HTTP/3, on the words Rust accepts --
+// HEMERA_MASQUE_HTTP2 (--h2 / --http2): HTTP/2 instead of HTTP/3, on the words Rust accepts --
 // 1, true, h2, yes, on, trimmed and lower cased (masque_h2.rs:141-149). "h2" is this switch's own
 // word; settings.hpp's is_truthy does not know it, so enabled() has its own reading.
 [[nodiscard]] bool enabled(const Settings& settings);
 
-// AETHER_MASQUE_H2_PEER (--h2-peer): the address the HTTP/2 carrier connects to instead of the QUIC
+// HEMERA_MASQUE_H2_PEER (--h2-peer): the address the HTTP/2 carrier connects to instead of the QUIC
 // one (masque_h2.rs:151-158). A value that is no `ip:port` (an IPv6 host without brackets and a
 // port, or a bare address) is ignored as Rust's failed parse is, and quic_peer stands.
 [[nodiscard]] SocketAddr h2_peer(const Settings& settings, const SocketAddr& quic_peer);
 
-// AETHER_MASQUE_NO_DATA_CHECK (--no-data-check): the check runs unless the variable is there at all,
+// HEMERA_MASQUE_NO_DATA_CHECK (--no-data-check): the check runs unless the variable is there at all,
 // whatever it says -- mere presence turns it off, its value says nothing (masque_h2.rs:104-106).
 [[nodiscard]] bool data_check_enabled(const Settings& settings);
 
-// AETHER_MASQUE_VALIDATE_SECS / _H2_KEEPALIVE_SECS / _H2_KEEPALIVE_TIMEOUT_SECS: a positive whole
+// HEMERA_MASQUE_VALIDATE_SECS / _H2_KEEPALIVE_SECS / _H2_KEEPALIVE_TIMEOUT_SECS: a positive whole
 // number of seconds, at most a day, else the default (masque_h2.rs:108-139). Rust parses the value
 // without trimming it, so a leading '+' parses and a surrounding space does not.
 [[nodiscard]] std::chrono::seconds validation_timeout(const Settings& settings);
@@ -271,7 +271,7 @@ connect_tcp(const SocketAddr& peer, std::optional<std::chrono::milliseconds> bud
 connect_via_proxy(const upstream::Upstream& proxy, const SocketAddr& peer,
                   std::optional<std::chrono::milliseconds> budget = {});
 
-// dial() (masque_h2.rs:209-216): the proxy's stream when AETHER_UPSTREAM names one, the direct
+// dial() (masque_h2.rs:209-216): the proxy's stream when HEMERA_UPSTREAM names one, the direct
 // connect when not. The announce lines ride the observer, so the carrier never learns which arm
 // answered -- the two arms of Rust's match.
 [[nodiscard]] std::expected<std::unique_ptr<TcpIo>, std::string>
@@ -319,7 +319,7 @@ struct TunnelSeams {
 
 // verify_h2 (masque_h2.rs:279-377): dial through `dial`, shake hands, put the connect-ip request on
 // the stream, and prove the data plane answers DATA_PROBE_REQUIRED_SUCCESSES probes inside `timeout`.
-// The round trip the edge answered with, or the classified text the Rust's AetherError carries.
+// The round trip the edge answered with, or the classified text the Rust's HemeraError carries.
 [[nodiscard]] std::expected<std::chrono::milliseconds, std::string> verify_h2_with(
     const H2TunnelConfig& cfg, std::chrono::milliseconds timeout, const Settings& settings,
     const DialSocket& dial, transport::Observer* observer = nullptr);
@@ -353,4 +353,4 @@ using Dial = std::function<std::expected<void, std::string>(const SocketAddr& pe
 [[nodiscard]] std::expected<void, std::string> run(const H2TunnelConfig& cfg,
                                                    const Settings& settings, const Dial& dial);
 
-} // namespace aether::core::masque_h2
+} // namespace hemera::core::masque_h2

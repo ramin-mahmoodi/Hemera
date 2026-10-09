@@ -42,7 +42,7 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core::transport {
+namespace hemera::core::transport {
 
 // The engine's clock, the same convention netstack.hpp uses: every deadline is one of these and
 // every one is handed in by the caller.
@@ -360,7 +360,7 @@ public:
         // quic.rs::run's argument.
         [[nodiscard]] static Setup for_tunnel(const quic::TunnelConfig& tunnel);
         // quic.rs::verify_masque's, which carries no quiet flag, no budget and no bait switch: the
-        // check baits whenever AETHER_QUIC_V2 leaves it on.
+        // check baits whenever HEMERA_QUIC_V2 leaves it on.
         [[nodiscard]] static Setup for_verify(const quic::VerifyParams& params);
     };
 
@@ -370,7 +370,7 @@ public:
         std::optional<Millis> delay;
         Phase phase = Phase::Handshake;
         bool closed = false;
-        // The Err quic.rs would have returned, in AetherError's words: "masque: ...", "ech: ...".
+        // The Err quic.rs would have returned, in HemeraError's words: "masque: ...", "ech: ...".
         // Nothing while the run is still going, and nothing when it ended on a close, which is an
         // Ok(()) with close() set.
         std::optional<std::string> error;
@@ -481,4 +481,4 @@ private:
     std::unique_ptr<SessionState> state_;
 };
 
-} // namespace aether::core::transport
+} // namespace hemera::core::transport

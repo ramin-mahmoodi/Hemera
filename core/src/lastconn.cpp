@@ -13,7 +13,7 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core {
+namespace hemera::core {
 namespace {
 
     std::string field(const TomlFields& fields, std::string_view key) {
@@ -163,4 +163,4 @@ std::vector<std::pair<std::string, std::uint16_t>> usable_peers(const LastConnec
     return out;
 }
 
-} // namespace aether::core
+} // namespace hemera::core

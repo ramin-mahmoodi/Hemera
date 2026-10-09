@@ -18,7 +18,7 @@
 #include <optional>
 #include <string>
 
-namespace aether::core {
+namespace hemera::core {
 
 // Split "https://host[:port][/path]" into host, port and path. Anything else is refused: the
 // flow only ever produces https URLs, and a downgrade is not a fallback.
@@ -57,4 +57,4 @@ private:
 // would cross session boundaries -- Rust builds one client per flow too (through_upstream).
 [[nodiscard]] zerotrust::AccessHttp access_http(const Settings& settings);
 
-} // namespace aether::core
+} // namespace hemera::core

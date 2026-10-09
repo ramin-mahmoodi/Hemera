@@ -1,4 +1,4 @@
-// Port of aether/src/api.rs (commit 6175b67): the core's control-plane API. See localapi.hpp for
+// Port of hemera/src/api.rs (commit 6175b67): the core's control-plane API. See localapi.hpp for
 // what the surface is and for the two divergences it notes (cooperative cancellation, the
 // ECH wrap the Rust's tls::ech_key does that the ported tls module leaves to the caller).
 
@@ -20,7 +20,7 @@
 #endif
 #include <windows.h>
 
-namespace aether::core::localapi {
+namespace hemera::core::localapi {
 namespace {
 
 std::string lowered(std::string_view text) {
@@ -404,7 +404,7 @@ ScanRequest ScanRequest::for_transport(Transport transport) {
     request.ip = IpScan::V4;
     request.ports = transport_default_ports(transport);
     request.noise = noize::from_profile("firewall");
-    request.aethernoize = aethernoize::from_profile("balanced");
+    request.hemeranoize = hemeranoize::from_profile("balanced");
     return request;
 }
 
@@ -423,7 +423,7 @@ ScanRequest ScanRequest::with_ip(IpScan new_ip) const {
 ScanRequest ScanRequest::with_profile(std::string_view profile) const {
     ScanRequest out = *this;
     out.noise = noize::from_profile(profile);
-    out.aethernoize = aethernoize::from_profile(profile);
+    out.hemeranoize = hemeranoize::from_profile(profile);
     return out;
 }
 
@@ -433,7 +433,7 @@ TunnelSpec TunnelSpec::for_transport(Transport transport) {
     spec.socks = SocketAddr{parse_local_v4("127.0.0.1"), 1819};
     spec.http = std::nullopt;
     spec.ech = std::nullopt;
-    spec.aethernoize = aethernoize::from_profile("balanced");
+    spec.hemeranoize = hemeranoize::from_profile("balanced");
     spec.keepalive = 5;
     spec.verify_timeout = std::chrono::milliseconds(10000);
     return spec;
@@ -453,7 +453,7 @@ TunnelSpec TunnelSpec::with_http(SocketAddr listen) const {
 
 TunnelSpec TunnelSpec::with_profile(std::string_view profile) const {
     TunnelSpec out = *this;
-    out.aethernoize = aethernoize::from_profile(profile);
+    out.hemeranoize = hemeranoize::from_profile(profile);
     return out;
 }
 
@@ -473,13 +473,13 @@ std::string lastconn_path(std::string_view path) {
 // api.rs::load_identity and save_identity over config.rs, which the port reads and writes
 // through identity.hpp. A file that fails to parse quarantines itself there, as the Rust does.
 std::expected<std::optional<Identity>, ApiError> load_identity(const std::string& path) {
-    auto loaded = ::aether::core::load_identity(path);
+    auto loaded = ::hemera::core::load_identity(path);
     if (!loaded) return std::unexpected(ApiError{ErrorKind::Other, loaded.error()});
     return *loaded;
 }
 
 std::expected<void, ApiError> save_identity(const std::string& path, const Identity& identity) {
-    auto saved = ::aether::core::save_identity(path, identity);
+    auto saved = ::hemera::core::save_identity(path, identity);
     if (!saved) return std::unexpected(ApiError{ErrorKind::Other, saved.error()});
     return {};
 }
@@ -539,7 +539,7 @@ std::expected<Identity, ApiError> open_identity(Engine& engine, const std::strin
             if (!attached) return std::unexpected(attached.error());
             identity = std::move(*attached);
         }
-        if (auto saved = ::aether::core::localapi::save_identity(path, identity); !saved) {
+        if (auto saved = ::hemera::core::localapi::save_identity(path, identity); !saved) {
             return std::unexpected(saved.error());
         }
         return identity;
@@ -549,7 +549,7 @@ std::expected<Identity, ApiError> open_identity(Engine& engine, const std::strin
                std::format("[+] no identity at {}; provisioning a new one", path));
     auto provisioned = provision_identity(engine, request);
     if (!provisioned) return std::unexpected(provisioned.error());
-    if (auto saved = ::aether::core::localapi::save_identity(path, *provisioned); !saved) {
+    if (auto saved = ::hemera::core::localapi::save_identity(path, *provisioned); !saved) {
         return std::unexpected(saved.error());
     }
     return provisioned;
@@ -603,10 +603,10 @@ std::expected<std::vector<std::uint8_t>, ApiError> fetch_ech_config(
     // job_ech_key: the lookup of --ech-dns and --ech-domain, offered through tls::ech_key with
     // the setting forced to auto, and no path that ends without a key.
     Settings job = settings;
-    job.set("AETHER_ECH", "auto");
+    job.set("HEMERA_ECH", "auto");
 
     auto keyed = ech_key(job, EchPurpose::Session,
-                         [&job, &transport]() { return ::aether::core::fetch_ech_config(job, transport); });
+                         [&job, &transport]() { return ::hemera::core::fetch_ech_config(job, transport); });
     if (!keyed) {
         // tls::ech_key already folded the miss into the NO_ECH_KEY sentence, whatever missed:
         // the lookup, the value, or a key BoringSSL will not offer.
@@ -651,7 +651,7 @@ std::expected<Endpoint, ApiError> scan(Engine& engine, const Identity& identity,
     probe.peer_public_key = identity.wg_peer_public_key;
     probe.client_id = identity.client_id;
     probe.local_ipv4 = *local_ipv4;
-    probe.noise = request.aethernoize;
+    probe.noise = request.hemeranoize;
     probe.ports = request.ports;
     probe.ip = request.ip;
     probe.excluded = request.excluded;
@@ -682,7 +682,7 @@ std::expected<bool, ApiError> verify_endpoint(Engine& engine, const Identity& id
     params.peer_public_key = identity.wg_peer_public_key;
     params.client_id = identity.client_id;
     params.local_ipv4 = *local_ipv4;
-    params.noise = spec.aethernoize;
+    params.noise = spec.hemeranoize;
     params.verify_timeout = spec.verify_timeout;
     params.keepalive = spec.keepalive;
 
@@ -702,13 +702,13 @@ std::expected<bool, ApiError> verify_endpoint(Engine& engine, const Identity& id
 std::expected<void, ApiError> connect(Engine& engine, const Identity& identity,
                                       const SocketAddr& peer, const TunnelSpec& spec,
                                       const Cancel& cancel) {
-    // api.rs sets AETHER_HTTP_PROXY for the whole process before it runs the tunnel, and
+    // api.rs sets HEMERA_HTTP_PROXY for the whole process before it runs the tunnel, and
     // removes it -- not blanks it -- when the job names no http listener.
     if (spec.http) {
         const std::string listen = socket_text(*spec.http);
-        ::SetEnvironmentVariableA("AETHER_HTTP_PROXY", listen.c_str());
+        ::SetEnvironmentVariableA("HEMERA_HTTP_PROXY", listen.c_str());
     } else {
-        ::SetEnvironmentVariableA("AETHER_HTTP_PROXY", nullptr);
+        ::SetEnvironmentVariableA("HEMERA_HTTP_PROXY", nullptr);
     }
 
     if (spec.transport == Transport::Masque) {
@@ -717,8 +717,8 @@ std::expected<void, ApiError> connect(Engine& engine, const Identity& identity,
         });
     }
     return guard<void>(cancel, [&](const Cancel& inner) {
-        return engine.run_wireguard_tunnel(identity, peer, spec.aethernoize, spec.socks, inner);
+        return engine.run_wireguard_tunnel(identity, peer, spec.hemeranoize, spec.socks, inner);
     });
 }
 
-} // namespace aether::core::localapi
+} // namespace hemera::core::localapi

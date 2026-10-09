@@ -1,5 +1,5 @@
-// aether-core.exe: the native core's console entry point, the counterpart of aether/src/main.rs
-// (pinned commit 6175b67). main.rs is three lines: it hands `env::args().skip(1)` to aether::run(),
+// hemera-core.exe: the native core's console entry point, the counterpart of hemera/src/main.rs
+// (pinned commit 6175b67). main.rs is three lines: it hands `env::args().skip(1)` to hemera::run(),
 // which is lib.rs::run_with, and prints the Err with Rust's default Termination (`Error: {e:?}`) and
 // exits 1 when run() returns one. Everything that produces output here is what lib.rs::run_with and
 // its port, coreflow::startup and the four run_* flows, decide; this file only supplies the seams
@@ -17,9 +17,9 @@
 //
 // SECURITY. Secrets travel only through the environment (settings_from_environment) and the Settings
 // map; none is ever moved to argv, printed, or logged. The five keys the GUI passes --
-// AETHER_MASQUE_HTTP2, AETHER_ACCESS_EMAIL, AETHER_ACCESS_CLIENT_ID, AETHER_ACCESS_CLIENT_SECRET,
-// AETHER_ACCESS_TOKEN -- are read by that map and stop there. ECH and account key material is named
-// by byte length alone (coreflow owns those lines). aether-masque.toml is never opened here.
+// HEMERA_MASQUE_HTTP2, HEMERA_ACCESS_EMAIL, HEMERA_ACCESS_CLIENT_ID, HEMERA_ACCESS_CLIENT_SECRET,
+// HEMERA_ACCESS_TOKEN -- are read by that map and stop there. ECH and account key material is named
+// by byte length alone (coreflow owns those lines). hemera-masque.toml is never opened here.
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -88,18 +88,18 @@
 
 namespace {
 
-namespace cf = aether::core::coreflow;
-namespace localapi = aether::core::localapi;
+namespace cf = hemera::core::coreflow;
+namespace localapi = hemera::core::localapi;
 
-using aether::core::CliOutcome;
-using aether::core::Identity;
-using aether::core::LastConnection;
-using aether::core::Settings;
-using aether::core::SocketAddr;
-using aether::core::load_last_connection;
-using aether::core::save_last_connection;
-using aether::core::settings_from_environment;
-using aether::core::trim;
+using hemera::core::CliOutcome;
+using hemera::core::Identity;
+using hemera::core::LastConnection;
+using hemera::core::Settings;
+using hemera::core::SocketAddr;
+using hemera::core::load_last_connection;
+using hemera::core::save_last_connection;
+using hemera::core::settings_from_environment;
+using hemera::core::trim;
 
 using cf::Cancel;
 using cf::Error;
@@ -130,7 +130,7 @@ using cf::Notes;
 }
 
 // env_logger's `[YYYY-MM-DDTHH:MM:SS.mmm+HH:MM LEVEL target] message`. The log target the core's
-// own lines carry is the crate name, "aether".
+// own lines carry is the crate name, "hemera".
 [[nodiscard]] std::string stamp() {
     SYSTEMTIME now{};
     GetLocalTime(&now);
@@ -153,7 +153,7 @@ std::function<void(std::string_view)> g_inproc_log_sink = nullptr;
 std::function<void(const std::string&)> g_inproc_state_sink = nullptr;
 
 void emit(Level level, std::string_view text) {
-    std::string line = "[" + stamp() + " " + level_tag(level) + " aether] " + std::string(text);
+    std::string line = "[" + stamp() + " " + level_tag(level) + " hemera] " + std::string(text);
     if (g_inproc_log_sink) {
         g_inproc_log_sink(line);
     }
@@ -164,7 +164,7 @@ void emit(Level level, std::string_view text) {
 void emit(const Note& entry) { emit(entry.level, entry.text); }
 void emit_all(const Notes& notes) { for (const Note& entry : notes) emit(entry); }
 
-// lib.rs:82-91's env_logger filter on the aether target: info unless AETHER_LOG_LEVEL lowers it, so
+// lib.rs:82-91's env_logger filter on the hemera target: info unless HEMERA_LOG_LEVEL lowers it, so
 // log::debug!/trace! texts reach the pipe only when the level allows -- the same gate note_level
 // applies to the transport notes (coreflow.cpp:487-495's log_level_of is the filter's source).
 [[nodiscard]] bool log_at(const Settings& settings, std::string_view wanted) {
@@ -316,16 +316,16 @@ cf::ListDir make_list_dir() {
 auto zerotrust_hooks_http(const Settings& settings) {
     // One client (one cookie jar) for the whole hooks object, like reqwest's Client: the email
     // flow's resend/submit round trips share it through the same std::function.
-    return aether::core::access_http(settings);
+    return hemera::core::access_http(settings);
 }
 
 // zerotrust::Hooks.code_prompt: the terminal read. The engine prints the banner and answers what
 // its stdin does; off a terminal there is nothing to read, which is what a pipe means in the Rust.
 auto zerotrust_hooks_code_prompt() {
-    return [](const aether::core::zerotrust::CodePromptAsk& ask)
-               -> aether::core::zerotrust::CodePromptReply {
-        using aether::core::zerotrust::CodePromptReply;
-        using aether::core::zerotrust::CodeRead;
+    return [](const hemera::core::zerotrust::CodePromptAsk& ask)
+               -> hemera::core::zerotrust::CodePromptReply {
+        using hemera::core::zerotrust::CodePromptReply;
+        using hemera::core::zerotrust::CodeRead;
         if (_isatty(_fileno(stdin)) == 0) return {}; // Closed: no code is coming
         out_raw(ask.banner);
         if (ask.interactive) {
@@ -354,8 +354,8 @@ auto zerotrust_hooks_code_prompt() {
     };
 }
 
-aether::core::zerotrust::Hooks make_team_hooks(const Settings& settings) {
-    aether::core::zerotrust::Hooks hooks;
+hemera::core::zerotrust::Hooks make_team_hooks(const Settings& settings) {
+    hemera::core::zerotrust::Hooks hooks;
     hooks.http = zerotrust_hooks_http(settings);
     hooks.code_prompt = zerotrust_hooks_code_prompt();
     hooks.interactive = _isatty(_fileno(stdin)) != 0;
@@ -374,8 +374,8 @@ aether::core::zerotrust::Hooks make_team_hooks(const Settings& settings) {
 // make_ech_transport is defined below; the account calls need it for --ech=auto lookups.
 cf::EchTransport make_ech_transport(const Settings& settings);
 
-[[nodiscard]] cf::Error to_flow_error(const aether::core::account::LiveError& error) {
-    using aether::core::account::LiveKind;
+[[nodiscard]] cf::Error to_flow_error(const hemera::core::account::LiveError& error) {
+    using hemera::core::account::LiveKind;
     switch (error.kind) {
         case LiveKind::IdentityRefused:
             return cf::Error::identity_refused(error.message);
@@ -390,7 +390,7 @@ cf::EchTransport make_ech_transport(const Settings& settings);
 }
 
 cf::AccountSeams make_account_seams(const Settings& settings) {
-    namespace live = aether::core::account;
+    namespace live = hemera::core::account;
     live::LiveEnv env;
     env.settings = &settings;
     env.ech_transport = make_ech_transport(settings);
@@ -409,7 +409,7 @@ cf::AccountSeams make_account_seams(const Settings& settings) {
         return *provisioned;
     };
     seams.provision_team = [env](std::string_view model, std::string_view locale,
-                                 const aether::core::zerotrust::TeamSettings& team)
+                                 const hemera::core::zerotrust::TeamSettings& team)
         -> std::expected<Identity, cf::Error> {
         auto provisioned = live::provision_team(model, locale, team, env);
         if (!provisioned.has_value()) return std::unexpected(to_flow_error(provisioned.error()));
@@ -419,7 +419,7 @@ cf::AccountSeams make_account_seams(const Settings& settings) {
         return live::refresh_profile(std::move(identity), env);
     };
     seams.ensure_masque_enrolled = [env](const Identity& identity)
-        -> std::expected<aether::core::account::MasqueEnrollment, cf::Error> {
+        -> std::expected<hemera::core::account::MasqueEnrollment, cf::Error> {
         auto enrolled = live::ensure_masque_enrolled(identity, env);
         if (!enrolled.has_value()) return std::unexpected(to_flow_error(enrolled.error()));
         return *enrolled;
@@ -431,7 +431,7 @@ cf::AccountSeams make_account_seams(const Settings& settings) {
         return {};
     };
     seams.set_gateway_proxy = [](std::string_view gateway_proxy) {
-        (void)aether::core::socks::set_gateway_proxy(gateway_proxy);
+        (void)hemera::core::socks::set_gateway_proxy(gateway_proxy);
     };
     return seams;
 }
@@ -439,7 +439,7 @@ cf::AccountSeams make_account_seams(const Settings& settings) {
 // NOT WIRED (7), now wired: dns::fetch_ech_config's resolver over a real socket -- UDP/TCP
 // straight at the resolver, DoH through https_runtime::send.
 cf::EchTransport make_ech_transport(const Settings& settings) {
-    return aether::core::default_ech_transport(settings);
+    return hemera::core::default_ech_transport(settings);
 }
 
 // THE WOVEN LIST (11-16), all executing:
@@ -498,18 +498,18 @@ void interruptible_sleep_ms(std::chrono::milliseconds delay, const Cancel& cance
 
 // ---- the live executor -------------------------------------------------------------------------
 
-namespace tr = aether::core::transport;
-namespace pr = aether::core::prober;
-namespace ns = aether::core::netstack;
-namespace netpacket = aether::core::netpacket;
-namespace sk = aether::core::socks;
-namespace up = aether::core::upstream;
-namespace rt = aether::core::routing;
-namespace quic = aether::core::quic;
-namespace carrier_h2 = aether::core::masque_h2;
-namespace sysprofile = aether::core::sysprofile;
+namespace tr = hemera::core::transport;
+namespace pr = hemera::core::prober;
+namespace ns = hemera::core::netstack;
+namespace netpacket = hemera::core::netpacket;
+namespace sk = hemera::core::socks;
+namespace up = hemera::core::upstream;
+namespace rt = hemera::core::routing;
+namespace quic = hemera::core::quic;
+namespace carrier_h2 = hemera::core::masque_h2;
+namespace sysprofile = hemera::core::sysprofile;
 
-using aether::core::IpAddress;
+using hemera::core::IpAddress;
 
 // What a FlowRequest does not name: which identity the call runs on, which ECH key the session
 // offers, and where the proxy listens. lib.rs keeps both in the frame it is running, so the choice
@@ -571,7 +571,7 @@ struct ExecContext {
 
 // transport's Observer hands over everything quic.rs writes with log::info!, log_or_debug (info for
 // a tunnel, which is what establish_masque always builds: quic.quiet is false) and log::debug!/trace!.
-// env_logger's filter is info unless AETHER_LOG_LEVEL says otherwise (lib.rs:82-91), so the debug and
+// env_logger's filter is info unless HEMERA_LOG_LEVEL says otherwise (lib.rs:82-91), so the debug and
 // trace texts must not reach the pipe the GUI reads: the texts quic.rs prints at info or warn are
 // listed, and every other note is dropped.
 [[nodiscard]] std::optional<Level> note_level(std::string_view line) {
@@ -682,7 +682,7 @@ struct CheckOutcome {
 [[nodiscard]] std::expected<up::DetourGuard, std::string> attach_upstream(const Settings& settings,
                                                                          const SocketAddr& local,
                                                                          const SocketAddr& peer) {
-    const auto raw = settings.get("AETHER_UPSTREAM");
+    const auto raw = settings.get("HEMERA_UPSTREAM");
     if (!raw) return up::DetourGuard{};
     auto proxy = up::Upstream::parse(*raw);
     if (!proxy) return up::DetourGuard{}; // ignored, as from_value would ignore it
@@ -746,7 +746,7 @@ struct CheckOutcome {
         }
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
-            // quic.rs:864-866: the one error a verify returns on its own budget, in AetherError's
+            // quic.rs:864-866: the one error a verify returns on its own budget, in HemeraError's
             // words. The caller only reads `ok`, which stays false.
             outcome.error = "other: verify timeout";
             return outcome;
@@ -839,8 +839,8 @@ struct MasquePing {
 // tunnelping.rs::wg_http_ping_established: the same probe through a verified WireGuard session
 // on a throwaway Hop. The session is consumed: the tunnel runs on it until the probe answers.
 [[nodiscard]] std::expected<std::chrono::milliseconds, std::string> wg_http_ping(
-    ::aether::core::wg_live::LiveSession session,
-    const aether::core::aethernoize::AetherNoizeConfig& noise, const Settings& settings,
+    ::hemera::core::wg_live::LiveSession session,
+    const hemera::core::hemeranoize::HemeraNoizeConfig& noise, const Settings& settings,
     const Identity& identity, std::chrono::milliseconds timeout, const Cancel& cancel);
 
 class Hop;
@@ -848,15 +848,15 @@ class TunnelObserver;
 
 // verify_endpoint_keep_session with the engine's own seams, defined with the tunnel runtime
 // below; the hunts need it first for the ironclad arm.
-[[nodiscard]] std::expected<::aether::core::wg_live::LiveSession, std::string>
+[[nodiscard]] std::expected<::hemera::core::wg_live::LiveSession, std::string>
 wg_verify_keep_session(const Identity& identity, const SocketAddr& peer,
-                       const ::aether::core::aethernoize::AetherNoizeConfig& noise,
+                       const ::hemera::core::hemeranoize::HemeraNoizeConfig& noise,
                        std::chrono::milliseconds timeout, std::uint16_t keepalive,
                        const Settings& settings, const Cancel& cancel);
 
 // Shared WireGuard seams + establish_masque's Hop, both defined below and needed by the
 // ironclad pings before their definitions.
-[[nodiscard]] ::aether::core::wg_live::RunEnv wg_run_env(const Settings& settings,
+[[nodiscard]] ::hemera::core::wg_live::RunEnv wg_run_env(const Settings& settings,
                                                         const Cancel& cancel);
 [[nodiscard]] std::expected<cf::StartupVerdict, std::string> start_masque_hop(
     Hop& hop, const cf::MasqueHopParams& params, const Settings& settings,
@@ -1053,16 +1053,16 @@ void hunt_masque(const ExecContext& ctx, const FlowRequest& request, FlowReply& 
 // data-plane confirmation wg_live runs inside, and answer ok/rtt. A failed check is never an
 // error to the flow -- the caller only reads `ok`, like lib.rs:1299 does for MASQUE.
 [[nodiscard]] CheckOutcome verify_wg(const Settings& settings, const SocketAddr& peer,
-                                     const ::aether::core::aethernoize::AetherNoizeConfig& noise,
+                                     const ::hemera::core::hemeranoize::HemeraNoizeConfig& noise,
                                      std::chrono::milliseconds timeout,
                                      std::optional<std::uint16_t> keepalive,
-                                     const ::aether::core::Identity& identity,
+                                     const ::hemera::core::Identity& identity,
                                      const Cancel& cancel) {
-    namespace wgl = ::aether::core::wg_live;
-    namespace tr = ::aether::core::transport;
-    namespace up = ::aether::core::upstream;
+    namespace wgl = ::hemera::core::wg_live;
+    namespace tr = ::hemera::core::transport;
+    namespace up = ::hemera::core::upstream;
     CheckOutcome outcome;
-    const auto local = aether::core::parse_address(identity.ipv4);
+    const auto local = hemera::core::parse_address(identity.ipv4);
     if (!local.has_value() || !local->v4) {
         outcome.error = "other: invalid ipv4";
         return outcome;
@@ -1123,7 +1123,7 @@ void hunt_masque(const ExecContext& ctx, const FlowRequest& request, FlowReply& 
 // bounded-concurrency probe stream, and the budget/quiet-after-first/target state machine. Each
 // probe is verify_one_wg's non-ironclad arm -- verify_endpoint_keep_session on its own socket.
 void hunt_wg(const ExecContext& ctx, const FlowRequest& request, FlowReply& reply,
-             const ::aether::core::aethernoize::AetherNoizeConfig& noise, std::size_t want) {
+             const ::hemera::core::hemeranoize::HemeraNoizeConfig& noise, std::size_t want) {
     const Settings& settings = ctx.settings;
     const Cancel& cancel = ctx.cancel;
 
@@ -1143,26 +1143,26 @@ void hunt_wg(const ExecContext& ctx, const FlowRequest& request, FlowReply& repl
     // the zt prefixes, the way the MASQUE scan prefers its own zt CIDRs.
     const bool zt = pr::zero_trust_mode(settings);
     pr::WgCandidateSources sources;
-    sources.anchors_v4.assign(std::begin(aether::core::wireguard::wg_seeds_v4),
-                              std::end(aether::core::wireguard::wg_seeds_v4));
-    sources.anchors_v6.assign(std::begin(aether::core::wireguard::wg_seeds_v6),
-                              std::end(aether::core::wireguard::wg_seeds_v6));
+    sources.anchors_v4.assign(std::begin(hemera::core::wireguard::wg_seeds_v4),
+                              std::end(hemera::core::wireguard::wg_seeds_v4));
+    sources.anchors_v6.assign(std::begin(hemera::core::wireguard::wg_seeds_v6),
+                              std::end(hemera::core::wireguard::wg_seeds_v6));
     if (zt) {
-        sources.prefixes_v4.assign(std::begin(aether::core::wireguard::wg_zt_prefixes_v4),
-                                   std::end(aether::core::wireguard::wg_zt_prefixes_v4));
-        sources.prefixes_v6.assign(std::begin(aether::core::wireguard::wg_zt_prefixes_v6),
-                                   std::end(aether::core::wireguard::wg_zt_prefixes_v6));
+        sources.prefixes_v4.assign(std::begin(hemera::core::wireguard::wg_zt_prefixes_v4),
+                                   std::end(hemera::core::wireguard::wg_zt_prefixes_v4));
+        sources.prefixes_v6.assign(std::begin(hemera::core::wireguard::wg_zt_prefixes_v6),
+                                   std::end(hemera::core::wireguard::wg_zt_prefixes_v6));
     } else {
-        sources.prefixes_v4.assign(std::begin(aether::core::wireguard::wg_prefixes_v4),
-                                   std::end(aether::core::wireguard::wg_prefixes_v4));
-        sources.prefixes_v6.assign(std::begin(aether::core::wireguard::wg_prefixes_v6),
-                                   std::end(aether::core::wireguard::wg_prefixes_v6));
+        sources.prefixes_v4.assign(std::begin(hemera::core::wireguard::wg_prefixes_v4),
+                                   std::end(hemera::core::wireguard::wg_prefixes_v4));
+        sources.prefixes_v6.assign(std::begin(hemera::core::wireguard::wg_prefixes_v6),
+                                   std::end(hemera::core::wireguard::wg_prefixes_v6));
     }
-    sources.embed_v4.assign(std::begin(aether::core::wireguard::wg_prefixes_v4),
-                            std::end(aether::core::wireguard::wg_prefixes_v4));
+    sources.embed_v4.assign(std::begin(hemera::core::wireguard::wg_prefixes_v4),
+                            std::end(hemera::core::wireguard::wg_prefixes_v4));
 
-    std::vector<std::uint16_t> ports(std::begin(aether::core::wireguard::wg_ports),
-                                     std::end(aether::core::wireguard::wg_ports));
+    std::vector<std::uint16_t> ports(std::begin(hemera::core::wireguard::wg_ports),
+                                     std::end(hemera::core::wireguard::wg_ports));
     std::vector<pr::Candidate> excluded;
     excluded.reserve(request.excluded.size());
     for (const SocketAddr& peer : request.excluded) excluded.emplace_back(peer.ip, peer.port);
@@ -1202,7 +1202,7 @@ void hunt_wg(const ExecContext& ctx, const FlowRequest& request, FlowReply& repl
             if (mode == pr::WgScanMode::Ironclad) {
                 auto kept = wg_verify_keep_session(
                     ctx.primary, peer, noise, st.per_probe_timeout,
-                    aether::core::wireguard::default_persistent_keepalive, settings, cancel);
+                    hemera::core::wireguard::default_persistent_keepalive, settings, cancel);
                 if (!kept.has_value()) continue; // a log::trace!, under the filter
                 auto proven = wg_http_ping(std::move(*kept), noise, settings, ctx.primary,
                                            pr::WG_IRONCLAD_TCPING_TIMEOUT, cancel);
@@ -1292,9 +1292,9 @@ void hunt_wg(const ExecContext& ctx, const FlowRequest& request, FlowReply& repl
 // listeners below are this file's own. This section only supplies what tokio gave them -- threads, one mutex around the
 // stack the Rust held in an Arc, the channel pairs Rust's mpsc::channel calls built, and the socket
 // the pump owns.
-namespace eg = aether::core::egress;
-namespace wgl = aether::core::wg_live;
-namespace xloc = aether::core::exitloc;
+namespace eg = hemera::core::egress;
+namespace wgl = hemera::core::wg_live;
+namespace xloc = hemera::core::exitloc;
 
 // The queue between the packet engine and a carrier: netstack's flush_tx writes its end and the
 // carrier's outbound_rx reads the other. The Rust's `mpsc::channel(sysprofile::channel_capacity())`.
@@ -2045,7 +2045,7 @@ void enable_keepalive(eg::Socket& socket, const Settings& settings) {
                     finish - std::chrono::steady_clock::now());
                 std::optional<ns::UdpInbound> arrived = udp.recv(stop, left);
                 if (!arrived.has_value()) break;
-                if (!aether::core::response_matches(arrived->data, id, name, qtype)) continue;
+                if (!hemera::core::response_matches(arrived->data, id, name, qtype)) continue;
                 if (const auto ip = sk::parse_dns_answer(arrived->data, qtype)) return ip;
                 break; // the Rust takes no record / no such name as "try the next qtype"
             }
@@ -2060,7 +2060,7 @@ void enable_keepalive(eg::Socket& socket, const Settings& settings) {
 [[nodiscard]] std::optional<IpAddress> target_address(Hop& hop, const ProxyOptions& options,
                                                       const sk::Target& target, eg::Stop& stop) {
     if (target.is_ip()) return target.ip();
-    if (const auto literal = aether::core::parse_address(target.domain())) return *literal;
+    if (const auto literal = hemera::core::parse_address(target.domain())) return *literal;
     return tunnel_resolve(hop, options.settings, target.domain(), stop);
 }
 
@@ -2425,7 +2425,7 @@ void serve_socks_client(Hop& hop, ProxyOptions& options, eg::Stop& run_stop, SOC
     if (request->target.is_ip() && sk::sniff_enabled(settings) && options.routes.has_domain_rules()) {
         if (!write_all(client, sk::build_reply(sk::REP_OK), stop)) return;
         replied = true;
-        std::vector<std::uint8_t> peek(aether::core::PEEK_BUDGET);
+        std::vector<std::uint8_t> peek(hemera::core::PEEK_BUDGET);
         const auto attempt = client.read(peek.data(), peek.size(),
                                          std::chrono::milliseconds(sk::sniff_window_ms(settings)),
                                          stop);
@@ -2446,7 +2446,7 @@ void serve_socks_client(Hop& hop, ProxyOptions& options, eg::Stop& run_stop, SOC
                                        " sent nothing to read a name from");
             }
         } else {
-            named = aether::core::sniff_hostname(std::span<const std::uint8_t>(head));
+            named = hemera::core::sniff_hostname(std::span<const std::uint8_t>(head));
             if (named.has_value() && log_at(settings, "debug")) {
                 emit(Level::Debug, "[route] " + request->target.text() + ":" +
                                        std::to_string(request->port) + " announced itself as " +
@@ -2671,7 +2671,7 @@ void serve_udp_associate(Hop& hop, ProxyOptions& options, eg::Stop& stop, eg::So
                 if (framed->target.is_ip()) {
                     outside = SocketAddr{framed->target.ip(), framed->port};
                 } else {
-                    auto found = aether::core::parse_address(framed->target.domain());
+                    auto found = hemera::core::parse_address(framed->target.domain());
                     if (found.has_value()) outside = SocketAddr{*found, framed->port};
                     else {
                         auto named = eg::lookup(framed->target.domain(), framed->port);
@@ -2850,7 +2850,7 @@ stack_open_through_gateway(Hop& hop, const sk::Endpoint& proxy, std::string_view
                 std::string text = utf8_lossy(std::span<const std::uint8_t>(head.data(), *at));
                 const std::size_t line_end = text.find('\n');
                 if (line_end != std::string::npos) text.resize(line_end);
-                text = aether::core::trim(text);
+                text = hemera::core::trim(text);
                 return std::unexpected("gateway refused " + std::string(authority) + ":" +
                                        std::to_string(port) + " (" +
                                        (text.empty() ? std::string("no status") : text) + ")");
@@ -2971,7 +2971,7 @@ void serve_http_client(Hop& hop, ProxyOptions& options, eg::Stop& run_stop, SOCK
     }
 
     const sk::Target target = [&, authority = std::string(request->authority)] {
-        if (const auto ip = aether::core::parse_address(authority)) {
+        if (const auto ip = hemera::core::parse_address(authority)) {
             return sk::Target::from_ip(*ip);
         }
         return sk::Target::from_domain(authority);
@@ -3252,7 +3252,7 @@ std::expected<std::chrono::milliseconds, std::string> masque_http_ping(
     notes.erase(std::remove_if(notes.begin(), notes.end(),
                                [](const Note& note) {
                                    return note.text.starts_with("[+] obfuscation profile: ") ||
-                                          note.text.starts_with("[+] aethernoize profile: ");
+                                          note.text.starts_with("[+] hemeranoize profile: ");
                                }),
                 notes.end());
     emit_all(notes);
@@ -3280,8 +3280,8 @@ std::expected<std::chrono::milliseconds, std::string> masque_http_ping(
 }
 
 std::expected<std::chrono::milliseconds, std::string> wg_http_ping(
-    ::aether::core::wg_live::LiveSession session,
-    const aether::core::aethernoize::AetherNoizeConfig& noise, const Settings& settings,
+    ::hemera::core::wg_live::LiveSession session,
+    const hemera::core::hemeranoize::HemeraNoizeConfig& noise, const Settings& settings,
     const Identity& identity, std::chrono::milliseconds timeout, const Cancel& cancel) {
     // tunnelping.rs::wg_http_ping_established: the verified session carries a throwaway Hop (on
     // the identity's IPv4 and the loopback IPv6, as the Rust's WgPingParams does) while the
@@ -3301,7 +3301,7 @@ std::expected<std::chrono::milliseconds, std::string> wg_http_ping(
     plane.inbound = hop.inbound_sink();
     plane.outbound = &outbound;
     const IpAddress local =
-        aether::core::parse_address(identity.ipv4).value_or(IpAddress{});
+        hemera::core::parse_address(identity.ipv4).value_or(IpAddress{});
     wgl::Tunnel tunnel =
         wgl::tunnel_from_session(std::move(session), noise, plane, wg_run_env(settings, cancel),
                                  local);
@@ -3449,7 +3449,7 @@ void exit_watch(Hop& hop, const Settings& settings, xloc::Policy policy, const C
 // display text, which is what every log line and reply interpolates.
 [[nodiscard]] std::expected<wgl::LiveSession, std::string> wg_verify_keep_session(
     const Identity& identity, const SocketAddr& peer,
-    const ::aether::core::aethernoize::AetherNoizeConfig& noise,
+    const ::hemera::core::hemeranoize::HemeraNoizeConfig& noise,
     std::chrono::milliseconds timeout, std::uint16_t keepalive, const Settings& settings,
     const Cancel& cancel) {
     wgl::VerifyParams params;
@@ -3457,7 +3457,7 @@ void exit_watch(Hop& hop, const Settings& settings, xloc::Policy policy, const C
     params.private_key = identity.wg_private_key;
     params.peer_public = identity.wg_peer_public_key;
     params.client_id = identity.client_id;
-    if (const auto local = aether::core::parse_address(identity.ipv4);
+    if (const auto local = hemera::core::parse_address(identity.ipv4);
         local.has_value() && local->v4) {
         params.local_ipv4 = *local;
     } else {
@@ -3820,7 +3820,7 @@ private:
     const auto timeout = std::chrono::duration_cast<std::chrono::milliseconds>(request.timeout);
     auto session = wg_verify_keep_session(
         ctx.primary, peer, request.noise, timeout,
-        request.keepalive.value_or(aether::core::wireguard::default_persistent_keepalive),
+        request.keepalive.value_or(hemera::core::wireguard::default_persistent_keepalive),
         settings, cancel);
     if (!session.has_value()) {
         reply = FlowReply{};
@@ -3851,7 +3851,7 @@ private:
     plane.inbound = hop.inbound_sink();
     plane.outbound = &outbound;
     wgl::RunEnv run_env = wg_run_env(settings, cancel);
-    const IpAddress wg_local = aether::core::parse_address(ctx.primary.ipv4).value_or(IpAddress{});
+    const IpAddress wg_local = hemera::core::parse_address(ctx.primary.ipv4).value_or(IpAddress{});
     wgl::Tunnel tunnel =
         wgl::tunnel_from_session(std::move(*session), request.noise, plane, run_env, wg_local);
 
@@ -4390,7 +4390,7 @@ private:
     // gool_inner_identity: the file when it is there, else a registration through the tunnel.
     Identity inner_identity;
     {
-        auto loaded = ::aether::core::load_identity(std::string(inner_path));
+        auto loaded = ::hemera::core::load_identity(std::string(inner_path));
         if (!loaded.has_value()) {
             reply = FlowReply{};
             reply.ok = false;
@@ -4464,16 +4464,16 @@ private:
             });
             emit(Level::Info, std::string(cf::GOOL_REGISTERING_LINE));
             Settings through_settings = settings;
-            through_settings.set("AETHER_UPSTREAM", "socks5h://" + through->to_string());
-            aether::core::account::LiveEnv live_env;
+            through_settings.set("HEMERA_UPSTREAM", "socks5h://" + through->to_string());
+            hemera::core::account::LiveEnv live_env;
             live_env.settings = &through_settings;
             live_env.ech_transport = make_ech_transport(through_settings);
             live_env.team_hooks = make_team_hooks(through_settings);
             live_env.info = [](const std::string& line) { emit(Level::Info, line); };
             live_env.warn = [](const std::string& line) { emit(Level::Warn, line); };
             live_env.debug = [](const std::string& line) { emit(Level::Debug, line); };
-            auto registered = aether::core::account::provision_wg(
-                ::aether::core::DEFAULT_MODEL, ::aether::core::DEFAULT_LOCALE, std::nullopt,
+            auto registered = hemera::core::account::provision_wg(
+                ::hemera::core::DEFAULT_MODEL, ::hemera::core::DEFAULT_LOCALE, std::nullopt,
                 live_env);
             temp_stop.store(true);
             if (temp.joinable()) temp.join();
@@ -4488,14 +4488,14 @@ private:
                 return Exec::Ran;
             }
             inner_identity = std::move(*registered);
-            if (auto enabled = aether::core::account::enable_warp(inner_identity.device_id,
+            if (auto enabled = hemera::core::account::enable_warp(inner_identity.device_id,
                                                                   inner_identity.access_token,
                                                                   live_env);
                 !enabled.has_value()) {
                 emit(Level::Warn, cf::gool_enable_warp_warn(
                                       to_flow_error(enabled.error()).display()));
             }
-            if (auto saved = ::aether::core::save_identity(std::string(inner_path), inner_identity);
+            if (auto saved = ::hemera::core::save_identity(std::string(inner_path), inner_identity);
                 !saved.has_value()) {
                 reply = FlowReply{};
                 reply.ok = false;
@@ -4578,7 +4578,7 @@ private:
     if (cf::gool_remembers(settings, inner_identity, inner_peer.ip)) {
         Identity remembered = inner_identity;
         remembered.assigned_endpoint = sk::address_text(inner_peer.ip);
-        if (auto saved = ::aether::core::save_identity(std::string(inner_path), remembered);
+        if (auto saved = ::hemera::core::save_identity(std::string(inner_path), remembered);
             saved.has_value()) {
             emit(Level::Info, cf::gool_remember_line(inner_peer.ip));
         }
@@ -4749,9 +4749,9 @@ private:
 // printed. Unreachable for every Kind the flow knows today (THE WOVEN LIST above); kept for any
 // future Kind the flow learns before the engine does.
 [[nodiscard]] int unwired(const FlowRequest& request) {
-    emit(Level::Error, "[-] aether-core: tunnel executor not wired for FlowRequest::Kind::" +
+    emit(Level::Error, "[-] hemera-core: tunnel executor not wired for FlowRequest::Kind::" +
                            request_kind_name(request.kind) +
-                           " -- see core/src/aether_cli.cpp THE WOVEN LIST");
+                           " -- see core/src/hemera_cli.cpp THE WOVEN LIST");
     return 1;
 }
 
@@ -4796,7 +4796,7 @@ template <class Flow>
 
 // ---- reporting a fatal error --------------------------------------------------------------------
 
-// main.rs returns run()'s Result, so Rust's default Termination writes `Error: {e:?}` (the AetherError
+// main.rs returns run()'s Result, so Rust's default Termination writes `Error: {e:?}` (the HemeraError
 // Debug: Variant("message")) to stderr and exits 1. error.rs's #[derive(Error, Debug)] gives string
 // variants the shape `Variant("text")` and the unit variants just `Variant`. Io/Quic/H3 wrap a foreign
 // error whose Debug this port cannot reproduce, so their payload is shown as its own message.
@@ -4963,7 +4963,7 @@ template <class Flow>
                                        std::move(*primary),
                                        std::move(*secondary),
                                        started.listen,
-                                       aether::core::prober::default_random(),
+                                       hemera::core::prober::default_random(),
                                        std::move(*ech)};
             cf::MimFlow flow(std::move(config));
             const ExecContext ctx{settings, flow.config().primary, &flow.config().secondary,
@@ -4986,7 +4986,7 @@ template <class Flow>
 void crash_print_rva(const char* what, const void* addr) {
     const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
-        std::fprintf(stderr, "[FATAL] aether %s at %p (no module list)\n", what, addr);
+        std::fprintf(stderr, "[FATAL] hemera %s at %p (no module list)\n", what, addr);
         std::fflush(stderr);
         return;
     }
@@ -4997,7 +4997,7 @@ void crash_print_rva(const char* what, const void* addr) {
         do {
             const auto base = reinterpret_cast<std::uintptr_t>(entry.modBaseAddr);
             if (here >= base && here < base + entry.modBaseSize) {
-                std::fprintf(stderr, "[FATAL] aether %s at %ls+0x%zx\n", what, entry.szModule,
+                std::fprintf(stderr, "[FATAL] hemera %s at %ls+0x%zx\n", what, entry.szModule,
                              here - base);
                 std::fflush(stderr);
                 CloseHandle(snapshot);
@@ -5006,13 +5006,13 @@ void crash_print_rva(const char* what, const void* addr) {
         } while (Module32Next(snapshot, &entry) != FALSE);
     }
     CloseHandle(snapshot);
-    std::fprintf(stderr, "[FATAL] aether %s at %p (outside all modules)\n", what, addr);
+    std::fprintf(stderr, "[FATAL] hemera %s at %p (outside all modules)\n", what, addr);
     std::fflush(stderr);
 }
 
 LONG WINAPI crash_filter(EXCEPTION_POINTERS* info) {
     const DWORD code = info->ExceptionRecord->ExceptionCode;
-    std::fprintf(stderr, "[FATAL] aether crashed: exception 0x%08lx\n",
+    std::fprintf(stderr, "[FATAL] hemera crashed: exception 0x%08lx\n",
                  static_cast<unsigned long>(code));
     std::fflush(stderr);
     crash_print_rva("fault", info->ExceptionRecord->ExceptionAddress);
@@ -5027,7 +5027,7 @@ LONG WINAPI crash_filter(EXCEPTION_POINTERS* info) {
 }
 
 void crash_terminated() {
-    std::fprintf(stderr, "[FATAL] aether terminated: uncaught exception\n");
+    std::fprintf(stderr, "[FATAL] hemera terminated: uncaught exception\n");
     std::fflush(stderr);
     void* frames[16]{};
     const WORD taken = CaptureStackBackTrace(0, 16, frames, nullptr);
@@ -5045,7 +5045,7 @@ void install_crash_report() {
     // reports: execution continues the search, so the exit code stays the exception's own.
     AddVectoredExceptionHandler(1, [](EXCEPTION_POINTERS* info) -> LONG {
         const DWORD code = info->ExceptionRecord->ExceptionCode;
-        std::fprintf(stderr, "[FATAL] aether crashed: exception 0x%08lx\n",
+        std::fprintf(stderr, "[FATAL] hemera crashed: exception 0x%08lx\n",
                      static_cast<unsigned long>(code));
         std::fflush(stderr);
         crash_print_rva("fault", info->ExceptionRecord->ExceptionAddress);
@@ -5082,7 +5082,7 @@ struct Winsock {
 
 } // namespace
 
-namespace aether::core {
+namespace hemera::core {
 
 int run_inproc(const std::vector<std::string>& args,
                const std::map<std::string, std::string>& settings_env,
@@ -5108,20 +5108,20 @@ int run_inproc(const std::vector<std::string>& args,
     hooks.bind_listener = make_bind_listener();
     hooks.install_netstack_guard = [] {};
     hooks.spawn_stats_reporter = [&settings, &cancel, callbacks] {
-        if (!::aether::core::enabled()) return;
-        const auto every = ::aether::core::report_interval(settings);
+        if (!::hemera::core::enabled()) return;
+        const auto every = ::hemera::core::report_interval(settings);
         std::thread([every, settings, &cancel, callbacks] {
             while (!cancel.is_cancelled()) {
                 interruptible_sleep(every, cancel);
                 if (cancel.is_cancelled()) break;
-                const auto counters = ::aether::core::snapshot();
+                const auto counters = ::hemera::core::snapshot();
                 if (callbacks.on_stats) {
                     callbacks.on_stats(counters.up, counters.down, counters.uptime.count());
                 }
-                emit(Level::Info, "[=] up " + ::aether::core::format_bytes(counters.up) +
-                                      " down " + ::aether::core::format_bytes(counters.down) +
+                emit(Level::Info, "[=] up " + ::hemera::core::format_bytes(counters.up) +
+                                      " down " + ::hemera::core::format_bytes(counters.down) +
                                       " uptime " +
-                                      ::aether::core::format_uptime(counters.uptime));
+                                      ::hemera::core::format_uptime(counters.uptime));
             }
         }).detach();
     };
@@ -5138,7 +5138,7 @@ int run_inproc(const std::vector<std::string>& args,
     }
 
     if (started->kind == cf::Startup::Kind::Exit) {
-        if (started->cli == CliOutcome::Version) out_line("aether " + std::string(cf::CORE_VERSION));
+        if (started->cli == CliOutcome::Version) out_line("hemera " + std::string(cf::CORE_VERSION));
         else if (started->cli == CliOutcome::Help) out_raw(started->banner);
         return 0;
     }
@@ -5166,4 +5166,4 @@ int run_inproc(const std::vector<std::string>& args,
     return res;
 }
 
-} // namespace aether::core
+} // namespace hemera::core

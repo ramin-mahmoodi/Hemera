@@ -6,7 +6,7 @@
 #include <cstring>
 #include <limits>
 
-namespace aether::core {
+namespace hemera::core {
 namespace {
 
 std::string lowered(std::string_view text) {
@@ -378,4 +378,4 @@ bool chose_http2(std::string_view selected) { return selected == "h2"; }
 
 } // namespace https
 
-} // namespace aether::core
+} // namespace hemera::core

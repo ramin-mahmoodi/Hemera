@@ -6,9 +6,9 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core {
+namespace hemera::core {
 
-// The core's settings, keyed exactly like the AETHER_* environment variables the Rust core
+// The core's settings, keyed exactly like the HEMERA_* environment variables the Rust core
 // reads. Flags win over variables because apply_cli() writes into a map that already holds
 // whatever the environment provided.
 struct Settings {
@@ -36,16 +36,16 @@ enum class CliOutcome {
     Failure, // unknown option, or a flag whose value is missing
 };
 
-// Port of aether/src/cli.rs: a flag table that writes settings, nothing else. The failure
+// Port of hemera/src/cli.rs: a flag table that writes settings, nothing else. The failure
 // reason lands in `error` and already carries the usage block, the way the Rust core does.
 CliOutcome apply_cli(const std::vector<std::string>& args, Settings& settings, std::string& error);
 
-// The text `aether --help` prints. The usage block of aether/src/cli.rs, minus its tor and
+// The text `hemera --help` prints. The usage block of hemera/src/cli.rs, minus its tor and
 // psiphon sections, so a help screen from this core can be diffed against the shipped binary.
 [[nodiscard]] const char* usage_text();
 
-// Every AETHER_* name the flag table knows, read off the process environment. Flags then layer
+// Every HEMERA_* name the flag table knows, read off the process environment. Flags then layer
 // on top through apply_cli(), which is why a flag wins over a variable.
 [[nodiscard]] Settings settings_from_environment();
 
-} // namespace aether::core
+} // namespace hemera::core

@@ -16,12 +16,12 @@
 
 #include <condition_variable>
 
-namespace aether::core::wg_live {
+namespace hemera::core::wg_live {
 
 namespace {
 
 // The lines this path writes are Rust's, word for word, with Rust's own levels. wireguard.rs has no
-// info! inside verify_endpoint and no trace! inside the aethernoize calls, so nothing here invents
+// info! inside verify_endpoint and no trace! inside the hemeranoize calls, so nothing here invents
 // one; a missing sink means the caller does not want to hear about it, which is what the port does
 // everywhere else (noize.hpp:77-81).
 void emit(const Note& note, Level level, const std::string& line) {
@@ -120,7 +120,7 @@ std::string debug_tunn_result(const wireguard::TunnResult& res) {
     return "Done";
 }
 
-// The io::Error half of Rust's `?` on a socket call: AetherError::Io renders as "io: {e}", and the
+// The io::Error half of Rust's `?` on a socket call: HemeraError::Io renders as "io: {e}", and the
 // text {e} carries is the one UdpIo already produced ("recv: socket error 10054" and friends --
 // transport.cpp:164-167). Nothing is re-worded here, so a line that interpolates {e} on this path
 // prints the same bytes the port prints everywhere else for the same failure.
@@ -273,7 +273,7 @@ std::expected<OpenedSocket, coreflow::Error> open_socket(const SocketAddr& peer,
     // memoized configured() read (https_runtime already made it), so a second announce here
     // would print the line twice per run.
     const SocketAddr local = opened.sock.local();
-    if (const auto raw = settings.get("AETHER_UPSTREAM")) {
+    if (const auto raw = settings.get("HEMERA_UPSTREAM")) {
         if (auto proxy = upstream::Upstream::parse(*raw)) {
             auto attached =
                 upstream::attach_detour(*proxy, local, peer, local.ip.v4);
@@ -320,7 +320,7 @@ std::expected<void, coreflow::Error> send_dataplane_probe(
             return {};
         }
         case wireguard::TunnResult::Kind::Err:
-            // :444-446, AetherError::Other(format!("dataplane encap: {e:?}")).
+            // :444-446, HemeraError::Other(format!("dataplane encap: {e:?}")).
             return std::unexpected(coreflow::Error::other("dataplane encap: " +
                                                           debug_noise_error(result.error)));
         default:
@@ -432,7 +432,7 @@ std::expected<LiveSession, coreflow::Error> drive_verify(const VerifyParams& par
                                                         std::optional<upstream::DetourGuard> detour = {}) {
     // :560. std::env::var(..).is_err(): the mere presence of the name, even empty, disables it.
     const bool data_check =
-        params.settings == nullptr || params.settings->find("AETHER_WG_NO_DATA_CHECK") == nullptr;
+        params.settings == nullptr || params.settings->find("HEMERA_WG_NO_DATA_CHECK") == nullptr;
     // :561-566.
     emit(env.note, Level::Trace,
          "[wg] verify " + params.peer.to_string() + " obf=" +
@@ -448,7 +448,7 @@ std::expected<LiveSession, coreflow::Error> drive_verify(const VerifyParams& par
     // arrives behind the noise. This is wireguard.cpp:2231's pre_handshake_obfuscation, which is
     // the :573 call site and carries the is_enabled() guard the Rust writes.
     // The socket this hands is aimed at `target`, which is what the connect did; `peer` travels as
-    // the Rust's `_peer` does (aethernoize.hpp:77-86).
+    // the Rust's `_peer` does (hemeranoize.hpp:77-86).
     wireguard::pre_handshake_obfuscation(*sock.io, sock.target, params.noise);
 
     // :577-587. keepalive.unwrap_or(25), the same default wireguard.hpp:176 publishes.
@@ -740,7 +740,7 @@ Tunnel tunnel_from_config(TunnelConfig cfg, WgSocket&& sock, std::unique_ptr<tra
     return tunnel;
 }
 
-Tunnel tunnel_from_session(LiveSession&& session, const aethernoize::AetherNoizeConfig& noise,
+Tunnel tunnel_from_session(LiveSession&& session, const hemeranoize::HemeraNoizeConfig& noise,
                            DataPlane plane, RunEnv env, const IpAddress& local_ipv4) {
     // WgTunnel::from_established (:135-152): the session's Tunn and socket carry on, and the
     // curtain latch starts true because that socket has already been behind the noise.
@@ -765,7 +765,7 @@ std::expected<void, coreflow::Error> run_tunnel(Tunnel& tunnel, const Cancel& ca
     const RunEnv& env = tunnel.env;
     const SocketAddr peer = tunnel.cfg.peer;
     const wireguard::ClientId client_id = tunnel.cfg.client_id;
-    const aethernoize::AetherNoizeConfig noise = tunnel.cfg.noise;
+    const hemeranoize::HemeraNoizeConfig noise = tunnel.cfg.noise;
 
     RunShared shared;
     std::mutex tunn_mutex;
@@ -982,4 +982,4 @@ std::expected<void, coreflow::Error> run_tunnel(Tunnel& tunnel, const Cancel& ca
     return std::unexpected(*shared.error);
 }
 
-} // namespace aether::core::wg_live
+} // namespace hemera::core::wg_live

@@ -14,14 +14,14 @@ endif()
 
 include_directories(include)
 
-# Core engine, the C++ port of the Rust aether crate (AGPL-3.0-only, same as the original).
+# Core engine, the C++ port of the Rust hemera crate (AGPL-3.0-only, same as the original).
 # Currently the account store and the command line table; the tunnel engine lands here too.
-add_library(aether_core STATIC
+add_library(hemera_core STATIC
     core/src/account.cpp
     core/src/account_live.cpp
     core/src/access_http.cpp
     core/src/ech_transport.cpp
-    core/src/aethernoize.cpp
+    core/src/hemeranoize.cpp
     core/src/coreflow.cpp
     core/src/encoding.cpp
     core/src/dns.cpp
@@ -34,7 +34,7 @@ add_library(aether_core STATIC
     # The two carrier runtimes, both compiling clean as standalone TUs and both needed for the
     # product to have a live --h2 and a live WireGuard path at all: masque_h2_runtime.cpp is the
     # socket/nghttp2 half masque_h2.hpp declares, wg_live.cpp is wireguard.rs's live handshake and
-    # the four aethernoize obfuscation sites.
+    # the four hemeranoize obfuscation sites.
     core/src/masque_h2_runtime.cpp
     core/src/wg_live.cpp
     # https_runtime.cpp is https::send: the socket half -- dial, the SOCKS detour, the fingerprinted
@@ -62,15 +62,15 @@ add_library(aether_core STATIC
     core/src/usage.cpp
     core/src/wireguard.cpp
     core/src/zerotrust.cpp
-    core/src/aether_cli.cpp
+    core/src/hemera_cli.cpp
 )
-target_include_directories(aether_core PUBLIC core/src)
+target_include_directories(hemera_core PUBLIC core/src)
 
 # BoringSSL is built from core/vendor/boringssl by core/vendor/build-boringssl.bat, always with
 # /MD, so this project must not switch the runtime out from under it. ngtcp2, its BoringSSL crypto
 # adapter, nghttp3 and nghttp2 are built the same way by their own build scripts under
 # core/vendor.
-target_include_directories(aether_core PUBLIC
+target_include_directories(hemera_core PUBLIC
     core/vendor/boringssl/include
     core/vendor/ngtcp2/lib/includes
     core/vendor/ngtcp2/build/lib/includes
@@ -82,7 +82,7 @@ target_include_directories(aether_core PUBLIC
     core/vendor/asio/include
     core/vendor/re2
 )
-target_compile_definitions(aether_core PUBLIC NGTCP2_STATICLIB NGHTTP3_STATICLIB NGHTTP2_STATICLIB ASIO_STANDALONE _WIN32_WINNT=0x0A00
+target_compile_definitions(hemera_core PUBLIC NGTCP2_STATICLIB NGHTTP3_STATICLIB NGHTTP2_STATICLIB ASIO_STANDALONE _WIN32_WINNT=0x0A00
     # nghttp2.h uses ssize_t, which MSVC only declares in BaseTsd.h; the header's own guard typedefs
     # it from intptr_t (same width on x64, so the vendored nghttp2.lib ABI is unchanged). Any TU that
     # includes <nghttp2/nghttp2.h> -- the H2 carrier, the HTTPS client -- needs this.
@@ -91,24 +91,24 @@ target_compile_definitions(aether_core PUBLIC NGTCP2_STATICLIB NGHTTP3_STATICLIB
 set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory(core/vendor/re2 EXCLUDE_FROM_ALL)
 
-target_link_directories(aether_core PUBLIC
+target_link_directories(hemera_core PUBLIC
     core/vendor/boringssl/build
     core/vendor/nghttp3/build/lib
     core/vendor/nghttp2/build/lib
     core/vendor/ngtcp2/build/lib
     core/vendor/ngtcp2/build/crypto/boringssl
 )
-target_link_libraries(aether_core PUBLIC
+target_link_libraries(hemera_core PUBLIC
     re2 nghttp3 nghttp2 ngtcp2_crypto_boringssl ngtcp2 ssl pki crypto ws2_32 mswsock bcrypt
 )
 
-# The native core: the console program that replaces the bundled Rust binaries/aether.exe. Same
+# The native core: the console program that replaces the bundled Rust binaries/hemera.exe. Same
 # flags, same output; it is also what a differential run against the Rust binary is driven from.
-add_executable(aether-core core/src/aether_main.cpp)
-target_link_libraries(aether-core PRIVATE aether_core ws2_32 mswsock)
-target_link_options(aether-core PRIVATE "/MAP")
-target_include_directories(aether-core PRIVATE include core/src core/vendor/asio/include)
-set_target_properties(aether-core PROPERTIES OUTPUT_NAME aether)
+add_executable(hemera-core core/src/hemera_main.cpp)
+target_link_libraries(hemera-core PRIVATE hemera_core ws2_32 mswsock)
+target_link_options(hemera-core PRIVATE "/MAP")
+target_include_directories(hemera-core PRIVATE include core/src core/vendor/asio/include)
+set_target_properties(hemera-core PROPERTIES OUTPUT_NAME hemera)
 
 # Windows Native GUI Application (WIN32 Subsystem, No Qt, Zero external dependencies)
 add_executable(Hemera WIN32
@@ -128,7 +128,7 @@ target_include_directories(Hemera PRIVATE
 )
 
 target_link_libraries(Hemera PRIVATE
-    aether_core
+    hemera_core
     gdiplus
     ws2_32
     mswsock
@@ -174,7 +174,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runner.cpp")
     )
 
     target_link_libraries(test_runner PRIVATE
-        aether_core
+        hemera_core
         ws2_32
         mswsock
         shell32

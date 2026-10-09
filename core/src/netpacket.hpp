@@ -16,7 +16,7 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core::netpacket {
+namespace hemera::core::netpacket {
 
 // ---------------------------------------------------------------------------
 // Constants a caller reads. Every one of these names a number the Rust uses.
@@ -421,4 +421,4 @@ struct UdpActions {
 [[nodiscard]] std::uint64_t keepalive_secs(std::optional<std::string_view> env);
 [[nodiscard]] std::uint64_t connect_secs(std::optional<std::string_view> env);
 
-} // namespace aether::core::netpacket
+} // namespace hemera::core::netpacket

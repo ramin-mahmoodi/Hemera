@@ -13,7 +13,7 @@
 #include <string>
 #include <system_error>
 
-namespace aether::core::netpacket {
+namespace hemera::core::netpacket {
 namespace {
 
 // --- little wire helpers, all explicit big-endian -------------------------------------------
@@ -805,4 +805,4 @@ std::uint64_t connect_secs(std::optional<std::string_view> env) {
     return parse_timeout_secs(env, DEFAULT_CONNECT_SECS);
 }
 
-} // namespace aether::core::netpacket
+} // namespace hemera::core::netpacket

@@ -1,13 +1,13 @@
 #pragma once
 
-// Port of aether/src/wireguard.rs (pinned commit 6175b67) and the boringtun-0.7 noise protocol
+// Port of hemera/src/wireguard.rs (pinned commit 6175b67) and the boringtun-0.7 noise protocol
 // surface it drives: the WireGuard message wire layout, the base64/hex key encodings the Rust
 // uses, the pure handshake state machine (mac1/mac2, cookie rules, replay window, message
 // counters, key rotation and retransmit timing), transport sealing/unsealing framing, and every
 // constant a caller reads. The socket loop and the async verify_endpoint task stay in the engine;
 // only the protocol is ported here.
 //
-// The one exception is the loop's three aethernoize call sites (wireguard.rs:243-288 and :568-575),
+// The one exception is the loop's three hemeranoize call sites (wireguard.rs:243-288 and :568-575),
 // which are ported as the named helpers at the bottom of this header. They are the two latches and
 // the send order -- the parts that are protocol-shaped and easy to get wrong -- lifted out of the
 // loop rather than re-decided inside it; the engine's loop still owns the socket, the channels and
@@ -30,18 +30,18 @@
 
 #include "dns.hpp" // IpAddress, parse_address -- reused for the cookie's address bytes
 
-// The noise dialect whose senders the three call sites below reach for. No cycle: aethernoize.hpp
+// The noise dialect whose senders the three call sites below reach for. No cycle: hemeranoize.hpp
 // reads dns.hpp and nothing that reads this header back.
-#include "aethernoize.hpp"
+#include "hemeranoize.hpp"
 
 // transport.hpp's UdpIo, the socket the loop writes through. Forward-declared the way noize.hpp and
-// aethernoize.hpp do -- transport.hpp sits on the other side of quic.hpp, and the definition is only
+// hemeranoize.hpp do -- transport.hpp sits on the other side of quic.hpp, and the definition is only
 // needed where the sends happen, in wireguard.cpp.
-namespace aether::core::transport {
+namespace hemera::core::transport {
 struct UdpIo;
 }
 
-namespace aether::core::wireguard {
+namespace hemera::core::wireguard {
 
 // ---------------------------------------------------------------------------
 // Key material and the base64/hex encodings the Rust uses.
@@ -553,12 +553,12 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// wg_stale_timeout, AETHER_WG_STALE_SECS: parse a positive number, cap it at 86400, and fall back
+// wg_stale_timeout, HEMERA_WG_STALE_SECS: parse a positive number, cap it at 86400, and fall back
 // to 10 seconds when it is absent, unparseable or zero. It reads the setting, not std::environ.
 [[nodiscard]] std::uint64_t wg_stale_timeout_ms(const Settings& settings);
 
 // ---------------------------------------------------------------------------
-// The socket loop's aethernoize call sites: wireguard.rs:243-264, :277-285 and :568-575.
+// The socket loop's hemeranoize call sites: wireguard.rs:243-264, :277-285 and :568-575.
 //
 // Three functions, each the whole of one Rust arm with the encapsulate/inject_client_id work left
 // to the caller -- the engine has already produced `packet` by the time any of these is reached,
@@ -576,7 +576,7 @@ private:
 // keeps no lock, since it takes the references the loop would hold anyway.
 //
 // None of the three logs, and none reports a failed send: wireguard.rs drops every one of these
-// results (`let _ =`), and aethernoize.rs:313-400 writes no log line. Blocking is the caller's price,
+// results (`let _ =`), and hemeranoize.rs:313-400 writes no log line. Blocking is the caller's price,
 // and both Rust loops already pay it -- they are the tasks spawned at :232 and :271 -- so a caller of
 // these three belongs on a thread that may block, which is where the port's std::this_thread
 // stand-ins for tokio::time::sleep put the waiting.
@@ -587,7 +587,7 @@ private:
 // for post-handshake junk at all and none has gone yet, send_post_handshake_junk (:260-263). The
 // latch is set before the drop and the await, so a concurrent packet cannot start a second curtain.
 void send_data_packet(transport::UdpIo& sock, const SocketAddr& peer,
-                      const aethernoize::AetherNoizeConfig& cfg,
+                      const hemeranoize::HemeraNoizeConfig& cfg,
                       std::span<const std::uint8_t> packet, bool& obfuscation_sent,
                       bool& post_handshake_junk_sent);
 
@@ -595,7 +595,7 @@ void send_data_packet(transport::UdpIo& sock, const SocketAddr& peer,
 // enabled (:282-284), then the timer packet itself (:285). The Rust hands send_keepalive_junk only
 // the socket and the config (:376), so there is no peer here -- sock_t is the connected socket, and
 // the destination is the unset one the connected write ignores. No latch: every tick gets its junk.
-void send_timer_packet(transport::UdpIo& sock, const aethernoize::AetherNoizeConfig& cfg,
+void send_timer_packet(transport::UdpIo& sock, const hemeranoize::HemeraNoizeConfig& cfg,
                        std::span<const std::uint8_t> packet);
 
 // wireguard.rs:573-575, verify_endpoint_keep_session's pre-handshake curtain -- not the :253 one.
@@ -603,6 +603,6 @@ void send_timer_packet(transport::UdpIo& sock, const aethernoize::AetherNoizeCon
 // built (:580), because the handshake this function drives must arrive behind the noise; the guard
 // the Rust writes at :573 is kept, and there is no latch and no post-handshake junk on this path.
 void pre_handshake_obfuscation(transport::UdpIo& sock, const SocketAddr& peer,
-                               const aethernoize::AetherNoizeConfig& cfg);
+                               const hemeranoize::HemeraNoizeConfig& cfg);
 
-} // namespace aether::core::wireguard
+} // namespace hemera::core::wireguard

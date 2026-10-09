@@ -13,11 +13,11 @@
 #include <string_view>
 #include <vector>
 
-namespace aether::core {
+namespace hemera::core {
 
 struct Settings;
 
-// Port of aether/src/tls.rs. What a real TLS stack already does -- GREASE points, extension
+// Port of hemera/src/tls.rs. What a real TLS stack already does -- GREASE points, extension
 // permutation, cipher and group resolution, the ECH inner ClientHello, HPKE, TLS 1.3 suite
 // ordering -- stays inside BoringSSL. What is written here is the shaping around it, plus the
 // checks BoringSSL will not make for us: it accepts an unusable ECH key silently and runs the
@@ -56,7 +56,7 @@ struct Fingerprint {
     SSL_CTX* ctx, std::string_view cert_pem, std::string_view key_pem);
 
 // Pin-based verification: only the leaf is hashed and the chain is never walked, so a spoofed
-// SNI still connects while a man in the middle does not. Off unless AETHER_TLS_VERIFY is truthy.
+// SNI still connects while a man in the middle does not. Off unless HEMERA_TLS_VERIFY is truthy.
 [[nodiscard]] bool verify_enabled(const Settings& settings);
 [[nodiscard]] std::optional<SpkiPin> spki_sha256(X509* cert);
 
@@ -110,7 +110,7 @@ public:
 // phrase to tell its user why it stopped, so every --ech failure carries it.
 inline constexpr std::string_view NO_ECH_KEY = "ECH is on but there is no ECH key to offer";
 
-// Turns an --ech / AETHER_ECH value into a key to offer: nothing when unset, a fetched list for
+// Turns an --ech / HEMERA_ECH value into a key to offer: nothing when unset, a fetched list for
 // `auto`, otherwise base64. A key that cannot be offered is an error naming the refusal, since
 // sending the server name in the clear is not an acceptable fallback.
 enum class EchPurpose { Session, Api };
@@ -119,4 +119,4 @@ enum class EchPurpose { Session, Api };
     const Settings& settings, EchPurpose purpose,
     const std::function<std::expected<std::vector<uint8_t>, std::string>()>& fetch);
 
-} // namespace aether::core
+} // namespace hemera::core
