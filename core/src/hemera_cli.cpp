@@ -1764,6 +1764,7 @@ public:
     // Rust's `Err(e) => accept_backoff`: the caller pauses by the code and keeps going until the
     // backoff says the listener cannot.
     std::expected<std::optional<SOCKET>, int> accept(eg::Stop& stop) {
+        if (stop.asked()) return std::optional<SOCKET>{};
         fd_set read;
         FD_ZERO(&read);
         FD_SET(handle_, &read);
