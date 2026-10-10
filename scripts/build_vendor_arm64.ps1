@@ -32,9 +32,11 @@ cmake -S "$bossSrc" -B "$bossBuild" -G Ninja `
   -DCMAKE_BUILD_TYPE=Release `
   -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
   -DOPENSSL_NO_ASM=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
-cmake --build "$bossBuild" --config Release
+if ($LASTEXITCODE -ne 0) { throw "BoringSSL cmake configure failed with code $LASTEXITCODE" }
 
-# Ensure all libraries are accessible at top-level build dir
+cmake --build "$bossBuild" --config Release
+if ($LASTEXITCODE -ne 0) { throw "BoringSSL build failed with code $LASTEXITCODE" }
+
 Get-ChildItem -Path "$bossBuild" -Recurse -Filter "*.lib" | ForEach-Object {
     $target = Join-Path $bossBuild $_.Name
     if ($_.FullName -ne $target) {
@@ -48,7 +50,10 @@ cmake -S "$ng2Src" -B "$ng2Build" -G Ninja `
   -DCMAKE_BUILD_TYPE=Release `
   -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
   -DENABLE_LIB_ONLY=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF
-cmake --build "$ng2Build" --target nghttp2_static
+if ($LASTEXITCODE -ne 0) { throw "nghttp2 cmake configure failed with code $LASTEXITCODE" }
+
+cmake --build "$ng2Build" --config Release --target nghttp2_static
+if ($LASTEXITCODE -ne 0) { throw "nghttp2 build failed with code $LASTEXITCODE" }
 
 New-Item -ItemType Directory -Path "$ng2Build/lib" -Force | Out-Null
 Get-ChildItem -Path "$ng2Build" -Recurse -Filter "*.lib" | ForEach-Object {
@@ -58,13 +63,28 @@ Get-ChildItem -Path "$ng2Build" -Recurse -Filter "*.lib" | ForEach-Object {
     if ($_.FullName -ne $target2) { Copy-Item $_.FullName -Destination $target2 -Force }
 }
 
+# Also ensure nghttp2.lib exists alongside nghttp2_static.lib
+Get-ChildItem -Path "$ng2Build" -Recurse -Filter "*_static.lib" | ForEach-Object {
+    $plain = $_.Name.Replace("_static.lib", ".lib")
+    $dest = Join-Path $_.DirectoryName $plain
+    if (-not (Test-Path $dest)) { Copy-Item $_.FullName -Destination $dest -Force }
+}
+Get-ChildItem -Path "$ng2Build" -Recurse -Filter "nghttp2.lib" | ForEach-Object {
+    $staticName = "nghttp2_static.lib"
+    $dest = Join-Path $_.DirectoryName $staticName
+    if (-not (Test-Path $dest)) { Copy-Item $_.FullName -Destination $dest -Force }
+}
+
 # 3. nghttp3 (ARM64)
 Write-Host "=== 3/4 Building nghttp3 for ARM64 ===" -ForegroundColor Cyan
 cmake -S "$ng3Src" -B "$ng3Build" -G Ninja `
   -DCMAKE_BUILD_TYPE=Release `
   -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
   -DENABLE_STATIC_LIB=ON -DENABLE_SHARED_LIB=OFF -DENABLE_LIB_ONLY=ON -DBUILD_TESTING=OFF
-cmake --build "$ng3Build"
+if ($LASTEXITCODE -ne 0) { throw "nghttp3 cmake configure failed with code $LASTEXITCODE" }
+
+cmake --build "$ng3Build" --config Release
+if ($LASTEXITCODE -ne 0) { throw "nghttp3 build failed with code $LASTEXITCODE" }
 
 New-Item -ItemType Directory -Path "$ng3Build/lib" -Force | Out-Null
 Get-ChildItem -Path "$ng3Build" -Recurse -Filter "*.lib" | ForEach-Object {
@@ -72,6 +92,18 @@ Get-ChildItem -Path "$ng3Build" -Recurse -Filter "*.lib" | ForEach-Object {
     if ($_.FullName -ne $target1) { Copy-Item $_.FullName -Destination $target1 -Force }
     $target2 = Join-Path $ng3Build $_.Name
     if ($_.FullName -ne $target2) { Copy-Item $_.FullName -Destination $target2 -Force }
+}
+
+# Ensure both nghttp3.lib and nghttp3_static.lib exist everywhere
+Get-ChildItem -Path "$ng3Build" -Recurse -Filter "*_static.lib" | ForEach-Object {
+    $plain = $_.Name.Replace("_static.lib", ".lib")
+    $dest = Join-Path $_.DirectoryName $plain
+    if (-not (Test-Path $dest)) { Copy-Item $_.FullName -Destination $dest -Force }
+}
+Get-ChildItem -Path "$ng3Build" -Recurse -Filter "nghttp3.lib" | ForEach-Object {
+    $staticName = "nghttp3_static.lib"
+    $dest = Join-Path $_.DirectoryName $staticName
+    if (-not (Test-Path $dest)) { Copy-Item $_.FullName -Destination $dest -Force }
 }
 
 # 4. ngtcp2 with BoringSSL backend (ARM64)
@@ -85,7 +117,10 @@ cmake -S "$tcpSrc" -B "$tcpBuild" -G Ninja `
   -DENABLE_BORINGSSL=ON -DENABLE_OPENSSL=OFF `
   -DBORINGSSL_INCLUDE_DIR="$bossIncludeFwd" `
   -DBORINGSSL_LIBRARIES="$bossBuildFwd/ssl.lib;$bossBuildFwd/crypto.lib"
-cmake --build "$tcpBuild"
+if ($LASTEXITCODE -ne 0) { throw "ngtcp2 cmake configure failed with code $LASTEXITCODE" }
+
+cmake --build "$tcpBuild" --config Release
+if ($LASTEXITCODE -ne 0) { throw "ngtcp2 build failed with code $LASTEXITCODE" }
 
 New-Item -ItemType Directory -Path "$tcpBuild/lib" -Force | Out-Null
 New-Item -ItemType Directory -Path "$tcpBuild/crypto/boringssl" -Force | Out-Null
@@ -98,4 +133,29 @@ Get-ChildItem -Path "$tcpBuild" -Recurse -Filter "*.lib" | ForEach-Object {
     if ($_.FullName -ne $target3) { Copy-Item $_.FullName -Destination $target3 -Force }
 }
 
-Write-Host "=== All ARM64 vendor libraries built successfully! ===" -ForegroundColor Green
+# Ensure both static and plain library names exist
+Get-ChildItem -Path "$tcpBuild" -Recurse -Filter "*_static.lib" | ForEach-Object {
+    $plain = $_.Name.Replace("_static.lib", ".lib")
+    $dest = Join-Path $_.DirectoryName $plain
+    if (-not (Test-Path $dest)) { Copy-Item $_.FullName -Destination $dest -Force }
+}
+
+Write-Host "=== Verifying all required ARM64 libraries ===" -ForegroundColor Cyan
+$requiredLibs = @(
+    "$bossBuild/ssl.lib",
+    "$bossBuild/crypto.lib",
+    "$ng2Build/lib/nghttp2.lib",
+    "$ng3Build/lib/nghttp3.lib",
+    "$tcpBuild/lib/ngtcp2.lib",
+    "$tcpBuild/crypto/boringssl/ngtcp2_crypto_boringssl.lib"
+)
+
+foreach ($lib in $requiredLibs) {
+    if (-not (Test-Path $lib)) {
+        throw "CRITICAL: Required ARM64 library was not found: $lib"
+    }
+    $info = Get-Item $lib
+    Write-Host "  OK: $lib ($($info.Length) bytes)" -ForegroundColor Green
+}
+
+Write-Host "=== All ARM64 vendor libraries built and verified successfully! ===" -ForegroundColor Green

@@ -45,7 +45,7 @@ jobs:
 
       - name: Configure CMake (ARM64)
         if: matrix.arch == 'arm64'
-        run: cmake -B build -A ARM64 -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -A ARM64 -DARM64=ON -DHEMERA_ARM64=ON -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Hemera Release
         run: cmake --build build --config Release

@@ -96,7 +96,8 @@ target_compile_definitions(hemera_core PUBLIC NGTCP2_STATICLIB NGHTTP3_STATICLIB
 set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory(core/vendor/re2 EXCLUDE_FROM_ALL)
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64" OR CMAKE_GENERATOR_PLATFORM MATCHES "ARM64|arm64" OR CMAKE_VS_PLATFORM_NAME MATCHES "ARM64|arm64")
+if(ARM64 OR HEMERA_ARM64 OR CMAKE_GENERATOR_PLATFORM MATCHES "ARM64|arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64" OR CMAKE_VS_PLATFORM_NAME MATCHES "ARM64|arm64" OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/boringssl/build_arm64")
+    message(STATUS "Configuring Hemera for Windows ARM64")
     set(VENDOR_LINK_DIRS
         "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/boringssl/build_arm64"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/boringssl/build_arm64/crypto"
@@ -111,11 +112,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64" OR CMAKE_GENERATOR_PLATFORM MATC
         "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/ngtcp2/build_arm64/crypto/boringssl"
     )
 else()
+    message(STATUS "Configuring Hemera for Windows x64")
     set(VENDOR_LINK_DIRS
         "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/boringssl/build"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/nghttp3/build/lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/nghttp3/build"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/nghttp2/build/lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/nghttp2/build"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/ngtcp2/build/lib"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/ngtcp2/build"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/ngtcp2/build/crypto/boringssl"
     )
 endif()
@@ -168,7 +173,7 @@ target_link_libraries(Hemera PRIVATE
 
 # Copy wintun.dll to build outputs if present (architecture-aware)
 set(WINTUN_SRC "")
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64" OR CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
+if(ARM64 OR HEMERA_ARM64 OR CMAKE_GENERATOR_PLATFORM MATCHES "ARM64|arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64" OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/core/vendor/boringssl/build_arm64")
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/binaries/arm64/wintun.dll")
         set(WINTUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/binaries/arm64/wintun.dll")
     endif()
