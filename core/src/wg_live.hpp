@@ -110,6 +110,10 @@ struct WgSocket {
     // sock.recv(): one datagram, nothing when the socket has none yet.
     [[nodiscard]] std::expected<std::optional<transport::Arrived>, std::string> recv() const;
 
+    [[nodiscard]] bool wait_readable(std::chrono::milliseconds timeout) const {
+        return io != nullptr && io->wait_readable(timeout);
+    }
+
     [[nodiscard]] SocketAddr local() const;
 };
 

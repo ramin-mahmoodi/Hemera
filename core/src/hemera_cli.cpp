@@ -32,6 +32,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
 #include <shellapi.h>
 #include <tlhelp32.h>
 
@@ -152,13 +154,17 @@ using cf::Notes;
     return text;
 }
 
+std::mutex g_inproc_sink_mutex;
 std::function<void(std::string_view)> g_inproc_log_sink = nullptr;
 std::function<void(const std::string&)> g_inproc_state_sink = nullptr;
 
 void emit(Level level, std::string_view text) {
     std::string line = "[" + stamp() + " " + level_tag(level) + " hemera] " + std::string(text);
-    if (g_inproc_log_sink) {
-        g_inproc_log_sink(line);
+    {
+        std::lock_guard<std::mutex> lock(g_inproc_sink_mutex);
+        if (g_inproc_log_sink) {
+            g_inproc_log_sink(line);
+        }
     }
     std::fprintf(stderr, "%s\n", line.c_str());
     std::fflush(stderr);
@@ -185,8 +191,11 @@ void out_raw(std::string_view text) {
 }
 
 void out_line(std::string_view text) {
-    if (g_inproc_log_sink) {
-        g_inproc_log_sink(text);
+    {
+        std::lock_guard<std::mutex> lock(g_inproc_sink_mutex);
+        if (g_inproc_log_sink) {
+            g_inproc_log_sink(text);
+        }
     }
     out_raw(text);
     std::fputc('\n', stdout);
@@ -287,6 +296,8 @@ cf::BindListener make_bind_listener() {
             return std::unexpected(std::string(what) + ": socket failed (" +
                                    std::to_string(WSAGetLastError()) + ")");
         }
+        BOOL reuse = TRUE;
+        ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
         sockaddr_storage storage{};
         const int length = fill_address(listen, storage);
         bool open = ::bind(socket, reinterpret_cast<const sockaddr*>(&storage), length) == 0 &&
@@ -1312,18 +1323,43 @@ public:
     // flush_tx's try_send: nothing blocks, a full queue is the Rust's Full (the packet is dropped and
     // counted by the stack, never by this queue).
     [[nodiscard]] ns::SendOutcome push(std::span<const std::uint8_t> packet) {
-        return tx_.try_send(std::vector<std::uint8_t>(packet.begin(), packet.end()));
+        ns::SendOutcome outcome;
+        {
+            std::lock_guard<std::mutex> lock(cv_mutex_);
+            outcome = tx_.try_send(std::vector<std::uint8_t>(packet.begin(), packet.end()));
+        }
+        if (outcome == ns::SendOutcome::Ok) cv_.notify_one();
+        return outcome;
     }
     // outbound_rx.recv() at a carrier's pace: nothing when the queue is empty.
-    [[nodiscard]] std::optional<std::vector<std::uint8_t>> pull() { return rx_.recv(); }
+    [[nodiscard]] std::optional<std::vector<std::uint8_t>> pull() {
+        std::lock_guard<std::mutex> lock(cv_mutex_);
+        return rx_.recv();
+    }
+    [[nodiscard]] std::optional<std::vector<std::uint8_t>> pull_wait(std::chrono::milliseconds budget) {
+        std::unique_lock<std::mutex> lock(cv_mutex_);
+        if (auto p = rx_.recv()) return p;
+        if (rx_.at_end() || budget.count() <= 0) return std::nullopt;
+        cv_.wait_for(lock, budget, [&] { return rx_.queued() > 0 || rx_.at_end(); });
+        return rx_.recv();
+    }
     // Rust's `while let Some(p) = rx.recv()` ending: every sender dropped and the queue drained.
-    [[nodiscard]] bool ended() const { return rx_.at_end(); }
+    [[nodiscard]] bool ended() const {
+        std::lock_guard<std::mutex> lock(cv_mutex_);
+        return rx_.at_end();
+    }
     // The send task's end, which is what makes `ended()` answer for the reader's side.
-    void close() { tx_ = ns::Sender<std::vector<std::uint8_t>>{}; }
+    void close() {
+        std::lock_guard<std::mutex> lock(cv_mutex_);
+        tx_ = ns::Sender<std::vector<std::uint8_t>>{};
+        cv_.notify_all();
+    }
 
 private:
     ns::Sender<std::vector<std::uint8_t>> tx_;
     ns::Receiver<std::vector<std::uint8_t>> rx_;
+    mutable std::mutex cv_mutex_;
+    std::condition_variable cv_;
 };
 
 class Hop;
@@ -1427,12 +1463,33 @@ public:
 
     ~Hop() {
         stop_.set();
+        notify_data();
         control_.shutdown();
         join_carriers();
         {
             const std::lock_guard<std::mutex> lock(mutex_);
             queue_.close();
         }
+    }
+
+    void notify_data() {
+        {
+            std::lock_guard<std::mutex> lk(data_cv_mutex_);
+            has_data_ = true;
+        }
+        data_cv_.notify_all();
+    }
+
+    void wait_data(std::chrono::milliseconds timeout, const Cancel& cancel) {
+        std::unique_lock<std::mutex> lk(data_cv_mutex_);
+        if (has_data_ || stop_.asked() || finished_ || cancel.is_cancelled()) {
+            has_data_ = false;
+            return;
+        }
+        data_cv_.wait_for(lk, timeout, [&] {
+            return has_data_ || stop_.asked() || finished_ || cancel.is_cancelled();
+        });
+        has_data_ = false;
     }
 
     // ---- the pump thread's side -------------------------------------------------------------
@@ -1447,10 +1504,17 @@ public:
     void tick_stack() {
         const std::lock_guard<std::mutex> lock(mutex_);
         if (!stack_) return;
-        last_tick_ = stack_->tick(std::chrono::steady_clock::now()).delay.value_or(
-            std::chrono::milliseconds(20));
+        auto now = std::chrono::steady_clock::now();
+        last_tick_ = stack_->tick(now).delay.value_or(std::chrono::milliseconds(20));
+        std::size_t turns = 0;
+        while ((stack_->device_rx_queued() > 0 || stack_->inbound_queued() > 0 ||
+                stack_->device_tx_queued() > 0 || stack_->data_in_queued() > 0) && turns < 64) {
+            last_tick_ = stack_->tick(now).delay.value_or(std::chrono::milliseconds(20));
+            ++turns;
+        }
     }
     [[nodiscard]] std::chrono::milliseconds last_tick_delay() const { return last_tick_; }
+    [[nodiscard]] std::size_t mtu() const { return mtu_; }
 
     tr::InboundSink* inbound_sink() { return &inbound_; }
     tr::AddressSink* address_sink() { return &assigned_; }
@@ -1515,8 +1579,17 @@ public:
     eg::Stop& stop() { return stop_; }
     void add_thread(std::thread thread) { threads_.push_back(std::move(thread)); }
     void join_carriers() {
+        stop_.set();
+        notify_data();
+        control_.shutdown();
         for (std::thread& thread : threads_) {
-            if (thread.joinable()) thread.join();
+            if (thread.joinable()) {
+                if (thread.get_id() == std::this_thread::get_id()) {
+                    thread.detach();
+                } else {
+                    thread.join();
+                }
+            }
         }
         threads_.clear();
     }
@@ -1545,6 +1618,9 @@ private:
     std::optional<std::string> error_;
     eg::Stop stop_;
     std::vector<std::thread> threads_;
+    mutable std::mutex data_cv_mutex_;
+    std::condition_variable data_cv_;
+    bool has_data_ = false;
 };
 
 ns::SendOutcome QueueSink::try_send(std::span<const std::uint8_t> packet) {
@@ -1553,13 +1629,15 @@ ns::SendOutcome QueueSink::try_send(std::span<const std::uint8_t> packet) {
 }
 
 tr::Room LockedInbound::try_send(std::span<const std::uint8_t> ip_packet) {
-    const std::lock_guard<std::mutex> lock(hop_.mutex());
-    if (tun::TunDevice* tun = hop_.tun_device(); tun != nullptr) {
-        tun->write_packet(ip_packet);
+    {
+        const std::lock_guard<std::mutex> lock(hop_.mutex());
+        if (tun::TunDevice* tun = hop_.tun_device(); tun != nullptr) {
+            tun->write_packet(ip_packet);
+        } else if (ns::NetStack* stack = hop_.stack(); stack != nullptr) {
+            stack->submit_inbound(std::vector<std::uint8_t>(ip_packet.begin(), ip_packet.end()));
+        }
     }
-    if (ns::NetStack* stack = hop_.stack(); stack != nullptr) {
-        stack->submit_inbound(std::vector<std::uint8_t>(ip_packet.begin(), ip_packet.end()));
-    }
+    hop_.notify_data();
     return tr::Room::Accepted;
 }
 
@@ -1598,23 +1676,10 @@ public:
     explicit WgOutbound(Hop& hop) : hop_(hop) {}
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> try_recv(
         std::chrono::milliseconds budget) override {
-        const auto finish = std::chrono::steady_clock::now() + budget;
-        for (;;) {
-            {
-                const std::lock_guard<std::mutex> lock(hop_.mutex());
-                if (std::optional<std::vector<std::uint8_t>> packet = hop_.queue().pull()) {
-                    return packet;
-                }
-            }
-            if (hop_.stop().asked()) return std::nullopt;
-            if (budget.count() <= 0 || std::chrono::steady_clock::now() >= finish) {
-                return std::nullopt;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
+        if (hop_.stop().asked()) return std::nullopt;
+        return hop_.queue().pull_wait(budget);
     }
     [[nodiscard]] bool closed() const override {
-        const std::lock_guard<std::mutex> lock(hop_.mutex());
         return hop_.queue().ended();
     }
 
@@ -1628,7 +1693,11 @@ private:
 void pump_hop(Hop& hop, const Cancel& cancel) {
     while (!hop.stop().asked() && !hop.finished() && !cancel.is_cancelled()) {
         hop.tick_stack();
-        interruptible_sleep_ms(hop.last_tick_delay(), cancel);
+        auto delay = hop.last_tick_delay();
+        if (delay.count() <= 0) {
+            delay = std::chrono::milliseconds(10);
+        }
+        hop.wait_data(delay, cancel);
     }
 }
 
@@ -1746,6 +1815,8 @@ public:
             return std::unexpected(std::string(kind) + ": socket failed (" +
                                    std::to_string(WSAGetLastError()) + ")");
         }
+        BOOL reuse = TRUE;
+        ::setsockopt(self->handle_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
         sockaddr_storage storage{};
         const int length = fill_address(listen, storage);
         if (::bind(self->handle_, reinterpret_cast<const sockaddr*>(&storage), length) != 0 ||
@@ -1801,6 +1872,13 @@ public:
         for (;;) {
             {
                 const std::lock_guard<std::mutex> lock(hop_.mutex());
+                if (!leftovers_.empty()) {
+                    const std::size_t taken = std::min(len, leftovers_.size());
+                    std::memcpy(out, leftovers_.data(), taken);
+                    leftovers_.erase(leftovers_.begin(),
+                                     leftovers_.begin() + static_cast<std::ptrdiff_t>(taken));
+                    return eg::ReadAttempt{eg::ReadAttempt::Kind::Bytes, taken, {}};
+                }
                 if (std::optional<std::vector<std::uint8_t>> chunk = from_stack_.recv()) {
                     if (chunk->empty()) return eg::ReadAttempt{eg::ReadAttempt::Kind::Bytes, 0, {}};
                     const std::size_t taken = std::min(len, chunk->size());
@@ -1812,20 +1890,13 @@ public:
                     }
                     return eg::ReadAttempt{eg::ReadAttempt::Kind::Bytes, taken, {}};
                 }
-                if (!leftovers_.empty()) {
-                    const std::size_t taken = std::min(len, leftovers_.size());
-                    std::memcpy(out, leftovers_.data(), taken);
-                    leftovers_.erase(leftovers_.begin(),
-                                     leftovers_.begin() + static_cast<std::ptrdiff_t>(taken));
-                    return eg::ReadAttempt{eg::ReadAttempt::Kind::Bytes, taken, {}};
-                }
                 if (from_stack_.at_end()) return eg::ReadAttempt{eg::ReadAttempt::Kind::End, 0, {}};
             }
             if (stop.asked()) return eg::ReadAttempt{eg::ReadAttempt::Kind::Timeout, 0, {}};
             if (wait.count() > 0 && std::chrono::steady_clock::now() >= finish) {
                 return eg::ReadAttempt{eg::ReadAttempt::Kind::Timeout, 0, {}};
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 
@@ -1840,12 +1911,15 @@ public:
                 outcome = sender_.send(payload);
             }
             switch (outcome) {
-                case ns::SendOutcome::Ok: return {};
+                case ns::SendOutcome::Ok: {
+                    hop_.notify_data();
+                    return {};
+                }
                 case ns::SendOutcome::Closed: return std::unexpected(std::string(eg::STOPPED));
                 case ns::SendOutcome::Full: break;
             }
-            if (stop.asked()) return std::unexpected(std::string(eg::STOPPED));
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (stop.asked() || hop_.stop().asked()) return std::unexpected(std::string(eg::STOPPED));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 
@@ -1870,14 +1944,19 @@ public:
 
     [[nodiscard]] bool send_to(const SocketAddr& dst, std::span<const std::uint8_t> data) {
         for (;;) {
+            if (hop_.stop().asked()) return false;
             ns::SendOutcome outcome;
             {
                 const std::lock_guard<std::mutex> lock(hop_.mutex());
                 outcome = sender_.send_to(dst, std::vector<std::uint8_t>(data.begin(), data.end()));
             }
-            if (outcome == ns::SendOutcome::Ok) return true;
+            if (outcome == ns::SendOutcome::Ok) {
+                hop_.notify_data();
+                return true;
+            }
             if (outcome == ns::SendOutcome::Closed) return false;
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            if (hop_.stop().asked()) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 
@@ -1893,7 +1972,7 @@ public:
             }
             if (stop.asked()) return std::nullopt;
             if (std::chrono::steady_clock::now() >= finish) return std::nullopt;
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 
@@ -1955,7 +2034,7 @@ struct ProxyOptions {
         if (budget.has_value() && std::chrono::steady_clock::now() >= finish) {
             return std::unexpected(std::string(eg::TIMED_OUT) + "connect timed out");
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
@@ -3099,6 +3178,7 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
     cfg.ipv4 = identity.ipv4;
     cfg.ipv6 = identity.ipv6;
     cfg.peer_endpoint = peer;
+    cfg.mtu = static_cast<uint32_t>(hop.mtu());
     if (auto dns = settings.get("HEMERA_DNS")) {
         cfg.dns = std::string(*dns);
     }
@@ -3111,12 +3191,12 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
     tun::TunDevice* dev = created->get();
     hop.set_tun_device(std::move(*created));
 
-    hop.add_thread(std::thread([&hop, &cancel, dev] {
+    hop.add_thread(std::thread([&hop, cancel, dev] {
         HANDLE read_ev = reinterpret_cast<HANDLE>(dev->read_wait_event());
         while (!cancel.is_cancelled() && !hop.stop().asked()) {
             DWORD wait = WaitForSingleObject(read_ev, 50);
             if (wait == WAIT_OBJECT_0) {
-                dev->drain_read_packets(64, [&hop](std::span<const uint8_t> pkt) {
+                dev->drain_read_packets(512, [&hop](std::span<const uint8_t> pkt) {
                     (void)hop.queue().push(pkt);
                 });
             }
@@ -3139,8 +3219,11 @@ void serve_proxy(Hop& hop, ProxyOptions& options, const SocketAddr& listen, std:
     emit(Level::Info, std::string(kind) == "socks5"
                           ? "[+] socks5 server listening on " + listen.to_string()
                           : "[+] " + std::string(kind) + " listening on " + listen.to_string());
-    if (std::string(kind) == "socks5" && g_inproc_state_sink) {
-        g_inproc_state_sink("Connected");
+    {
+        std::lock_guard<std::mutex> lock(g_inproc_sink_mutex);
+        if (std::string(kind) == "socks5" && g_inproc_state_sink) {
+            g_inproc_state_sink("Connected");
+        }
     }
     if (sk::is_unspecified(listen.ip)) {
         emit(Level::Warn, "[-] warning: " + std::string(kind) + " is bound to " +
@@ -3207,7 +3290,7 @@ void serve_proxy(Hop& hop, ProxyOptions& options, const SocketAddr& listen, std:
     pool.join();
     {
         std::unique_lock<std::mutex> lock(shutdown_mutex);
-        shutdown_cv.wait(lock, [&] { return active_clients.load(std::memory_order_acquire) == 0; });
+        shutdown_cv.wait_for(lock, std::chrono::milliseconds(200), [&] { return active_clients.load(std::memory_order_acquire) == 0; });
     }
 }
 
@@ -3619,7 +3702,7 @@ public:
         // Up: loopback datagrams into the tunnel, remembering who sent them.
         self->up_ = std::thread([raw, remote, &cancel] {
             std::vector<std::uint8_t> buffer(65536);
-            while (!raw->stop_.load() && !cancel.is_cancelled()) {
+            while (!raw->stop_.asked() && !cancel.is_cancelled()) {
                 fd_set read;
                 FD_ZERO(&read);
                 FD_SET(raw->sock_, &read);
@@ -3632,6 +3715,7 @@ public:
                                          static_cast<int>(buffer.size()), 0,
                                          reinterpret_cast<sockaddr*>(&sender), &sender_len);
                 if (got <= 0) continue;
+                if (raw->stop_.asked() || cancel.is_cancelled()) break;
                 {
                     const std::lock_guard<std::mutex> lock(raw->peer_mutex_);
                     raw->peer_.emplace();
@@ -3646,11 +3730,11 @@ public:
         });
         // Down: tunnel datagrams back to the last sender -- a follower, not a migration.
         self->down_ = std::thread([raw, &cancel] {
-            eg::Stop idle;
-            while (!raw->stop_.load() && !cancel.is_cancelled()) {
+            while (!raw->stop_.asked() && !cancel.is_cancelled()) {
                 std::optional<ns::UdpInbound> arrived =
-                    raw->udp_->recv(idle, std::chrono::milliseconds(50));
+                    raw->udp_->recv(raw->stop_, std::chrono::milliseconds(50));
                 if (!arrived.has_value()) continue;
+                if (raw->stop_.asked() || cancel.is_cancelled()) break;
                 sockaddr_storage sender{};
                 int sender_len = 0;
                 {
@@ -3670,11 +3754,21 @@ public:
     UdpForwarder(const UdpForwarder&) = delete;
     UdpForwarder& operator=(const UdpForwarder&) = delete;
 
+    void stop() {
+        stop_.set();
+        if (udp_.has_value()) {
+            udp_->close();
+        }
+        if (sock_ != INVALID_SOCKET) {
+            closesocket(sock_);
+            sock_ = INVALID_SOCKET;
+        }
+    }
+
     ~UdpForwarder() {
-        stop_.store(true);
+        stop();
         if (up_.joinable()) up_.join();
         if (down_.joinable()) down_.join();
-        if (sock_ != INVALID_SOCKET) closesocket(sock_);
     }
 
     [[nodiscard]] const SocketAddr& local() const { return local_; }
@@ -3692,7 +3786,7 @@ private:
     std::optional<StackUdp> udp_;
     std::thread up_;
     std::thread down_;
-    std::atomic<bool> stop_{false};
+    eg::Stop stop_;
     std::mutex peer_mutex_;
     std::optional<PeerAddr> peer_;
 };
@@ -4201,10 +4295,16 @@ private:
            !(*outer)->stop().asked() && !(*inner)->stop().asked()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    (*outer)->stop().set();
     (*inner)->stop().set();
-    (*outer)->join_carriers();
+    (*outer)->stop().set();
+    (*inner)->notify_data();
+    (*outer)->notify_data();
+    if (fwd.has_value() && *fwd) {
+        (*fwd)->stop();
+        (*fwd).reset();
+    }
     (*inner)->join_carriers();
+    (*outer)->join_carriers();
     if (cancel.is_cancelled()) {
         reply = FlowReply{};
         reply.ok = false;
@@ -4671,10 +4771,16 @@ private:
            !outer->stop().asked() && !inner->stop().asked()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    outer->stop().set();
     inner->stop().set();
-    outer->join_carriers();
+    outer->stop().set();
+    inner->notify_data();
+    outer->notify_data();
+    if (fwd) {
+        fwd->stop();
+        fwd.reset();
+    }
     inner->join_carriers();
+    outer->join_carriers();
     if (cancel.is_cancelled()) {
         reply = FlowReply{};
         reply.ok = false;
@@ -4901,6 +5007,7 @@ template <class Flow>
 }
 
 [[nodiscard]] int fail(const Error& error) {
+    emit(Level::Error, fatal_line(error));
     std::fprintf(stderr, "%s\n", fatal_line(error).c_str());
     std::fflush(stderr);
     return 1;
@@ -5158,28 +5265,44 @@ int run_inproc(const std::vector<std::string>& args,
                Cancel& cancel,
                InprocCallbacks callbacks) {
     install_crash_report();
+    struct ScopedTimerPeriod {
+        ScopedTimerPeriod() { ::timeBeginPeriod(1); }
+        ~ScopedTimerPeriod() { ::timeEndPeriod(1); }
+    } timer_period;
     const Winsock winsock;
     if (winsock.code() != 0) {
         if (callbacks.on_log) callbacks.on_log("Error: Io(\"WSAStartup 2.2 failed\")");
         return 1;
     }
 
-    g_inproc_log_sink = callbacks.on_log;
-    g_inproc_state_sink = callbacks.on_state_changed;
+    struct SinkResetter {
+        ~SinkResetter() {
+            std::lock_guard<std::mutex> lock(g_inproc_sink_mutex);
+            g_inproc_log_sink = nullptr;
+            g_inproc_state_sink = nullptr;
+        }
+    } sink_resetter;
+
+    {
+        std::lock_guard<std::mutex> lock(g_inproc_sink_mutex);
+        g_inproc_log_sink = callbacks.on_log;
+        g_inproc_state_sink = callbacks.on_state_changed;
+    }
 
     Settings settings = settings_from_environment();
     for (const auto& [k, v] : settings_env) {
         settings.set(k, v);
     }
 
+    std::thread stats_thread;
     cf::StartupHooks hooks;
     hooks.prompt = make_prompt();
     hooks.bind_listener = make_bind_listener();
     hooks.install_netstack_guard = [] {};
-    hooks.spawn_stats_reporter = [&settings, cancel, callbacks] {
+    hooks.spawn_stats_reporter = [&settings, cancel, callbacks, &stats_thread] {
         if (!::hemera::core::enabled()) return;
         const auto every = ::hemera::core::report_interval(settings);
-        std::thread([every, settings, cancel, callbacks] {
+        stats_thread = std::thread([every, settings, cancel, callbacks] {
             while (!cancel.is_cancelled()) {
                 interruptible_sleep(every, cancel);
                 if (cancel.is_cancelled()) break;
@@ -5192,7 +5315,7 @@ int run_inproc(const std::vector<std::string>& args,
                                       " uptime " +
                                       ::hemera::core::format_uptime(counters.uptime));
             }
-        }).detach();
+        });
     };
     hooks.team.prompt = hooks.prompt;
     hooks.team.hooks = make_team_hooks(settings);
@@ -5229,6 +5352,9 @@ int run_inproc(const std::vector<std::string>& args,
     const cf::RunPlan plan = cf::run_plan(settings, started->protocol, started->classic_gool,
                                          started->base_config);
     int res = run_dispatch(settings, *started, plan, hooks, cancel);
+    if (stats_thread.joinable()) {
+        stats_thread.join();
+    }
     if (callbacks.on_state_changed) {
         callbacks.on_state_changed(cancel.is_cancelled() ? "Disconnected" : (res == 0 ? "Disconnected" : "Error"));
     }

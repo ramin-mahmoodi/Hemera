@@ -19,6 +19,7 @@ struct TunConfig {
     SocketAddr peer_endpoint{};     // remote peer address and port for bypass route
     std::string dns = "1.1.1.1";
     uint32_t ring_capacity = 0x400000; // 4 MB ring buffer capacity
+    uint32_t mtu = 1280;               // Tunnel MTU (1280 for WireGuard/QUIC, 1500 for H2)
 };
 
 class TunDevice {

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <map>
 
 namespace hemera::core::netstack {
 
@@ -47,7 +48,7 @@ std::uint32_t seq_add(std::uint32_t a, std::size_t n) {
 
 // smoltcp's INITIAL_RETRANSMIT_TIMEOUT, doubled per RFC 6298 on every retransmission.
 const Millis INITIAL_RTO{1000};
-const Millis MAX_RTO{60000};
+const Millis MAX_RTO{10000};
 // smoltcp lingers in TIME_WAIT for 2*MSL. The netstack loop removes an established connection
 // the tick it sees TimeWait, so this only outlives sockets the table already dropped.
 const Millis TIME_WAIT_DELAY{60000};
@@ -193,6 +194,35 @@ std::size_t parse_mss_option(std::span<const std::uint8_t> options) {
     return DEFAULT_REMOTE_MSS;
 }
 
+// RFC 7323 TCP Window Scale option (kind 3, len 3, shift count)
+std::optional<std::uint8_t> parse_wscale_option(std::span<const std::uint8_t> options) {
+    std::size_t i = 0;
+    while (i + 1 < options.size()) {
+        const std::uint8_t kind = options[i];
+        if (kind == 0) break;
+        if (kind == 1) {
+            ++i;
+            continue;
+        }
+        const std::size_t len = options[i + 1];
+        if (len < 2 || i + len > options.size()) break;
+        if (kind == 3 && len == 3) {
+            return std::min<std::uint8_t>(options[i + 2], 14);
+        }
+        i += len;
+    }
+    return std::nullopt;
+}
+
+struct SeqLess {
+    bool operator()(std::uint32_t a, std::uint32_t b) const {
+        return seq_lt(a, b);
+    }
+};
+
+inline constexpr std::uint8_t LOCAL_WSCALE = 7;
+inline constexpr std::size_t MAX_OFO_BYTES = 2 * 1024 * 1024; // 2 MB reassembly buffer
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -222,7 +252,10 @@ public:
         const std::size_t mss = local_mss();
         // RFC 6928's initial window, the size smoltcp starts its congestion controller at.
         cwnd_ = std::min<std::size_t>(4 * mss, std::max<std::size_t>(2 * mss, 4380));
-        ssthresh_ = MAX_WINDOW;
+        ssthresh_ = 4 * 1024 * 1024;
+        dup_acks_ = 0;
+        in_fast_recovery_ = false;
+        rto_ = INITIAL_RTO;
     }
 
     [[nodiscard]] TcpState state() const { return state_; }
@@ -286,6 +319,9 @@ public:
         retx_.clear();
         tx_buf_.clear();
         rx_buf_.clear();
+        clear_ofo();
+        dup_acks_ = 0;
+        in_fast_recovery_ = false;
         next_retransmit_.reset();
         time_wait_end_.reset();
     }
@@ -301,6 +337,9 @@ public:
             retx_.clear();
             tx_buf_.clear();
             rx_buf_.clear();
+            clear_ofo();
+            dup_acks_ = 0;
+            in_fast_recovery_ = false;
             next_retransmit_.reset();
             time_wait_end_.reset();
             return;
@@ -321,12 +360,22 @@ public:
             if (seq_gt(s.ack, snd_una_)) {
                 const std::uint32_t acked = s.ack - snd_una_; // < 2^31 apart, plain subtraction
                 snd_una_ = s.ack;
-                remote_window_ = s.window;
+                remote_window_ = static_cast<std::size_t>(s.window) << remote_wscale_;
                 retire_acked();
-                grow_cwnd(acked);
+
+                // RFC 5681: exit fast recovery on fresh ACK
+                if (in_fast_recovery_) {
+                    cwnd_ = ssthresh_;
+                    in_fast_recovery_ = false;
+                } else {
+                    grow_cwnd(acked);
+                }
+
+                dup_acks_ = 0;
+                rto_ = INITIAL_RTO; // Any forward progress resets RTO backoff!
+
                 if (retx_.empty()) {
                     next_retransmit_.reset();
-                    rto_ = INITIAL_RTO;
                 } else {
                     next_retransmit_ = now + rto_;
                 }
@@ -345,9 +394,29 @@ public:
                         break;
                 }
                 if (state_ == TcpState::Closed) return;
-            } else {
-                // A duplicate ack still reports the peer's window (a zero window may open).
-                remote_window_ = s.window;
+            } else if (s.ack == snd_una_) {
+                // Duplicate ACK: update window and check for RFC 5681 Fast Retransmit
+                remote_window_ = static_cast<std::size_t>(s.window) << remote_wscale_;
+                if (parsed.payload.empty() &&
+                    (s.flags & (netpacket::TCP_SYN | netpacket::TCP_FIN)) == 0 &&
+                    !retx_.empty()) {
+                    ++dup_acks_;
+                    if (dup_acks_ == 3) {
+                        // Fast Retransmit: lost segment detected! Retransmit immediately!
+                        const RetxEntry& entry = retx_.front();
+                        if (!entry.syn && !entry.fin) {
+                            emit_packet(now, netpacket::TCP_ACK, entry.seq, rcv_nxt_, entry.data, {}, emit);
+                        }
+                        const std::size_t flight = static_cast<std::uint32_t>(snd_nxt_ - snd_una_);
+                        ssthresh_ = std::max<std::size_t>(flight / 2, 2 * segment_mss());
+                        cwnd_ = ssthresh_ + 3 * segment_mss();
+                        in_fast_recovery_ = true;
+                        next_retransmit_ = now + rto_;
+                    } else if (dup_acks_ > 3 && in_fast_recovery_) {
+                        // Inflate cwnd for additional dup ACKs
+                        cwnd_ += segment_mss();
+                    }
+                }
             }
         }
 
@@ -358,10 +427,30 @@ public:
         if (may_receive && !parsed.payload.empty()) {
             if (s.seq == rcv_nxt_) {
                 ingest_payload(parsed.payload, now, emit);
-            } else {
-                // Out of order: the data is dropped and the last ack repeated (no SACK modelled,
-                // matching the base smoltcp behaviour netstack.rs relies on).
+                drain_ofo_queue(now, emit);
+            } else if (seq_gt(s.seq, rcv_nxt_)) {
+                // Out of order: buffer segment if within receiver window and memory limits
+                const std::uint32_t offset = s.seq - rcv_nxt_;
+                const std::size_t free = cfg_.rx_buf_size > rx_buf_.size() ? cfg_.rx_buf_size - rx_buf_.size() : 0;
+                if (offset < free && ofo_bytes_ + parsed.payload.size() <= MAX_OFO_BYTES) {
+                    if (ofo_buf_.find(s.seq) == ofo_buf_.end()) {
+                        ofo_bytes_ += parsed.payload.size();
+                        ofo_buf_[s.seq] = std::vector<std::uint8_t>(parsed.payload.begin(), parsed.payload.end());
+                    }
+                }
                 emit_packet(now, netpacket::TCP_ACK, snd_una_, rcv_nxt_, {}, {}, emit);
+            } else {
+                // Segment sequence is before rcv_nxt_: check if it contains fresh bytes that overlap rcv_nxt_
+                const std::uint32_t end = seq_add(s.seq, parsed.payload.size());
+                if (seq_gt(end, rcv_nxt_)) {
+                    const std::size_t skip = static_cast<std::size_t>(rcv_nxt_ - s.seq);
+                    if (skip < parsed.payload.size()) {
+                        ingest_payload(parsed.payload.subspan(skip), now, emit);
+                        drain_ofo_queue(now, emit);
+                    }
+                } else {
+                    emit_packet(now, netpacket::TCP_ACK, snd_una_, rcv_nxt_, {}, {}, emit);
+                }
             }
         }
 
@@ -409,7 +498,7 @@ public:
         if (pending_syn_) {
             pending_syn_ = false;
             retx_.push_back(RetxEntry{iss_, {}, true, false});
-            emit_packet(now, netpacket::TCP_SYN, iss_, 0, {}, mss_option(), emit);
+            emit_packet(now, netpacket::TCP_SYN, iss_, 0, {}, syn_options(), emit);
             // The SYN occupies one sequence number, so the SYN-ACK acks iss + 1.
             snd_nxt_ = seq_add(iss_, 1);
             if (!next_retransmit_) next_retransmit_ = now + rto_;
@@ -431,7 +520,7 @@ public:
             if (!retx_.empty()) {
                 const RetxEntry& entry = retx_.front();
                 if (entry.syn) {
-                    emit_packet(now, netpacket::TCP_SYN, entry.seq, 0, {}, mss_option(), emit);
+                    emit_packet(now, netpacket::TCP_SYN, entry.seq, 0, {}, syn_options(), emit);
                 } else if (entry.fin) {
                     emit_packet(now, netpacket::TCP_FIN | netpacket::TCP_ACK, entry.seq, rcv_nxt_,
                                 {}, {}, emit);
@@ -442,8 +531,10 @@ public:
                 next_retransmit_ = now + rto_;
                 // RFC 5681: a timeout halves ssthresh and restarts cwnd at one segment.
                 const std::size_t flight = static_cast<std::uint32_t>(snd_nxt_ - snd_una_);
-                ssthresh_ = std::max<std::size_t>(flight / 2, 2 * local_mss());
-                cwnd_ = local_mss();
+                ssthresh_ = std::max<std::size_t>(flight / 2, 2 * segment_mss());
+                cwnd_ = segment_mss();
+                dup_acks_ = 0;
+                in_fast_recovery_ = false;
             } else if (remote_window_ == 0 && !tx_buf_.empty() &&
                        (state_ == TcpState::Established || state_ == TcpState::CloseWait)) {
                 // A zero-window (persist) probe: one byte, not recorded for retransmission.
@@ -529,8 +620,17 @@ private:
 
         irs_ = s.seq;
         rcv_nxt_ = seq_add(irs_, 1);
-        remote_window_ = s.window;
         remote_mss_ = parse_mss_option(s.options);
+        if (const auto ws = parse_wscale_option(s.options)) {
+            remote_wscale_ = *ws;
+            wscale_negotiated_ = true;
+            local_wscale_ = LOCAL_WSCALE;
+        } else {
+            remote_wscale_ = 0;
+            wscale_negotiated_ = false;
+            local_wscale_ = 0;
+        }
+        remote_window_ = static_cast<std::size_t>(s.window) << remote_wscale_;
         const bool acked = (s.flags & netpacket::TCP_ACK) != 0;
         state_ = acked ? TcpState::Established : TcpState::SynReceived;
         emit_packet(now, netpacket::TCP_ACK, snd_nxt_, rcv_nxt_, {}, {}, emit);
@@ -543,12 +643,48 @@ private:
         }
         if (!parsed.payload.empty() && state_ != TcpState::Closed) {
             ingest_payload(parsed.payload, now, emit);
+            drain_ofo_queue(now, emit);
         }
+    }
+
+    void drain_ofo_queue(TimePoint now, const PacketEmit& emit) {
+        while (!ofo_buf_.empty()) {
+            auto it = ofo_buf_.begin();
+            const std::uint32_t seq = it->first;
+            std::vector<std::uint8_t>& data = it->second;
+            if (seq == rcv_nxt_) {
+                ofo_bytes_ -= data.size();
+                ingest_payload(data, now, emit);
+                ofo_buf_.erase(it);
+            } else if (seq_lt(seq, rcv_nxt_)) {
+                const std::uint32_t end = seq_add(seq, data.size());
+                if (seq_gt(end, rcv_nxt_)) {
+                    const std::size_t skip = static_cast<std::size_t>(rcv_nxt_ - seq);
+                    if (skip < data.size()) {
+                        std::span<const std::uint8_t> remaining(data.data() + skip, data.size() - skip);
+                        ofo_bytes_ -= data.size();
+                        ingest_payload(remaining, now, emit);
+                    } else {
+                        ofo_bytes_ -= data.size();
+                    }
+                } else {
+                    ofo_bytes_ -= data.size();
+                }
+                ofo_buf_.erase(it);
+            } else {
+                break;
+            }
+        }
+    }
+
+    void clear_ofo() {
+        ofo_buf_.clear();
+        ofo_bytes_ = 0;
     }
 
     void ingest_payload(std::span<const std::uint8_t> payload, TimePoint now,
                         const PacketEmit& emit) {
-        const std::size_t free = cfg_.rx_buf_size - rx_buf_.size();
+        const std::size_t free = cfg_.rx_buf_size > rx_buf_.size() ? cfg_.rx_buf_size - rx_buf_.size() : 0;
         const std::size_t take = std::min(payload.size(), free);
         if (take > 0) {
             const auto first = payload.begin();
@@ -603,7 +739,7 @@ private:
         const std::size_t mss = segment_mss();
         if (mss == 0) return;
         std::size_t flight = static_cast<std::uint32_t>(snd_nxt_ - snd_una_);
-        const std::size_t limit = std::min(cwnd_, static_cast<std::size_t>(remote_window_));
+        const std::size_t limit = std::min(cwnd_, remote_window_);
         while (!tx_buf_.empty() && flight < limit) {
             const std::size_t room = limit - flight;
             const std::size_t n = std::min({tx_buf_.size(), mss, room});
@@ -632,17 +768,24 @@ private:
         return std::min(local_mss(), remote_mss_);
     }
 
-    [[nodiscard]] std::vector<std::uint8_t> mss_option() const {
+    [[nodiscard]] std::vector<std::uint8_t> syn_options() const {
         const std::uint16_t mss = static_cast<std::uint16_t>(std::min<std::size_t>(local_mss(), 0xffff));
-        std::vector<std::uint8_t> option(4, 0);
-        option[0] = 2;
+        std::vector<std::uint8_t> option(8, 0);
+        option[0] = 2; // MSS
         option[1] = 4;
         put16(option.data() + 2, mss);
+        option[4] = 1; // NOP
+        option[5] = 3; // Window Scale
+        option[6] = 3;
+        option[7] = LOCAL_WSCALE;
         return option;
     }
 
     [[nodiscard]] std::uint16_t advertise_window() const {
-        const std::size_t free = cfg_.rx_buf_size - rx_buf_.size();
+        const std::size_t free = cfg_.rx_buf_size > rx_buf_.size() ? cfg_.rx_buf_size - rx_buf_.size() : 0;
+        if (wscale_negotiated_) {
+            return static_cast<std::uint16_t>(std::min<std::size_t>(free >> local_wscale_, 65535));
+        }
         return static_cast<std::uint16_t>(std::min<std::size_t>(free, MAX_WINDOW));
     }
 
@@ -665,8 +808,14 @@ private:
     std::uint32_t snd_nxt_ = 0;
     std::uint32_t irs_ = 0;
     std::uint32_t rcv_nxt_ = 0;
-    std::uint16_t remote_window_ = MAX_WINDOW;
+    std::size_t remote_window_ = MAX_WINDOW;
+    std::uint8_t remote_wscale_ = 0;
+    std::uint8_t local_wscale_ = 0;
+    bool wscale_negotiated_ = false;
     std::size_t remote_mss_ = DEFAULT_REMOTE_MSS;
+
+    std::map<std::uint32_t, std::vector<std::uint8_t>, SeqLess> ofo_buf_;
+    std::size_t ofo_bytes_ = 0;
 
     std::deque<std::uint8_t> tx_buf_;
     std::deque<std::uint8_t> rx_buf_;
@@ -684,7 +833,9 @@ private:
     std::optional<TimePoint> time_wait_end_;
 
     std::size_t cwnd_ = 0;
-    std::size_t ssthresh_ = MAX_WINDOW;
+    std::size_t ssthresh_ = 4 * 1024 * 1024;
+    std::uint32_t dup_acks_ = 0;
+    bool in_fast_recovery_ = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -936,8 +1087,7 @@ PacketEmit NetStack::emit_fn() {
 }
 
 TickResult NetStack::tick(TimePoint now) {
-    // iface.poll (Rust wraps it in catch_unwind and clears the device queues on a panic; a C++
-    // panic has no analogue, so the guard is simply absent).
+    // 1. poll the device and sockets.
     poll(now);
 
     const bool tcp_busy = service_tcp(now);
@@ -1127,6 +1277,7 @@ void NetStack::feed_sniff(std::size_t conn_id, std::span<const std::uint8_t> byt
 bool NetStack::service_tcp(TimePoint now) {
     const PacketEmit emit = emit_fn();
     bool backpressured = false;
+    bool active_transfer = false;
 
     std::vector<std::size_t> ids;
     ids.reserve(tcp_conns_.size());
@@ -1211,6 +1362,7 @@ bool NetStack::service_tcp(TimePoint now) {
             // socket.send_slice(&st.pending).unwrap_or(0)
             const std::size_t sent = sock.send_slice(st.pending);
             if (sent > 0) {
+                active_transfer = true;
                 st.pending.erase(st.pending.begin(),
                                  st.pending.begin() + static_cast<std::ptrdiff_t>(sent));
                 // Rust: if pending.len() * 4 < capacity, shrink_to(max_tcp_pending.min(cap)).
@@ -1240,6 +1392,7 @@ bool NetStack::service_tcp(TimePoint now) {
             std::vector<std::uint8_t> chunk = sock.recv();
             if (chunk.empty()) break;
             permit.commit(std::move(chunk));
+            active_transfer = true;
             ++delivered;
         }
 
@@ -1472,7 +1625,9 @@ std::size_t NetStack::udp_conn_count() const { return udp_conns_.size(); }
 std::size_t NetStack::tx_dropped() const { return tx_dropped_; }
 std::size_t NetStack::deferred_count() const { return deferred_.size(); }
 std::size_t NetStack::device_tx_queued() const { return device_tx_.size(); }
+std::size_t NetStack::device_rx_queued() const { return device_rx_.size(); }
 std::size_t NetStack::inbound_queued() const { return inbound_.size(); }
+std::size_t NetStack::data_in_queued() const { return data_in_rx_.queued(); }
 const TcpLimits& NetStack::limits() const { return limits_; }
 
 std::size_t NetStack::pending_len(std::size_t conn_id) const {

@@ -50,6 +50,7 @@ core/spike/
 
 # Secrets and private config files
 *.toml
+configs/
 *.pem
 *.key
 

@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <mutex>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
@@ -140,6 +141,7 @@ public:
     }
 
     bool write_packet(std::span<const uint8_t> packet) override {
+        std::lock_guard<std::mutex> lock(device_mutex_);
         if (!session_ || !g_wintun.AllocateSendPacket || !g_wintun.SendPacket) return false;
         if (packet.empty() || packet.size() > 65535) return false;
 
@@ -152,11 +154,12 @@ public:
     }
 
     std::vector<uint8_t> read_packet(uint32_t wait_ms) override {
-        if (!session_ || !g_wintun.ReceivePacket || !g_wintun.ReleaseReceivePacket) return {};
-
         if (wait_ms > 0 && read_event_) {
             WaitForSingleObject(read_event_, wait_ms);
         }
+
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        if (!session_ || !g_wintun.ReceivePacket || !g_wintun.ReleaseReceivePacket) return {};
 
         DWORD size = 0;
         BYTE* pkt = g_wintun.ReceivePacket(session_, &size);
@@ -170,6 +173,7 @@ public:
     size_t drain_read_packets(
         size_t max_packets,
         const std::function<void(std::span<const uint8_t>)>& on_packet) override {
+        std::lock_guard<std::mutex> lock(device_mutex_);
         if (!session_ || !g_wintun.ReceivePacket || !g_wintun.ReleaseReceivePacket) return 0;
 
         size_t count = 0;
@@ -197,19 +201,42 @@ public:
             return false;
         }
 
-        // 2. Add peer endpoint host route (/32) to avoid routing loop
+        // 2. Configure MTU (1280 bytes to match tunnel MTU and prevent fragmentation)
+        setup_mtu();
+
+        // 3. Add peer endpoint host route (/32) to avoid routing loop
         setup_peer_bypass();
 
-        // 3. Add default routes (0.0.0.0/1 & 128.0.0.0/1)
+        // 4. Add default routes (0.0.0.0/1 & 128.0.0.0/1)
         setup_default_routes();
 
-        // 4. Configure DNS
+        // 5. Configure DNS
         setup_dns();
 
         return true;
     }
 
 private:
+    void setup_mtu() {
+        const uint32_t target_mtu = config_.mtu > 0 ? config_.mtu : 1280;
+        MIB_IPINTERFACE_ROW if_row{};
+        InitializeIpInterfaceEntry(&if_row);
+        if_row.InterfaceLuid = luid_;
+        if_row.Family = AF_INET;
+        if (GetIpInterfaceEntry(&if_row) == NO_ERROR) {
+            if_row.NlMtu = target_mtu;
+            SetIpInterfaceEntry(&if_row);
+        }
+
+        MIB_IPINTERFACE_ROW if_row6{};
+        InitializeIpInterfaceEntry(&if_row6);
+        if_row6.InterfaceLuid = luid_;
+        if_row6.Family = AF_INET6;
+        if (GetIpInterfaceEntry(&if_row6) == NO_ERROR) {
+            if_row6.NlMtu = target_mtu;
+            SetIpInterfaceEntry(&if_row6);
+        }
+    }
     void cleanup() {
         // Remove installed default routes
         if (has_r1_) {
@@ -235,14 +262,21 @@ private:
             has_bypass_ = false;
         }
 
-        // End session & close adapter
-        if (session_ && g_wintun.EndSession) {
-            g_wintun.EndSession(session_);
+        // End session & close adapter under lock
+        WINTUN_SESSION_HANDLE sess_to_end = nullptr;
+        WINTUN_ADAPTER_HANDLE adpt_to_close = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(device_mutex_);
+            sess_to_end = session_;
             session_ = nullptr;
-        }
-        if (adapter_ && g_wintun.CloseAdapter) {
-            g_wintun.CloseAdapter(adapter_);
+            adpt_to_close = adapter_;
             adapter_ = nullptr;
+        }
+        if (sess_to_end && g_wintun.EndSession) {
+            g_wintun.EndSession(sess_to_end);
+        }
+        if (adpt_to_close && g_wintun.CloseAdapter) {
+            g_wintun.CloseAdapter(adpt_to_close);
         }
     }
 
@@ -391,6 +425,7 @@ private:
         run_silent_cmd(cmd2);
     }
 
+    std::mutex device_mutex_;
     WINTUN_ADAPTER_HANDLE adapter_ = nullptr;
     WINTUN_SESSION_HANDLE session_ = nullptr;
     HANDLE read_event_ = nullptr;

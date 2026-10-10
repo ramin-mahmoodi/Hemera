@@ -199,8 +199,6 @@ struct MainWindow::Impl {
     bool home_proto_hovered_ = false;
     bool home_route_hovered_ = false;
     bool copy_btn_hovered_ = false;
-    bool try_again_hovered_ = false;
-    bool view_logs_chip_hovered_ = false;
     bool clear_logs_hovered_ = false;
     bool copy_logs_hovered_ = false;
     bool logs_copied_ = false;
@@ -867,8 +865,6 @@ struct MainWindow::Impl {
         home_proto_hovered_ = false;
         home_route_hovered_ = false;
         copy_btn_hovered_ = false;
-        try_again_hovered_ = false;
-        view_logs_chip_hovered_ = false;
         clear_logs_hovered_ = false;
         copy_logs_hovered_ = false;
         hovered_log_chip_ = -1;
@@ -1289,16 +1285,6 @@ struct MainWindow::Impl {
             float dy = y - hero_cy;
             if (dx * dx + dy * dy <= hero_rad * hero_rad) return true;
 
-            // Error state pill buttons
-            auto state = engine_->current_state();
-            if (state.kind == StateKind::Error) {
-                float stats_y = hero_cy + hero_rad + (float)scale(64 + 20, cur_dpi);
-                float pill_h = (float)scale(44, cur_dpi);
-                if (y >= stats_y && y <= stats_y + pill_h) {
-                    if (x >= hero_cx - scale_f(120, cur_dpi) && x <= hero_cx + scale_f(120, cur_dpi)) return true;
-                }
-            }
-
             // Copy SOCKS5 button in Details Card
             float card_x = (float)scale(ds.metrics.padding_x, cur_dpi);
             float card_w = w - scale_f((float)(ds.metrics.padding_x * 2), cur_dpi);
@@ -1599,30 +1585,6 @@ struct MainWindow::Impl {
             draw_stat_col(1, L"DOWN", down_str);
             std::wstring up_str = std::format(L"{:.1f} MB/s", live_up_speed_mb_);
             draw_stat_col(2, L"UP", up_str);
-        } else if (is_error) {
-            float pill_h = static_cast<float>(scale(44, cur_dpi));
-            float pill_r = static_cast<float>(scale(ds.metrics.radius_chip, cur_dpi));
-            float pill_w = static_cast<float>(scale(110, cur_dpi));
-            float gap = static_cast<float>(scale(10, cur_dpi));
-
-            float btn1_x = cur_hero_cx - pill_w - gap / 2.0f;
-            float btn2_x = cur_hero_cx + gap / 2.0f;
-            float pill_y = middle_y + (scale_f(48, cur_dpi) - pill_h) / 2.0f;
-
-            // "Try again" button
-            Color try_bg = try_again_hovered_ ? ds.colors.hover_bg : ds.colors.chip_bg;
-            Color try_bd = try_again_hovered_ ? ds.colors.border_hover_bright : ds.colors.btn_border_dim;
-            fill_rounded_rect(btn1_x, pill_y, pill_w, pill_h, pill_r, try_bg);
-            draw_rounded_rect(btn1_x, pill_y, pill_w, pill_h, pill_r, try_bd, 1.0f);
-            draw_text_rect(L"Try again", fmt_body_bold_.Get(), btn1_x, pill_y, pill_w, pill_h, ds.colors.text_primary, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-            // "View logs" button
-            Color vlg_bg = view_logs_chip_hovered_ ? ds.colors.hover_bg : ds.colors.bg;
-            Color vlg_bd = view_logs_chip_hovered_ ? ds.colors.border_hover_bright : ds.colors.btn_border;
-            fill_rounded_rect(btn2_x, pill_y, pill_w, pill_h, pill_r, vlg_bg);
-            draw_rounded_rect(btn2_x, pill_y, pill_w, pill_h, pill_r, vlg_bd, 1.0f);
-            Color vlg_txt = view_logs_chip_hovered_ ? ds.colors.text_primary : ds.colors.text_muted;
-            draw_text_rect(L"View logs", fmt_body_bold_.Get(), btn2_x, pill_y, pill_w, pill_h, vlg_txt, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
 
         // ── 5. Details Card ──
@@ -1993,7 +1955,7 @@ struct MainWindow::Impl {
 
         float about_y = sec4_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
         draw_text(L"About Hemera", fmt_body_.Get(), card_x + pad_x, about_y, ds.colors.text_primary);
-        std::wstring about_sub = L"v1.0.3   ›";
+        std::wstring about_sub = L"v1.0.4   ›";
         draw_text_right(about_sub, fmt_mono_.Get(), card_x + card_w - pad_x, about_y, ds.colors.text_muted);
 
         // Footer
@@ -2503,7 +2465,7 @@ struct MainWindow::Impl {
         draw_text_center(L"Hemera", fmt_hero_status_.Get(), cx, name_y, ds.colors.text_primary);
 
         float ver_y = name_y + scale_f(34, cur_dpi);
-        draw_text_center(L"Version 1.0.3", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
+        draw_text_center(L"Version 1.0.4", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
 
         // Subtitle text
         float desc_y = ver_y + scale_f(22, cur_dpi);
@@ -2555,7 +2517,7 @@ struct MainWindow::Impl {
         // Row 2: Releases & Updates
         float ry2 = card_y + row_h * 2.0f + text_mid_offset;
         draw_text(L"Releases & Changelog", fmt_body_.Get(), card_x + pad_x, ry2, ds.colors.text_primary);
-        draw_text_right(L"v1.0.3 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
+        draw_text_right(L"v1.0.4 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
 
         // Row 3: License
         float ry3 = card_y + row_h * 3.0f + text_mid_offset;
@@ -2889,7 +2851,7 @@ struct MainWindow::Impl {
             btn_bg = btn_hov ? ds.colors.hover_bg : Color{ 0, 0, 0, 0 };
             btn_bd = btn_hov ? ds.colors.border_hover_bright : ds.colors.card_border;
         } else if (is_error) {
-            btn_label = L"Try again";
+            btn_label = L"Connect";
             btn_bg = btn_hov ? ds.colors.hover_bg : ds.colors.chip_bg;
             btn_bd = btn_hov ? ds.colors.border_hover_bright : ds.colors.btn_border_dim;
         } else {
@@ -3125,6 +3087,8 @@ struct MainWindow::Impl {
                         auto st = engine_->current_state();
                         if (st.kind == StateKind::Connected || st.kind == StateKind::Connecting) {
                             (void)engine_->disconnect();
+                        } else if (st.kind == StateKind::Disconnecting) {
+                            // Already disconnecting, do not re-connect
                         } else {
                             (void)engine_->connect();
                         }
@@ -3593,16 +3557,6 @@ struct MainWindow::Impl {
                     impl->home_proto_hovered_ = (x >= card_x && x <= card_x + card_w && y >= card_y && y <= card_y + row_h);
                     impl->home_route_hovered_ = (x >= card_x && x <= card_x + card_w && y >= card_y + row_h && y <= card_y + row_h * 2.0f);
 
-                    auto st = impl->engine_->current_state();
-                    if (st.kind == StateKind::Error) {
-                        float pill_y = hero_cy + hero_radius + scale_f(64 + 20, cur_dpi) + (scale_f(56, cur_dpi) - scale_f(44, cur_dpi)) / 2.0f;
-                        float pill_w = scale_f(110, cur_dpi);
-                        float btn1_x = hero_cx - pill_w - scale_f(5, cur_dpi);
-                        float btn2_x = hero_cx + scale_f(5, cur_dpi);
-
-                        impl->try_again_hovered_ = (x >= btn1_x && x <= btn1_x + pill_w && y >= pill_y && y <= pill_y + scale_f(44, cur_dpi));
-                        impl->view_logs_chip_hovered_ = (x >= btn2_x && x <= btn2_x + pill_w && y >= pill_y && y <= pill_y + scale_f(44, cur_dpi));
-                    }
 
                 } else if (impl->view_ == ActiveView::Settings) {
                     float back_x = scale_f(static_cast<float>(ds.metrics.padding_x) - 10.0f, cur_dpi);
@@ -3895,10 +3849,6 @@ struct MainWindow::Impl {
                         impl->socks_copied_ = true;
                         impl->copy_timer_ = 1.5f;
                         InvalidateRect(hwnd, nullptr, FALSE);
-                    } else if (impl->try_again_hovered_) {
-                        (void)impl->engine_->connect();
-                    } else if (impl->view_logs_chip_hovered_) {
-                        impl->switch_view(ActiveView::Logs);
                     }
 
                 } else if (impl->view_ == ActiveView::Settings) {
@@ -4140,6 +4090,8 @@ struct MainWindow::Impl {
                     auto state = impl->engine_->current_state();
                     if (state.kind == StateKind::Connected || state.kind == StateKind::Connecting) {
                         (void)impl->engine_->disconnect();
+                    } else if (state.kind == StateKind::Disconnecting) {
+                        return 0; // Already disconnecting, ignore click
                     } else {
                         impl->conn_sub_text_ = L"Finding the best route";
                         auto res = impl->engine_->connect();
@@ -4159,9 +4111,6 @@ struct MainWindow::Impl {
                 impl->cached_engine_state_ = state;
                 if (state.kind == StateKind::Error) {
                     impl->shake_timer_ = 0.45f;
-                } else if (state.kind == StateKind::Idle) {
-                    _heapmin();
-                    SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
                 }
                 InvalidateRect(hwnd, nullptr, FALSE);
                 UpdateWindow(hwnd);
@@ -4290,7 +4239,9 @@ bool MainWindow::create() {
 
     impl_->engine_->set_on_log([target_hwnd](const LogLine& log) {
         auto* copy = new LogLine(log);
-        PostMessageW(target_hwnd, WM_HEMERA_LOG, 0, reinterpret_cast<LPARAM>(copy));
+        if (!PostMessageW(target_hwnd, WM_HEMERA_LOG, 0, reinterpret_cast<LPARAM>(copy))) {
+            delete copy;
+        }
     });
 
     // Pre-render the first Direct2D frame BEFORE presenting the window to the user

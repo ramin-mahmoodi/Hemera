@@ -364,11 +364,15 @@ std::expected<std::chrono::milliseconds, coreflow::Error> verify_dataplane(
             resend_at = now + std::chrono::milliseconds(wireguard::dataplane_resend_ms);
         }
 
-        // :488-490, the two sleeps' minimum.
         const auto to_deadline = deadline - now;
         const auto to_resend = resend_at - now;
         const auto slice = std::min(to_deadline, to_resend);
-        if (!wait_for(env.wait, slice)) continue;
+        const auto slice_ms = std::chrono::duration_cast<std::chrono::milliseconds>(slice);
+        if (sock.wait_readable(slice_ms)) {
+            // Socket has data ready
+        } else if (!wait_for(env.wait, std::min(slice_ms, std::chrono::milliseconds(20)))) {
+            continue;
+        }
 
         // :492-520, the recv arm. A failure here is `r?`, an io error all the way up.
         auto arrived = sock.recv();
@@ -508,7 +512,13 @@ std::expected<LiveSession, coreflow::Error> drive_verify(const VerifyParams& par
 
         const auto remaining = deadline - now;
         const auto slice = std::min(remaining, timer_due - now);
-        const bool ready = wait_for(env.wait, slice);
+        const auto slice_ms = std::chrono::duration_cast<std::chrono::milliseconds>(slice);
+        bool ready = false;
+        if (sock.wait_readable(slice_ms)) {
+            ready = true;
+        } else {
+            ready = wait_for(env.wait, std::min(slice_ms, std::chrono::milliseconds(20)));
+        }
 
         if (ready) {
             auto arrived = sock.recv();
@@ -806,7 +816,10 @@ std::expected<void, coreflow::Error> run_tunnel(Tunnel& tunnel, const Cancel& ca
                 return;
             }
             if (!arrived->has_value()) {
-                sleep_sliced(env.sleep, std::chrono::milliseconds(5), shared, cancel);
+                if (sock.wait_readable(std::chrono::milliseconds(20))) {
+                    continue;
+                }
+                if (shared.stop.load() || cancel.is_cancelled()) break;
                 continue;
             }
             auto packet = std::move(arrived->value().packet);
@@ -965,7 +978,9 @@ std::expected<void, coreflow::Error> run_tunnel(Tunnel& tunnel, const Cancel& ca
 
     {
         std::unique_lock<std::mutex> lock(shared.mutex);
-        shared.done_cv.wait(lock, [&] { return shared.done || cancel.is_cancelled(); });
+        while (!shared.done && !cancel.is_cancelled()) {
+            shared.done_cv.wait_for(lock, std::chrono::milliseconds(50));
+        }
     }
     // The select's other arm: a cancelled run reads as Cancelled, whatever won the race -- the
     // port's only addition, documented at coreflow.hpp:960-964.

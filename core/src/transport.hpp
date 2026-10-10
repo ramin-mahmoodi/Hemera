@@ -128,6 +128,9 @@ struct UdpIo {
 
     // recv_from: the datagram, nothing when the socket would block, the error text when it is gone.
     [[nodiscard]] virtual std::expected<std::optional<Arrived>, std::string> receive() = 0;
+
+    // wait_readable: waits up to timeout for datagram arrival using kernel select.
+    [[nodiscard]] virtual bool wait_readable(std::chrono::milliseconds /*timeout*/) { return false; }
 };
 
 // The real UdpIo: a non-blocking WS2 datagram socket, bound, buffered and marked the way
@@ -155,6 +158,7 @@ public:
     // same call as it is in Rust.
     [[nodiscard]] std::expected<void, std::string> connect_to(const SocketAddr& peer);
     [[nodiscard]] bool connected() const;
+    [[nodiscard]] bool wait_readable(std::chrono::milliseconds timeout) override;
 
     [[nodiscard]] SocketAddr local() const override;
     [[nodiscard]] std::expected<std::size_t, std::string> send(

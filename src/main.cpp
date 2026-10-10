@@ -20,14 +20,21 @@ static void LogCrashDirect(EXCEPTION_POINTERS* ep) {
     HANDLE h = CreateFileW(L"crash_report.txt", GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
         SetFilePointer(h, 0, nullptr, FILE_END);
-        char buf[256];
+        char buf[512];
         DWORD wr = 0;
         if (ep && ep->ExceptionRecord) {
-            snprintf(buf, sizeof(buf), "CRASH: Code=0x%lx Addr=0x%p\r\n", ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress);
+            HMODULE hMod = nullptr;
+            GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCSTR>(ep->ExceptionRecord->ExceptionAddress), &hMod);
+            char modName[MAX_PATH] = "Unknown";
+            if (hMod) GetModuleFileNameA(hMod, modName, sizeof(modName));
+            uintptr_t offset = hMod ? (reinterpret_cast<uintptr_t>(ep->ExceptionRecord->ExceptionAddress) - reinterpret_cast<uintptr_t>(hMod)) : 0;
+            snprintf(buf, sizeof(buf), "CRASH: Code=0x%lx Addr=0x%p Mod=%s+0x%llx\r\n",
+                     ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress, modName, static_cast<unsigned long long>(offset));
         } else {
             snprintf(buf, sizeof(buf), "CRASH: Unknown\r\n");
         }
-        WriteFile(h, buf, (DWORD)strlen(buf), &wr, nullptr);
+        WriteFile(h, buf, static_cast<DWORD>(strlen(buf)), &wr, nullptr);
         FlushFileBuffers(h);
         CloseHandle(h);
     }

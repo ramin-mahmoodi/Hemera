@@ -22,6 +22,7 @@
 
 #include "dns.hpp"
 #include "egress.hpp"
+#include "fragment.hpp"
 #include "https.hpp"
 #include "settings.hpp"
 #include "tls.hpp"
@@ -540,7 +541,7 @@ public:
     }
 
     // `socket`, joined to the SSL.
-    [[nodiscard]] std::expected<void, Stop> attach(Stream socket) {
+    [[nodiscard]] std::expected<void, Stop> attach(Stream socket, const Settings& settings) {
         BIO* side = nullptr;
         BIO* machine = nullptr;
         if (BIO_new_bio_pair(&side, PAIR_BUFFER, &machine, PAIR_BUFFER) != 1) {
@@ -551,6 +552,7 @@ public:
         SSL_set_bio(ssl_.get(), side, side);
         machine_.reset(machine);
         socket_ = std::move(socket);
+        fragmenter_ = FragmentWriter(FragmentConfig::configured(settings));
         return {};
     }
 
@@ -563,10 +565,19 @@ public:
             const int got = BIO_read(machine_.get(), buffer.data(),
                                      static_cast<int>(buffer.size()));
             if (got <= 0) return {};
-            if (auto sent = socket_.write(std::span(buffer).first(static_cast<std::size_t>(got)),
-                                          deadline);
-                !sent) {
-                return std::unexpected(sent.error());
+            std::span<const std::uint8_t> rest(buffer.data(), static_cast<std::size_t>(got));
+            while (!rest.empty()) {
+                std::size_t piece = rest.size();
+                std::uint64_t delay_ms = 0;
+                if (const auto plan = fragmenter_.plan(rest)) {
+                    piece = std::min(plan->len, rest.size());
+                    delay_ms = plan->delay_ms;
+                }
+                auto sent = socket_.write(rest.first(piece), deadline);
+                if (!sent) return std::unexpected(sent.error());
+                fragmenter_.advance(piece);
+                rest = rest.subspan(piece);
+                if (delay_ms > 0) ::Sleep(static_cast<DWORD>(delay_ms));
             }
         }
     }
@@ -575,6 +586,7 @@ public:
     // which is also what empties the pair as far as it can be emptied. The read is cut to what the
     // pair has room for, so the whole of it always goes in.
     [[nodiscard]] std::expected<bool, Stop> feed(const Deadline& deadline) {
+        fragmenter_.stop();
         if (auto out = flush(deadline); !out) return std::unexpected(out.error());
         const std::size_t room = BIO_ctrl_get_write_guarantee(machine_.get());
         if (room == 0) {
@@ -709,6 +721,7 @@ private:
     OwnedBio machine_;
     OwnedSsl ssl_;
     Stream socket_;
+    FragmentWriter fragmenter_{FragmentConfig::disabled()};
 };
 
 // https.rs's `configuration`: the fingerprint's TLS, offering HTTP/2 then HTTP/1.1. Server-certificate
@@ -776,7 +789,7 @@ std::expected<Hello, Stop> hello(const Attempt& attempt_state, bool retried) {
     auto socket = dial(attempt_state.address, attempt_state.port, attempt_state.deadline,
                        attempt_state.settings, attempt_state.notes);
     if (!socket) return std::unexpected(socket.error());
-    if (auto joined = link->attach(std::move(*socket)); !joined) {
+    if (auto joined = link->attach(std::move(*socket), attempt_state.settings); !joined) {
         return std::unexpected(joined.error());
     }
 

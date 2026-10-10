@@ -723,7 +723,9 @@ public:
     // The write backlog a connection carries (Rust's TcpState::pending); 0 for an unknown id.
     [[nodiscard]] std::size_t pending_len(std::size_t conn_id) const;
     [[nodiscard]] std::size_t device_tx_queued() const;
+    [[nodiscard]] std::size_t device_rx_queued() const;
     [[nodiscard]] std::size_t inbound_queued() const;
+    [[nodiscard]] std::size_t data_in_queued() const;
     [[nodiscard]] const TcpLimits& limits() const;
 
 private:

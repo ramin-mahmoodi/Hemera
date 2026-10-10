@@ -32,6 +32,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <filesystem>
 #include <vector>
 
 namespace hemera::core::coreflow {
@@ -1167,6 +1168,20 @@ std::expected<Identity, Error> load_or_provision_warp(const Settings& settings,
     auto loaded = ::hemera::core::load_identity(config_path);
     if (!loaded.has_value()) return std::unexpected(file_error(loaded.error()));
 
+    if (!loaded->has_value()) {
+        std::filesystem::path p(config_path);
+        std::string fname = p.filename().string();
+        if (fname.starts_with("hemera")) {
+            std::filesystem::path alt_path = p.parent_path() / ("aether" + fname.substr(6));
+            if (std::filesystem::exists(alt_path)) {
+                auto alt_loaded = ::hemera::core::load_identity(alt_path.string());
+                if (alt_loaded.has_value() && alt_loaded->has_value()) {
+                    loaded = std::move(alt_loaded);
+                }
+            }
+        }
+    }
+
     if (loaded->has_value()) {
         note_info(notes, loaded_warp_identity_line(config_path));
         // adopt_team_profile writes HEMERA_TEAM_ENDPOINT, which MasqueFlow reads back from this
@@ -1202,6 +1217,40 @@ std::expected<Identity, Error> load_or_enrol_masque(const Settings& settings,
                                                    const AccountSeams& seams, Notes& notes) {
     auto loaded = ::hemera::core::load_identity(config_path);
     if (!loaded.has_value()) return std::unexpected(file_error(loaded.error()));
+
+    if (!loaded->has_value()) {
+        std::filesystem::path p(config_path);
+        std::string fname = p.filename().string();
+        if (fname.starts_with("hemera")) {
+            std::filesystem::path alt_path = p.parent_path() / ("aether" + fname.substr(6));
+            if (std::filesystem::exists(alt_path)) {
+                auto alt_loaded = ::hemera::core::load_identity(alt_path.string());
+                if (alt_loaded.has_value() && alt_loaded->has_value()) {
+                    loaded = std::move(alt_loaded);
+                }
+            }
+        }
+    }
+
+    if (!loaded->has_value()) {
+        // Fallback: check if an existing WARP account exists so we don't register from scratch
+        const std::string base_cfg = base_config_path(settings);
+        const std::string warp_path = warp_config_path(settings, base_cfg);
+        auto warp_loaded = ::hemera::core::load_identity(warp_path);
+        if (!warp_loaded.has_value() || !warp_loaded->has_value()) {
+            std::filesystem::path wp(warp_path);
+            std::string wname = wp.filename().string();
+            if (wname.starts_with("hemera")) {
+                std::filesystem::path alt_wp = wp.parent_path() / ("aether" + wname.substr(6));
+                if (std::filesystem::exists(alt_wp)) {
+                    warp_loaded = ::hemera::core::load_identity(alt_wp.string());
+                }
+            }
+        }
+        if (warp_loaded.has_value() && warp_loaded->has_value() && !(*warp_loaded)->device_id.empty()) {
+            loaded = std::move(warp_loaded);
+        }
+    }
 
     if (loaded->has_value()) {
         note_info(notes, loaded_masque_identity_line(config_path));
@@ -1323,7 +1372,13 @@ std::expected<std::optional<std::vector<std::uint8_t>>, Error> resolve_ech(
         [&]() -> std::expected<std::vector<std::uint8_t>, std::string> {
             return ::hemera::core::fetch_ech_config(settings, transport);
         });
-    if (!key.has_value()) return std::unexpected(Error{ErrorKind::Ech, key.error()});
+    if (!key.has_value()) {
+        if (setting.has_value() && lower(trim_str(*setting)) == "auto") {
+            note_info(notes, "ECH auto lookup failed; continuing without ECH");
+            return std::nullopt;
+        }
+        return std::unexpected(Error{ErrorKind::Ech, key.error()});
+    }
     if (!key->has_value()) note_info(notes, std::string(ECH_OFF_LINE));
     return *key;
 }

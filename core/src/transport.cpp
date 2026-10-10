@@ -283,6 +283,17 @@ std::expected<std::optional<Arrived>, std::string> WinUdp::receive() {
     return std::optional<Arrived>{std::move(arrived)};
 }
 
+bool WinUdp::wait_readable(std::chrono::milliseconds timeout) {
+    if (!impl_ || impl_->fd == INVALID_SOCKET) return false;
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(impl_->fd, &read_fds);
+    timeval tv{};
+    tv.tv_sec = static_cast<long>(timeout.count() / 1000);
+    tv.tv_usec = static_cast<long>((timeout.count() % 1000) * 1000);
+    return ::select(0, &read_fds, nullptr, nullptr, &tv) > 0;
+}
+
 // ---------------------------------------------------------------------------
 // The numbers bring-up runs on.
 

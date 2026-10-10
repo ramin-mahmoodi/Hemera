@@ -141,7 +141,7 @@ add_executable(Hemera WIN32
     gui_resources.rc
 )
 
-target_link_options(Hemera PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:wWinMainCRTStartup")
+target_link_options(Hemera PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:wWinMainCRTStartup" "/DEBUG" "/MAP:Hemera.map")
 target_link_directories(Hemera PRIVATE ${VENDOR_LINK_DIRS})
 
 target_include_directories(Hemera PRIVATE
@@ -208,6 +208,20 @@ if(WINTUN_SRC)
             "${WINTUN_SRC}"
             "$<TARGET_FILE_DIR:Hemera>/wintun.dll"
     )
+endif()
+
+# Copy default pre-enrolled identity configs to target directory
+file(GLOB CONFIG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/configs/*.toml")
+if(CONFIG_FILES)
+    file(COPY ${CONFIG_FILES} DESTINATION "${CMAKE_BINARY_DIR}")
+    foreach(CFG ${CONFIG_FILES})
+        get_filename_component(CFG_NAME ${CFG} NAME)
+        add_custom_command(TARGET Hemera POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CFG}"
+                "$<TARGET_FILE_DIR:Hemera>/${CFG_NAME}"
+        )
+    endforeach()
 endif()
 
 # Automated Test Suite (Console executable) - built only if tests exist

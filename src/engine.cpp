@@ -29,6 +29,15 @@ namespace hemera {
 
 namespace {
 
+std::filesystem::path get_exe_dir() {
+    wchar_t buf[MAX_PATH];
+    DWORD len = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        return std::filesystem::path(buf).parent_path();
+    }
+    return std::filesystem::current_path();
+}
+
 std::filesystem::path get_roaming_appdata_dir() {
     std::filesystem::path base;
     PWSTR path = nullptr;
@@ -47,13 +56,30 @@ std::filesystem::path get_roaming_appdata_dir() {
     }
 
     std::filesystem::path hemera_dir = base / "Hemera";
-    std::filesystem::path old_hemera_dir = base / "Hemera";
+    std::filesystem::path old_aether_dir = base / "Aether";
+    std::error_code ec;
+    std::filesystem::create_directories(hemera_dir, ec);
 
-    // Smooth migration: copy existing configuration if Hemera directory is fresh
-    if (!std::filesystem::exists(hemera_dir) && std::filesystem::exists(old_hemera_dir)) {
-        std::error_code ec;
-        std::filesystem::create_directories(hemera_dir, ec);
-        std::filesystem::copy(old_hemera_dir, hemera_dir, std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing, ec);
+    // Smooth migration: check multiple locations for pre-existing identities
+    auto try_adopt = [&](const std::filesystem::path& src, const std::string& target_filename) {
+        std::filesystem::path dst = hemera_dir / target_filename;
+        if (!std::filesystem::exists(dst) && std::filesystem::exists(src)) {
+            std::filesystem::copy_file(src, dst, std::filesystem::copy_options::skip_existing, ec);
+        }
+    };
+
+    const std::filesystem::path exe_dir = get_exe_dir();
+    const std::filesystem::path cur_dir = std::filesystem::current_path();
+
+    for (const auto& search_dir : {exe_dir, cur_dir, old_aether_dir}) {
+        try_adopt(search_dir / "hemera.toml", "hemera.toml");
+        try_adopt(search_dir / "aether.toml", "hemera.toml");
+        try_adopt(search_dir / "hemera-secondary.toml", "hemera-secondary.toml");
+        try_adopt(search_dir / "aether-secondary.toml", "hemera-secondary.toml");
+        try_adopt(search_dir / "hemera-masque.toml", "hemera-masque.toml");
+        try_adopt(search_dir / "aether-masque.toml", "hemera-masque.toml");
+        try_adopt(search_dir / "hemera-masque-secondary.toml", "hemera-masque-secondary.toml");
+        try_adopt(search_dir / "aether-masque-secondary.toml", "hemera-masque-secondary.toml");
     }
 
     return hemera_dir;
@@ -109,14 +135,18 @@ struct HemeraEngine::Impl {
 
     void stop_core_thread() {
         cancel_token.cancel();
-        if (core_thread && core_thread->joinable()) {
-            if (core_thread->get_id() != std::this_thread::get_id()) {
-                core_thread->join();
+        std::unique_ptr<std::thread> to_join;
+        {
+            std::lock_guard lock(mutex);
+            to_join = std::move(core_thread);
+        }
+        if (to_join && to_join->joinable()) {
+            if (to_join->get_id() != std::this_thread::get_id()) {
+                to_join->join();
             } else {
-                core_thread->detach();
+                to_join->detach();
             }
         }
-        core_thread.reset();
     }
 
     void emit_state(const ConnectionState& new_state) {
@@ -257,6 +287,9 @@ LiveStats HemeraEngine::current_stats() const {
 }
 
 std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionProfile> custom_profile) {
+    // Stop and cleanly join any previous core thread before launching a new one (outside lock to prevent deadlocks)
+    impl_->stop_core_thread();
+
     std::lock_guard lock(impl_->mutex);
 
     if (impl_->state.kind == StateKind::Connected || impl_->state.kind == StateKind::Connecting) {
@@ -275,16 +308,12 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
     impl_->profile = prof;
     impl_->cancel_token = hemera::core::Cancel();
 
-    // Clean up any old thread
-    if (impl_->core_thread && impl_->core_thread->joinable()) {
-        impl_->core_thread->detach();
-    }
-
     impl_->emit_state({.kind = StateKind::Connecting});
 
     impl_->core_thread = std::make_unique<std::thread>([this, prof, cancel = impl_->cancel_token]() mutable {
         std::vector<std::string> args = prof.as_args();
         std::map<std::string, std::string> env;
+        env["HEMERA_CONFIG"] = (impl_->data_dir / "hemera.toml").string();
         if (prof.tun_mode) env["HEMERA_TUN_MODE"] = "1";
         if (prof.masque_http2) env["HEMERA_MASQUE_HTTP2"] = "1";
         if (prof.fragment) {
@@ -305,6 +334,8 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
         if (!prof.access_client_id.empty()) env["HEMERA_ACCESS_CLIENT_ID"] = prof.access_client_id;
         if (!prof.access_client_secret.empty()) env["HEMERA_ACCESS_CLIENT_SECRET"] = prof.access_client_secret;
         if (!prof.access_token.empty()) env["HEMERA_ACCESS_TOKEN"] = prof.access_token;
+        env["HEMERA_WG_VALIDATE_SECS"] = "30";
+        env["HEMERA_WG_STALE_SECS"] = "45";
 
         hemera::core::InprocCallbacks cbs;
         cbs.on_log = [this](std::string_view l) {
@@ -370,16 +401,18 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
                 .kind = StateKind::Idle
             });
         }
-
-        // Reclaim network stack, crypto contexts, and CRT heap buffers on disconnect
-        _heapmin();
-        SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
     });
 
     return {};
 }
 
 std::expected<void, std::string> HemeraEngine::disconnect() {
+    {
+        std::lock_guard lock(impl_->mutex);
+        if (impl_->state.kind == StateKind::Disconnecting || impl_->state.kind == StateKind::Idle) {
+            return {};
+        }
+    }
     impl_->emit_state({.kind = StateKind::Disconnecting});
     impl_->cancel_token.cancel();
 
@@ -392,9 +425,6 @@ std::expected<void, std::string> HemeraEngine::disconnect() {
         sysproxy::restore(impl_->backup_file);
     }
 
-    impl_->emit_state({.kind = StateKind::Idle});
-    _heapmin();
-    SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
     return {};
 }
 
