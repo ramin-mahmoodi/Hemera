@@ -141,7 +141,7 @@ public:
     }
 
     bool write_packet(std::span<const uint8_t> packet) override {
-        std::lock_guard<std::mutex> lock(device_mutex_);
+        std::lock_guard<std::mutex> lock(send_mutex_);
         if (!session_ || !g_wintun.AllocateSendPacket || !g_wintun.SendPacket) return false;
         if (packet.empty() || packet.size() > 65535) return false;
 
@@ -158,7 +158,7 @@ public:
             WaitForSingleObject(read_event_, wait_ms);
         }
 
-        std::lock_guard<std::mutex> lock(device_mutex_);
+        std::lock_guard<std::mutex> lock(recv_mutex_);
         if (!session_ || !g_wintun.ReceivePacket || !g_wintun.ReleaseReceivePacket) return {};
 
         DWORD size = 0;
@@ -172,8 +172,8 @@ public:
 
     size_t drain_read_packets(
         size_t max_packets,
-        const std::function<void(std::span<const uint8_t>)>& on_packet) override {
-        std::lock_guard<std::mutex> lock(device_mutex_);
+        const std::function<bool(std::span<const uint8_t>)>& on_packet) override {
+        std::lock_guard<std::mutex> lock(recv_mutex_);
         if (!session_ || !g_wintun.ReceivePacket || !g_wintun.ReleaseReceivePacket) return 0;
 
         size_t count = 0;
@@ -183,7 +183,10 @@ public:
             if (!pkt) break;
 
             if (on_packet && size > 0) {
-                on_packet(std::span<const uint8_t>(pkt, size));
+                if (!on_packet(std::span<const uint8_t>(pkt, size))) {
+                    // Backpressure: consumer is full. Leave packet in Wintun ring without releasing it.
+                    break;
+                }
             }
             g_wintun.ReleaseReceivePacket(session_, pkt);
             count++;
@@ -266,7 +269,7 @@ private:
         WINTUN_SESSION_HANDLE sess_to_end = nullptr;
         WINTUN_ADAPTER_HANDLE adpt_to_close = nullptr;
         {
-            std::lock_guard<std::mutex> lock(device_mutex_);
+            std::scoped_lock lock(send_mutex_, recv_mutex_);
             sess_to_end = session_;
             session_ = nullptr;
             adpt_to_close = adapter_;
@@ -425,7 +428,8 @@ private:
         run_silent_cmd(cmd2);
     }
 
-    std::mutex device_mutex_;
+    std::mutex send_mutex_;
+    std::mutex recv_mutex_;
     WINTUN_ADAPTER_HANDLE adapter_ = nullptr;
     WINTUN_SESSION_HANDLE session_ = nullptr;
     HANDLE read_event_ = nullptr;

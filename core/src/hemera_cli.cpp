@@ -1513,21 +1513,20 @@ public:
     void notify_app() {
         {
             std::lock_guard<std::mutex> lk(app_cv_mutex_);
-            has_app_data_ = true;
+            ++app_epoch_;
         }
         app_cv_.notify_all();
     }
 
     void wait_app(std::chrono::milliseconds timeout, const eg::Stop* stop = nullptr) {
         std::unique_lock<std::mutex> lk(app_cv_mutex_);
-        if (has_app_data_ || stop_.asked() || finished_ || (stop && stop->asked()) || timeout.count() <= 0) {
-            has_app_data_ = false;
+        const auto epoch_before = app_epoch_;
+        if (stop_.asked() || finished_ || (stop && stop->asked()) || timeout.count() <= 0) {
             return;
         }
         app_cv_.wait_for(lk, timeout, [&] {
-            return has_app_data_ || stop_.asked() || finished_ || (stop && stop->asked());
+            return app_epoch_ != epoch_before || stop_.asked() || finished_ || (stop && stop->asked());
         });
-        has_app_data_ = false;
     }
 
     // ---- the pump thread's side -------------------------------------------------------------
@@ -1671,7 +1670,7 @@ private:
     CliStackObserver stack_observer_;
     mutable std::mutex app_cv_mutex_;
     std::condition_variable app_cv_;
-    bool has_app_data_ = false;
+    std::uint64_t app_epoch_ = 0;
 };
 
 ns::SendOutcome QueueSink::try_send(std::span<const std::uint8_t> packet) {
@@ -1827,12 +1826,19 @@ void run_quic_hop(Hop& hop, quic::TunnelConfig tunnel, const Settings& settings,
         if (session.ready() && !hop.ready()) hop.set_ready();
 
         const auto delay = tick.delay.value_or(std::chrono::milliseconds(20));
-        if (session.ready() && !closing && delay.count() > 0) {
-            if (auto pkt = hop.queue().pull_wait(delay)) {
-                hop.queue().push_front(std::move(*pkt));
+        if (delay.count() > 0 && !closing) {
+            const auto deadline = std::chrono::steady_clock::now() + delay;
+            while (std::chrono::steady_clock::now() < deadline && !cancel.is_cancelled() && !hop.stop().asked()) {
+                if ((*io)->wait_readable(std::chrono::milliseconds(2))) {
+                    break;
+                }
+                if (session.ready()) {
+                    if (auto pkt = hop.queue().pull_wait(std::chrono::milliseconds(0))) {
+                        hop.queue().push_front(std::move(*pkt));
+                        break;
+                    }
+                }
             }
-        } else {
-            interruptible_sleep_ms(delay, cancel);
         }
         if (closing) break; // one turn after the close went out is all the flush needs
     }
@@ -3268,13 +3274,18 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
         while (!cancel.is_cancelled() && !hop.stop().asked()) {
             DWORD wait = WaitForSingleObject(read_ev, 50);
             if (wait == WAIT_OBJECT_0) {
-                dev->drain_read_packets(64, [&hop](std::span<const uint8_t> pkt) {
-                    while (!hop.stop().asked()) {
-                        const auto outcome = hop.queue().push(pkt);
-                        if (outcome == ns::SendOutcome::Ok || outcome == ns::SendOutcome::Closed) break;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                bool backpressured = false;
+                dev->drain_read_packets(64, [&hop, &backpressured](std::span<const uint8_t> pkt) -> bool {
+                    const auto outcome = hop.queue().push(pkt);
+                    if (outcome == ns::SendOutcome::Full) {
+                        backpressured = true;
+                        return false;
                     }
+                    return outcome == ns::SendOutcome::Ok;
                 });
+                if (backpressured) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
             }
         }
     }));

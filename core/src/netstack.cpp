@@ -371,21 +371,29 @@ public:
                 retire_acked();
 
                 // Karn/Jacobson RTT calculation (RFC 6298)
-                if (rtt_time_.has_value() && !rtt_retransmitted_ && seq_geq(s.ack, rtt_seq_)) {
-                    const auto measured = std::chrono::duration_cast<Millis>(now - *rtt_time_);
-                    if (!rtt_initialized_) {
-                        srtt_ = measured;
-                        rttvar_ = measured / 2;
-                        rtt_initialized_ = true;
-                    } else {
-                        const auto diff = (measured > srtt_) ? (measured - srtt_) : (srtt_ - measured);
-                        rttvar_ = (3 * rttvar_ + diff) / 4;
-                        srtt_ = (7 * srtt_ + measured) / 8;
+                const Millis g{50}; // minimum timer granularity
+                if (rtt_time_.has_value()) {
+                    if (seq_geq(s.ack, rtt_seq_)) {
+                        if (!rtt_retransmitted_) {
+                            const auto measured = std::chrono::duration_cast<Millis>(now - *rtt_time_);
+                            if (!rtt_initialized_) {
+                                srtt_ = measured;
+                                rttvar_ = measured / 2;
+                                rtt_initialized_ = true;
+                            } else {
+                                const auto diff = (measured > srtt_) ? (measured - srtt_) : (srtt_ - measured);
+                                rttvar_ = (3 * rttvar_ + diff) / 4;
+                                srtt_ = (7 * srtt_ + measured) / 8;
+                            }
+                        }
+                        rtt_time_.reset();
+                        rtt_retransmitted_ = false;
                     }
-                    const Millis g{50}; // minimum timer granularity
+                }
+                // When fresh data is acknowledged, reset any backoff back to estimated RTO
+                if (rtt_initialized_) {
                     rto_ = std::clamp(srtt_ + std::max(g, 4 * rttvar_), Millis{100}, MAX_RTO);
-                    rtt_time_.reset();
-                } else if (!rtt_initialized_) {
+                } else {
                     rto_ = INITIAL_RTO;
                 }
 
@@ -451,6 +459,7 @@ public:
                         if (!entry.syn && !entry.fin) {
                             emit_packet(now, netpacket::TCP_ACK, entry.seq, rcv_nxt_, entry.data, {}, emit);
                         }
+                        rtt_time_.reset(); // Karn: discard in-flight sample on retransmission
                         rtt_retransmitted_ = true;
                         const std::size_t flight = static_cast<std::uint32_t>(snd_nxt_ - snd_una_);
                         ssthresh_ = std::max<std::size_t>(flight / 2, 2 * segment_mss());
@@ -573,6 +582,7 @@ public:
                 } else {
                     emit_packet(now, netpacket::TCP_ACK, entry.seq, rcv_nxt_, entry.data, {}, emit);
                 }
+                rtt_time_.reset(); // Karn: discard in-flight sample on retransmission
                 rtt_retransmitted_ = true;
                 rto_ = std::min<Millis>(rto_ * 2, MAX_RTO);
                 next_retransmit_ = now + rto_;
@@ -778,6 +788,10 @@ private:
         } else {
             // Congestion avoidance: cwnd += MSS * acked / cwnd, at least a byte.
             cwnd_ += std::max<std::size_t>(1, (mss * static_cast<std::size_t>(acked_bytes)) / cwnd_);
+        }
+        // Cap cwnd_ to socket send buffer capacity to prevent bursting beyond carrier capacity
+        if (cwnd_ > cfg_.tx_buf_size) {
+            cwnd_ = cfg_.tx_buf_size;
         }
     }
 
@@ -1339,7 +1353,6 @@ void NetStack::feed_sniff(std::size_t conn_id, std::span<const std::uint8_t> byt
 bool NetStack::service_tcp(TimePoint now) {
     const PacketEmit emit = emit_fn();
     bool backpressured = false;
-    bool active_transfer = false;
 
     std::vector<std::size_t> ids;
     ids.reserve(tcp_conns_.size());
@@ -1424,7 +1437,6 @@ bool NetStack::service_tcp(TimePoint now) {
             // socket.send_slice(&st.pending).unwrap_or(0)
             const std::size_t sent = sock.send_slice(st.pending);
             if (sent > 0) {
-                active_transfer = true;
                 st.pending.erase(st.pending.begin(),
                                  st.pending.begin() + static_cast<std::ptrdiff_t>(sent));
                 // Rust: if pending.len() * 4 < capacity, shrink_to(max_tcp_pending.min(cap)).
@@ -1454,7 +1466,6 @@ bool NetStack::service_tcp(TimePoint now) {
             std::vector<std::uint8_t> chunk = sock.recv();
             if (chunk.empty()) break;
             permit.commit(std::move(chunk));
-            active_transfer = true;
             ++delivered;
         }
 
@@ -1480,7 +1491,6 @@ bool NetStack::service_tcp(TimePoint now) {
         }
     }
 
-    (void)active_transfer;
     return backpressured;
 }
 

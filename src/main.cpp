@@ -75,10 +75,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PWSTR pCmd
     // High-DPI Awareness v2
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    // Disable Windows 11 EcoQoS (Power Throttling) so background/tray execution maintains high timer resolution and full throughput
+#ifndef PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+#define PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION 0x00000004
+#endif
+
+    // Disable Windows 11 EcoQoS (Power Throttling) and preserve 1ms timer resolution in background/tray
     PROCESS_POWER_THROTTLING_STATE power_throttling{};
     power_throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
-    power_throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    power_throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
     power_throttling.StateMask = 0;
     SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &power_throttling, sizeof(power_throttling));
 
