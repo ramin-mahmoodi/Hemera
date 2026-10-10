@@ -38,7 +38,7 @@
 namespace hemera::core::ffi {
 
 // env!("CARGO_PKG_VERSION") of the pinned crate: what hemera_version reports.
-inline constexpr std::string_view CORE_VERSION = "2.3.0";
+inline constexpr std::string_view CORE_VERSION = "1.0.5";
 
 // ffi.rs's `type Reply = Result<Value, String>`.
 using Reply = std::expected<json::Value, std::string>;

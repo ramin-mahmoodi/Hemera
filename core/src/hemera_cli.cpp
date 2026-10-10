@@ -1331,6 +1331,11 @@ public:
         if (outcome == ns::SendOutcome::Ok) cv_.notify_one();
         return outcome;
     }
+    void push_front(std::vector<std::uint8_t> packet) {
+        std::lock_guard<std::mutex> lock(cv_mutex_);
+        rx_.push_front(std::move(packet));
+        cv_.notify_one();
+    }
     // outbound_rx.recv() at a carrier's pace: nothing when the queue is empty.
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> pull() {
         std::lock_guard<std::mutex> lock(cv_mutex_);
@@ -1429,6 +1434,17 @@ private:
     bool gone_ = false;
 };
 
+class CliStackObserver final : public ns::StackObserver {
+public:
+    void on_drop_report(std::size_t total_dropped) override {
+        emit(Level::Warn, "[-] [netstack] dropped " + std::to_string(total_dropped) +
+                          " outbound packets under pressure");
+    }
+    void on_addrs_synced() override {
+        emit(Level::Info, "[+] netstack addresses synchronized from edge capsule");
+    }
+};
+
 // One hop: the packet engine, the two data-plane queues, the carrier's threads and the answers the
 // reconnect loop reads (ready, finished, error). Rust builds exactly this shape inside
 // establish_masque -- netstack::spawn + quic::channels() + the addr bridge task + the ready oneshot
@@ -1455,6 +1471,7 @@ public:
             settings, identity.ipv4, identity.ipv6, mtu_);
         config.outbound = &sink_;
         config.routes = &routes;
+        config.observer = &stack_observer_;
         auto spawned = ns::NetStack::spawn(config, std::chrono::steady_clock::now());
         if (!spawned.has_value()) return std::unexpected(spawned.error());
         stack_ = std::move(*spawned);
@@ -1464,6 +1481,7 @@ public:
     ~Hop() {
         stop_.set();
         notify_data();
+        notify_app();
         control_.shutdown();
         join_carriers();
         {
@@ -1482,7 +1500,7 @@ public:
 
     void wait_data(std::chrono::milliseconds timeout, const Cancel& cancel) {
         std::unique_lock<std::mutex> lk(data_cv_mutex_);
-        if (has_data_ || stop_.asked() || finished_ || cancel.is_cancelled()) {
+        if (has_data_ || stop_.asked() || finished_ || cancel.is_cancelled() || timeout.count() <= 0) {
             has_data_ = false;
             return;
         }
@@ -1490,6 +1508,26 @@ public:
             return has_data_ || stop_.asked() || finished_ || cancel.is_cancelled();
         });
         has_data_ = false;
+    }
+
+    void notify_app() {
+        {
+            std::lock_guard<std::mutex> lk(app_cv_mutex_);
+            has_app_data_ = true;
+        }
+        app_cv_.notify_all();
+    }
+
+    void wait_app(std::chrono::milliseconds timeout, const eg::Stop* stop = nullptr) {
+        std::unique_lock<std::mutex> lk(app_cv_mutex_);
+        if (has_app_data_ || stop_.asked() || finished_ || (stop && stop->asked()) || timeout.count() <= 0) {
+            has_app_data_ = false;
+            return;
+        }
+        app_cv_.wait_for(lk, timeout, [&] {
+            return has_app_data_ || stop_.asked() || finished_ || (stop && stop->asked());
+        });
+        has_app_data_ = false;
     }
 
     // ---- the pump thread's side -------------------------------------------------------------
@@ -1502,16 +1540,20 @@ public:
 
     // One turn of the Rust's netstack run loop.
     void tick_stack() {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        if (!stack_) return;
-        auto now = std::chrono::steady_clock::now();
-        last_tick_ = stack_->tick(now).delay.value_or(std::chrono::milliseconds(20));
-        std::size_t turns = 0;
-        while ((stack_->device_rx_queued() > 0 || stack_->inbound_queued() > 0 ||
-                stack_->device_tx_queued() > 0 || stack_->data_in_queued() > 0) && turns < 64) {
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (!stack_) return;
+            auto now = std::chrono::steady_clock::now();
             last_tick_ = stack_->tick(now).delay.value_or(std::chrono::milliseconds(20));
-            ++turns;
+            std::size_t turns = 0;
+            while ((stack_->device_rx_queued() > 0 || stack_->inbound_queued() > 0 ||
+                    stack_->device_tx_queued() > 0 || stack_->data_in_queued() > 0) && turns < 64) {
+                now = std::chrono::steady_clock::now();
+                last_tick_ = stack_->tick(now).delay.value_or(std::chrono::milliseconds(20));
+                ++turns;
+            }
         }
+        notify_app();
     }
     [[nodiscard]] std::chrono::milliseconds last_tick_delay() const { return last_tick_; }
     [[nodiscard]] std::size_t mtu() const { return mtu_; }
@@ -1559,11 +1601,15 @@ public:
     // The tunnel task's return: Ok(()) is nothing, Err(e) the text. First answer wins, as Rust's
     // select is first-past.
     void finish(std::optional<std::string> error) {
-        const std::lock_guard<std::mutex> lock(ready_mutex_);
-        if (finished_) return;
-        finished_ = true;
-        error_ = std::move(error);
-        ready_cv_.notify_all();
+        {
+            const std::lock_guard<std::mutex> lock(ready_mutex_);
+            if (finished_) return;
+            finished_ = true;
+            error_ = std::move(error);
+            ready_cv_.notify_all();
+        }
+        notify_data();
+        notify_app();
     }
     [[nodiscard]] bool finished() const {
         const std::lock_guard<std::mutex> lock(ready_mutex_);
@@ -1581,6 +1627,7 @@ public:
     void join_carriers() {
         stop_.set();
         notify_data();
+        notify_app();
         control_.shutdown();
         for (std::thread& thread : threads_) {
             if (thread.joinable()) {
@@ -1621,6 +1668,10 @@ private:
     mutable std::mutex data_cv_mutex_;
     std::condition_variable data_cv_;
     bool has_data_ = false;
+    CliStackObserver stack_observer_;
+    mutable std::mutex app_cv_mutex_;
+    std::condition_variable app_cv_;
+    bool has_app_data_ = false;
 };
 
 ns::SendOutcome QueueSink::try_send(std::span<const std::uint8_t> packet) {
@@ -1695,7 +1746,7 @@ void pump_hop(Hop& hop, const Cancel& cancel) {
         hop.tick_stack();
         auto delay = hop.last_tick_delay();
         if (delay.count() <= 0) {
-            delay = std::chrono::milliseconds(10);
+            delay = std::chrono::milliseconds(0);
         }
         hop.wait_data(delay, cancel);
     }
@@ -1751,6 +1802,19 @@ void run_quic_hop(Hop& hop, quic::TunnelConfig tunnel, const Settings& settings,
             session.control(quic::Control::Close);
             closing = true;
         }
+
+        // quic.rs's outbound_rx: drain queued IP packets from the netstack to the QUIC session
+        if (session.ready() && !closing) {
+            while (auto pkt = hop.queue().pull()) {
+                const auto room = session.send_ip_packet(*pkt);
+                if (room == tr::Room::Full) {
+                    hop.queue().push_front(std::move(*pkt));
+                    break;
+                }
+                if (room == tr::Room::Closed) break;
+            }
+        }
+
         const auto tick = session.tick(now);
         if (tick.error.has_value()) {
             hop.finish(*tick.error);
@@ -1761,7 +1825,15 @@ void run_quic_hop(Hop& hop, quic::TunnelConfig tunnel, const Settings& settings,
             break;
         }
         if (session.ready() && !hop.ready()) hop.set_ready();
-        interruptible_sleep_ms(tick.delay.value_or(std::chrono::milliseconds(20)), cancel);
+
+        const auto delay = tick.delay.value_or(std::chrono::milliseconds(20));
+        if (session.ready() && !closing && delay.count() > 0) {
+            if (auto pkt = hop.queue().pull_wait(delay)) {
+                hop.queue().push_front(std::move(*pkt));
+            }
+        } else {
+            interruptible_sleep_ms(delay, cancel);
+        }
         if (closing) break; // one turn after the close went out is all the flush needs
     }
     if (!hop.finished()) hop.finish(std::nullopt);
@@ -1896,7 +1968,7 @@ public:
             if (wait.count() > 0 && std::chrono::steady_clock::now() >= finish) {
                 return eg::ReadAttempt{eg::ReadAttempt::Kind::Timeout, 0, {}};
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            hop_.wait_app(wait.count() > 0 ? std::min(wait, eg::Millis(10)) : eg::Millis(10), &stop);
         }
     }
 
@@ -1919,7 +1991,7 @@ public:
                 case ns::SendOutcome::Full: break;
             }
             if (stop.asked() || hop_.stop().asked()) return std::unexpected(std::string(eg::STOPPED));
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            hop_.wait_app(std::chrono::milliseconds(5), &stop);
         }
     }
 
@@ -1956,7 +2028,7 @@ public:
             }
             if (outcome == ns::SendOutcome::Closed) return false;
             if (hop_.stop().asked()) return false;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            hop_.wait_app(std::chrono::milliseconds(5));
         }
     }
 
@@ -1972,7 +2044,7 @@ public:
             }
             if (stop.asked()) return std::nullopt;
             if (std::chrono::steady_clock::now() >= finish) return std::nullopt;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            hop_.wait_app(wait.count() > 0 ? std::min(wait, eg::Millis(10)) : eg::Millis(10), &stop);
         }
     }
 
@@ -2034,7 +2106,7 @@ struct ProxyOptions {
         if (budget.has_value() && std::chrono::steady_clock::now() >= finish) {
             return std::unexpected(std::string(eg::TIMED_OUT) + "connect timed out");
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        hop.wait_app(std::chrono::milliseconds(5));
     }
 }
 
@@ -3196,8 +3268,12 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
         while (!cancel.is_cancelled() && !hop.stop().asked()) {
             DWORD wait = WaitForSingleObject(read_ev, 50);
             if (wait == WAIT_OBJECT_0) {
-                dev->drain_read_packets(512, [&hop](std::span<const uint8_t> pkt) {
-                    (void)hop.queue().push(pkt);
+                dev->drain_read_packets(64, [&hop](std::span<const uint8_t> pkt) {
+                    while (!hop.stop().asked()) {
+                        const auto outcome = hop.queue().push(pkt);
+                        if (outcome == ns::SendOutcome::Ok || outcome == ns::SendOutcome::Closed) break;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
                 });
             }
         }

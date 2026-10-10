@@ -278,14 +278,22 @@ struct MainWindow::Impl {
     double live_up_speed_mb_ = 0.0;
     int live_ping_ms_ = 38;
 
-    // Log lines history
-    enum class LogFilter { All = 0, Info = 1, Warn = 2, Error = 3 };
+    // Log lines history & rich categorization
+    enum class LogCategory {
+        Network,
+        Security,
+        Traffic,
+        Warn,
+        Error,
+        Info
+    };
 
     struct LogEntry {
         uint64_t timestamp_ms = 0;
-        LogFilter level = LogFilter::Info;
+        LogCategory category = LogCategory::Info;
         std::wstring time_str;
         std::wstring tag;
+        Color tag_color;
         std::wstring message;
     };
 
@@ -304,6 +312,13 @@ struct MainWindow::Impl {
     Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> render_target_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
     Microsoft::WRL::ComPtr<ID2D1StrokeStyle> stroke_round_;
+
+    // High-performance GPU brush caching for radial glows (0 allocation / 0 recompilation per frame)
+    struct CachedGlowBrush {
+        uint32_t key = 0;
+        Microsoft::WRL::ComPtr<ID2D1RadialGradientBrush> brush;
+    };
+    std::vector<CachedGlowBrush> cached_glow_brushes_;
 
     // DirectWrite Typography Formats
     UINT cached_font_dpi_ = 0;
@@ -455,6 +470,7 @@ struct MainWindow::Impl {
     }
 
     void discard_device_resources() {
+        cached_glow_brushes_.clear();
         logo_d2d_bitmap_.Reset();
         brush_.Reset();
         render_target_.Reset();
@@ -581,24 +597,46 @@ struct MainWindow::Impl {
 
     void fill_radial_glow(float cx, float cy, float r, const Color& glow_color) {
         if (r <= 0.0f || !render_target_) return;
-        D2D1_GRADIENT_STOP stops[2];
-        stops[0].color = glow_color;
-        stops[0].position = 0.0f;
-        stops[1].color = D2D1::ColorF(glow_color.r, glow_color.g, glow_color.b, 0.0f);
-        stops[1].position = 1.0f;
 
-        Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stop_coll;
-        if (FAILED(render_target_->CreateGradientStopCollection(stops, 2, &stop_coll))) return;
+        uint32_t color_key = (static_cast<uint32_t>(glow_color.a * 255.0f) << 24) |
+                             (static_cast<uint32_t>(glow_color.r * 255.0f) << 16) |
+                             (static_cast<uint32_t>(glow_color.g * 255.0f) << 8)  |
+                             static_cast<uint32_t>(glow_color.b * 255.0f);
 
-        D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES radial_props = D2D1::RadialGradientBrushProperties(
-            D2D1::Point2F(cx, cy),
-            D2D1::Point2F(0.0f, 0.0f),
-            r, r
-        );
-        Microsoft::WRL::ComPtr<ID2D1RadialGradientBrush> radial_brush;
-        if (FAILED(render_target_->CreateRadialGradientBrush(radial_props, stop_coll.Get(), &radial_brush))) return;
+        ID2D1RadialGradientBrush* brush = nullptr;
+        for (auto& item : cached_glow_brushes_) {
+            if (item.key == color_key) {
+                brush = item.brush.Get();
+                break;
+            }
+        }
 
-        render_target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), radial_brush.Get());
+        if (!brush) {
+            D2D1_GRADIENT_STOP stops[2];
+            stops[0].color = glow_color;
+            stops[0].position = 0.0f;
+            stops[1].color = D2D1::ColorF(glow_color.r, glow_color.g, glow_color.b, 0.0f);
+            stops[1].position = 1.0f;
+
+            Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stop_coll;
+            if (FAILED(render_target_->CreateGradientStopCollection(stops, 2, &stop_coll))) return;
+
+            D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES radial_props = D2D1::RadialGradientBrushProperties(
+                D2D1::Point2F(cx, cy),
+                D2D1::Point2F(0.0f, 0.0f),
+                r, r
+            );
+            Microsoft::WRL::ComPtr<ID2D1RadialGradientBrush> new_brush;
+            if (FAILED(render_target_->CreateRadialGradientBrush(radial_props, stop_coll.Get(), &new_brush))) return;
+
+            cached_glow_brushes_.push_back({ color_key, new_brush });
+            brush = new_brush.Get();
+        }
+
+        brush->SetCenter(D2D1::Point2F(cx, cy));
+        brush->SetRadiusX(r);
+        brush->SetRadiusY(r);
+        render_target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), brush);
     }
 
     void draw_text(const std::wstring_view text, IDWriteTextFormat* fmt, float x, float y, const Color& c) {
@@ -1189,44 +1227,71 @@ struct MainWindow::Impl {
             }
         }
 
-        // 2. Classify level & tag
-        std::string lower;
-        lower.reserve(raw_line.size());
-        for (char c : raw_line) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-
-        if (lower.find("error") != std::string::npos || lower.find("fail") != std::string::npos || lower.find("[-] ") != std::string::npos) {
-            entry.level = LogFilter::Error;
-            entry.tag = L"ERR";
-        } else if (lower.find("warn") != std::string::npos || lower.find("retrying") != std::string::npos) {
-            entry.level = LogFilter::Warn;
-            entry.tag = L"WARN";
-        } else {
-            entry.level = LogFilter::Info;
-            entry.tag = L"INFO";
-        }
-
-        // 3. Extract clean message
+        // 2. Extract clean message (strip any timestamp/target prefix and marker brackets)
         std::string_view msg_sv = raw_line;
         auto close_bracket = raw_line.find("] ");
         if (close_bracket != std::string_view::npos) {
             msg_sv = raw_line.substr(close_bracket + 2);
-        } else if (raw_line.starts_with("[+] ") || raw_line.starts_with("[-] ")) {
-            msg_sv = raw_line.substr(4);
+        }
+        // Strip marker prefixes like "[+] ", "[*] ", "[=] ", "[-] "
+        if (msg_sv.starts_with("[+] ") || msg_sv.starts_with("[*] ") ||
+            msg_sv.starts_with("[=] ") || msg_sv.starts_with("[-] ")) {
+            msg_sv = msg_sv.substr(4);
+        }
+
+        const auto& ds = ds::DesignSystem::get();
+
+        // 3. Classify level & tag
+        std::string lower;
+        lower.reserve(raw_line.size());
+        for (char c : raw_line) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+
+        if (lower.find("error") != std::string::npos || lower.find("fail") != std::string::npos ||
+            lower.find("fatal") != std::string::npos || raw_line.find("[-] ") != std::string::npos ||
+            lower.find("crash") != std::string::npos) {
+            entry.category = LogCategory::Error;
+            entry.tag = L"ERR";
+            entry.tag_color = ds.colors.error;
+        } else if (lower.find("warn") != std::string::npos || lower.find("retrying") != std::string::npos ||
+                   lower.find("timeout") != std::string::npos || lower.find("timed out") != std::string::npos ||
+                   lower.find("stale") != std::string::npos || lower.find("dropped") != std::string::npos) {
+            entry.category = LogCategory::Warn;
+            entry.tag = L"WARN";
+            entry.tag_color = ds.colors.warning;
+        } else if (lower.find("wireguard") != std::string::npos || lower.find("handshake") != std::string::npos ||
+                   lower.find("noise") != std::string::npos || lower.find("psk") != std::string::npos ||
+                   lower.find("key") != std::string::npos || lower.find("ech") != std::string::npos ||
+                   lower.find("tls") != std::string::npos || lower.find("cert") != std::string::npos ||
+                   lower.find("masque") != std::string::npos || lower.find("auth") != std::string::npos) {
+            entry.category = LogCategory::Security;
+            entry.tag = L"SEC";
+            entry.tag_color = Color(255, 129, 140, 248);
+        } else if (lower.find("speed") != std::string::npos || lower.find("ping") != std::string::npos ||
+                   lower.find("latency") != std::string::npos || lower.find("mb/s") != std::string::npos ||
+                   lower.find("kb/s") != std::string::npos || lower.find("bytes") != std::string::npos ||
+                   lower.find("traffic") != std::string::npos || lower.find("uptime") != std::string::npos ||
+                   lower.find("rate") != std::string::npos || raw_line.find("[=] ") != std::string::npos) {
+            entry.category = LogCategory::Traffic;
+            entry.tag = L"STATS";
+            entry.tag_color = Color(255, 52, 211, 153);
+        } else if (lower.find("route") != std::string::npos || lower.find("routing") != std::string::npos ||
+                   lower.find("tun") != std::string::npos || lower.find("wintun") != std::string::npos ||
+                   lower.find("adapter") != std::string::npos || lower.find("socks") != std::string::npos ||
+                   lower.find("proxy") != std::string::npos || lower.find("dns") != std::string::npos ||
+                   lower.find("interface") != std::string::npos || lower.find("gateway") != std::string::npos ||
+                   lower.find("connecting") != std::string::npos || lower.find("connected") != std::string::npos ||
+                   lower.find("disconnect") != std::string::npos || lower.find("profile") != std::string::npos ||
+                   lower.find("listening") != std::string::npos || lower.find("endpoint") != std::string::npos) {
+            entry.category = LogCategory::Network;
+            entry.tag = L"NET";
+            entry.tag_color = Color(255, 56, 189, 248);
+        } else {
+            entry.category = LogCategory::Info;
+            entry.tag = L"INFO";
+            entry.tag_color = ds.colors.info;
         }
 
         entry.message = std::wstring(msg_sv.begin(), msg_sv.end());
-
-        // Zero trace of legacy name in user-visible logs
-        size_t p = 0;
-        while ((p = entry.message.find(L"Hemera", p)) != std::wstring::npos) {
-            entry.message.replace(p, 6, L"Hemera");
-            p += 6;
-        }
-        p = 0;
-        while ((p = entry.message.find(L"hemera", p)) != std::wstring::npos) {
-            entry.message.replace(p, 6, L"hemera");
-            p += 6;
-        }
 
         // Update live connection subtitle phase
         if (lower.find("hunting") != std::string::npos || lower.find("scan mode") != std::string::npos || lower.find("scanning endpoints") != std::string::npos) {
@@ -1955,7 +2020,7 @@ struct MainWindow::Impl {
 
         float about_y = sec4_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
         draw_text(L"About Hemera", fmt_body_.Get(), card_x + pad_x, about_y, ds.colors.text_primary);
-        std::wstring about_sub = L"v1.0.4   ›";
+        std::wstring about_sub = L"v1.0.5   ›";
         draw_text_right(about_sub, fmt_mono_.Get(), card_x + card_w - pad_x, about_y, ds.colors.text_muted);
 
         // Footer
@@ -2267,20 +2332,20 @@ struct MainWindow::Impl {
         float chip_w = (card_w - chip_gap * 3.0f) / 4.0f;
 
         std::vector<LogEntry> logs_copy;
-        int count_all = 0, count_info = 0, count_warn = 0, count_err = 0;
+        int count_all = 0, count_net = 0, count_traffic = 0, count_issues = 0;
         {
             std::lock_guard lock(log_mutex_);
             logs_copy.assign(parsed_logs_.begin(), parsed_logs_.end());
             count_all = static_cast<int>(parsed_logs_.size());
             for (const auto& item : parsed_logs_) {
-                if (item.level == LogFilter::Info) count_info++;
-                else if (item.level == LogFilter::Warn) count_warn++;
-                else if (item.level == LogFilter::Error) count_err++;
+                if (item.category == LogCategory::Network || item.category == LogCategory::Security) count_net++;
+                else if (item.category == LogCategory::Traffic) count_traffic++;
+                else if (item.category == LogCategory::Warn || item.category == LogCategory::Error) count_issues++;
             }
         }
 
-        const wchar_t* chip_names[] = { L"All", L"Info", L"Warn", L"Error" };
-        const int chip_counts[] = { count_all, count_info, count_warn, count_err };
+        const wchar_t* chip_names[] = { L"All", L"Network", L"Traffic", L"Issues" };
+        const int chip_counts[] = { count_all, count_net, count_traffic, count_issues };
 
         for (int i = 0; i < 4; ++i) {
             float ch_x = card_x + static_cast<float>(i) * (chip_w + chip_gap);
@@ -2314,7 +2379,17 @@ struct MainWindow::Impl {
         std::vector<const LogEntry*> visible_logs;
         visible_logs.reserve(logs_copy.size());
         for (const auto& item : logs_copy) {
-            if (log_filter_ == 0 || static_cast<int>(item.level) == log_filter_) {
+            bool matches = false;
+            if (log_filter_ == 0) {
+                matches = true;
+            } else if (log_filter_ == 1) {
+                matches = (item.category == LogCategory::Network || item.category == LogCategory::Security);
+            } else if (log_filter_ == 2) {
+                matches = (item.category == LogCategory::Traffic);
+            } else if (log_filter_ == 3) {
+                matches = (item.category == LogCategory::Warn || item.category == LogCategory::Error);
+            }
+            if (matches) {
                 visible_logs.push_back(&item);
             }
         }
@@ -2327,7 +2402,7 @@ struct MainWindow::Impl {
             float cur_y = term_y + scale_f(10, cur_dpi) - std::round(scale_f(logs_scroll_anim_y_, cur_dpi));
             float row_x = card_x + scale_f(14, cur_dpi);
             float time_w = scale_f(66, cur_dpi);
-            float tag_w = scale_f(44, cur_dpi);
+            float tag_w = scale_f(52, cur_dpi);
             float msg_x = row_x + time_w + tag_w;
             float right_margin = scale_f(14, cur_dpi);
             float msg_w = std::max(scale_f(80, cur_dpi), (card_x + card_w - right_margin) - msg_x);
@@ -2342,16 +2417,13 @@ struct MainWindow::Impl {
                     // 1. Time
                     draw_text(item->time_str, fmt_mono_.Get(), row_x, cur_y, ds.colors.text_dim);
 
-                    // 2. Tag
-                    Color tag_col = ds.colors.info;
-                    if (item->level == LogFilter::Warn) tag_col = ds.colors.warning;
-                    else if (item->level == LogFilter::Error) tag_col = ds.colors.error;
-                    draw_text(item->tag, fmt_mono_bold_.Get(), row_x + time_w, cur_y, tag_col);
+                    // 2. Tag with vibrant semantic badge color
+                    draw_text(item->tag, fmt_mono_bold_.Get(), row_x + time_w, cur_y, item->tag_color);
 
                     // 3. Multiline wrapped message
                     Color msg_col = ds.colors.text_secondary;
-                    if (item->level == LogFilter::Error) msg_col = ds.colors.error;
-                    else if (item->level == LogFilter::Warn) msg_col = ds.colors.warning;
+                    if (item->category == LogCategory::Error) msg_col = ds.colors.error;
+                    else if (item->category == LogCategory::Warn) msg_col = ds.colors.warning;
                     draw_text_rect(item->message, fmt_mono_wrap_.Get(), msg_x, cur_y, msg_w, item_h, msg_col);
                 }
 
@@ -2465,7 +2537,7 @@ struct MainWindow::Impl {
         draw_text_center(L"Hemera", fmt_hero_status_.Get(), cx, name_y, ds.colors.text_primary);
 
         float ver_y = name_y + scale_f(34, cur_dpi);
-        draw_text_center(L"Version 1.0.4", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
+        draw_text_center(L"Version 1.0.5", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
 
         // Subtitle text
         float desc_y = ver_y + scale_f(22, cur_dpi);
@@ -2517,7 +2589,7 @@ struct MainWindow::Impl {
         // Row 2: Releases & Updates
         float ry2 = card_y + row_h * 2.0f + text_mid_offset;
         draw_text(L"Releases & Changelog", fmt_body_.Get(), card_x + pad_x, ry2, ds.colors.text_primary);
-        draw_text_right(L"v1.0.4 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
+        draw_text_right(L"v1.0.5 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
 
         // Row 3: License
         float ry3 = card_y + row_h * 3.0f + text_mid_offset;
@@ -3164,7 +3236,7 @@ struct MainWindow::Impl {
         if (!tray_hwnd_) {
             WNDCLASSEXW twc{};
             twc.cbSize = sizeof(WNDCLASSEXW);
-            twc.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
+            twc.style = CS_HREDRAW | CS_VREDRAW;
             twc.lpfnWndProc = MainWindow::Impl::TrayWndProc;
             twc.hInstance = hInstance_;
             twc.lpszClassName = L"HemeraTrayMenuClass";
@@ -3202,7 +3274,7 @@ struct MainWindow::Impl {
         if (tray_hwnd_) {
             MARGINS margins = { -1, -1, -1, -1 };
             DwmExtendFrameIntoClientArea(tray_hwnd_, &margins);
-            DWORD corner_pref = 3; // DWMWCP_ROUNDSMALL
+            DWORD corner_pref = 2; // DWMWCP_ROUND
             DwmSetWindowAttribute(tray_hwnd_, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner_pref, sizeof(corner_pref));
         }
 
@@ -3252,7 +3324,7 @@ struct MainWindow::Impl {
 
         MARGINS margins = { -1, -1, -1, -1 };
         DwmExtendFrameIntoClientArea(tray_hwnd_, &margins);
-        DWORD corner_pref = 3; // DWMWCP_ROUNDSMALL
+        DWORD corner_pref = 2; // DWMWCP_ROUND
         DwmSetWindowAttribute(tray_hwnd_, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner_pref, sizeof(corner_pref));
 
         int menu_w = MulDiv(228, cur_dpi, 96);
@@ -3269,7 +3341,7 @@ struct MainWindow::Impl {
 
         SetWindowPos(tray_hwnd_, HWND_TOPMOST, pos_x, pos_y, menu_w, menu_h, SWP_SHOWWINDOW);
         SetForegroundWindow(tray_hwnd_);
-        InvalidateRect(tray_hwnd_, nullptr, TRUE);
+        InvalidateRect(tray_hwnd_, nullptr, FALSE);
     }
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -3293,7 +3365,6 @@ struct MainWindow::Impl {
 
         switch (msg) {
             case WM_CREATE: {
-                SetTimer(hwnd, TIMER_ANIMATION, 16, nullptr); // Modal loop fallback timer (60 FPS)
                 impl->setup_tray_icon();
                 return 0;
             }
@@ -3352,10 +3423,12 @@ struct MainWindow::Impl {
 
             case WM_ENTERSIZEMOVE: {
                 impl->is_moving_window_ = true;
+                SetTimer(hwnd, TIMER_ANIMATION, 16, nullptr); // Modal loop dragging timer only
                 return 0;
             }
 
             case WM_EXITSIZEMOVE: {
+                KillTimer(hwnd, TIMER_ANIMATION);
                 impl->is_moving_window_ = false;
                 impl->last_frame_time_ = std::chrono::steady_clock::now();
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -3998,8 +4071,18 @@ struct MainWindow::Impl {
                         {
                             std::lock_guard lock(impl->log_mutex_);
                             for (const auto& item : impl->parsed_logs_) {
-                                if (impl->log_filter_ == 0 || static_cast<int>(item.level) == impl->log_filter_) {
-                                    clip += L"[" + item.time_str + L"] " + item.tag + L" " + item.message + L"\r\n";
+                                bool matches = false;
+                                if (impl->log_filter_ == 0) {
+                                    matches = true;
+                                } else if (impl->log_filter_ == 1) {
+                                    matches = (item.category == LogCategory::Network || item.category == LogCategory::Security);
+                                } else if (impl->log_filter_ == 2) {
+                                    matches = (item.category == LogCategory::Traffic);
+                                } else if (impl->log_filter_ == 3) {
+                                    matches = (item.category == LogCategory::Warn || item.category == LogCategory::Error);
+                                }
+                                if (matches) {
+                                    clip += L"[" + item.time_str + L"] [" + item.tag + L"] " + item.message + L"\r\n";
                                 }
                             }
                         }
@@ -4215,12 +4298,7 @@ bool MainWindow::create() {
 
     if (!impl_->hwnd_) return false;
 
-    // Enforce 100% square 90-degree corners:
-    // 1. Rectangular window region (guarantees sharp corners across all Windows versions)
-    HRGN rgn = CreateRectRgn(0, 0, client_w, client_h);
-    SetWindowRgn(impl_->hwnd_, rgn, TRUE);
-
-    // 2. DWM preference for Windows 11
+    // Enforce 100% square 90-degree corners via native DWM preference (Windows 11)
     DWORD corner_pref = 1; // DWMWCP_DONOTROUND
     DwmSetWindowAttribute(impl_->hwnd_, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner_pref, sizeof(corner_pref));
 
@@ -4244,6 +4322,8 @@ bool MainWindow::create() {
         }
     });
 
+    impl_->parse_and_append_log("[+] Hemera v1.0.5 initialized and ready", GetTickCount64());
+
     // Pre-render the first Direct2D frame BEFORE presenting the window to the user
     // This completely eliminates any blank/white startup delay!
     impl_->ensure_device_resources();
@@ -4253,16 +4333,18 @@ bool MainWindow::create() {
         UpdateWindow(impl_->hwnd_);
     }
 
-    impl_->ensure_tray_resources();
-
-    // Reclaim cold startup pages (DLLs, font tables, one-time CRT init)
-    SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
-
     return true;
 }
 
 int MainWindow::run_message_loop() {
     timeBeginPeriod(1);
+
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    int refresh_rate = 60;
+    if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency >= 30) {
+        refresh_rate = std::clamp(static_cast<int>(dm.dmDisplayFrequency), 30, 240);
+    }
 
     MSG msg{};
     bool running = true;
@@ -4281,40 +4363,55 @@ int MainWindow::run_message_loop() {
         if (!running) break;
 
         // 2. High-precision frame timing
-        auto frame_start = std::chrono::steady_clock::now();
-        float dt = std::chrono::duration<float>(frame_start - impl_->last_frame_time_).count();
-        if (dt > 0.033f) dt = 0.033f; // Prevent huge jump on focus switch
-        impl_->last_frame_time_ = frame_start;
+        auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - impl_->last_frame_time_).count();
 
         bool is_visible = impl_->hwnd_ && IsWindow(impl_->hwnd_) && IsWindowVisible(impl_->hwnd_) && !IsIconic(impl_->hwnd_);
         bool tray_visible = impl_->tray_hwnd_ && IsWindow(impl_->tray_hwnd_) && IsWindowVisible(impl_->tray_hwnd_);
         bool active_anim = (is_visible || tray_visible) && impl_->has_active_animations();
 
+        const float target_frame_sec = 1.0f / static_cast<float>(refresh_rate);
+
         if (active_anim) {
-            if (is_visible) {
-                impl_->step_animations(dt);
-                InvalidateRect(impl_->hwnd_, nullptr, FALSE);
-                UpdateWindow(impl_->hwnd_);
-            } else {
-                impl_->step_animations(dt);
-            }
-            if (tray_visible) {
-                InvalidateRect(impl_->tray_hwnd_, nullptr, FALSE);
+            // Strictly cap frame rate to monitor refresh rate (prevents running at thousands of FPS)
+            if (dt >= target_frame_sec) {
+                if (dt > 0.050f) dt = target_frame_sec;
+                impl_->last_frame_time_ = now;
+
+                if (is_visible) {
+                    impl_->step_animations(dt);
+                    InvalidateRect(impl_->hwnd_, nullptr, FALSE);
+                    UpdateWindow(impl_->hwnd_);
+                } else {
+                    impl_->step_animations(dt);
+                }
+                if (tray_visible) {
+                    InvalidateRect(impl_->tray_hwnd_, nullptr, FALSE);
+                }
             }
         } else {
-            // Background metrics and timers advance
-            impl_->step_animations(dt);
+            // Background metrics advance at ~20 Hz
+            if (dt >= 0.050f) {
+                impl_->last_frame_time_ = now;
+                impl_->step_animations(dt);
+            }
         }
 
-        // 3. Dynamic CPU sleep: 8ms during animation (silky 120 FPS), 40ms when idle (0% CPU)
-        auto frame_end = std::chrono::steady_clock::now();
-        int elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(frame_end - frame_start).count());
+        // 3. Dynamic CPU sleep: actual kernel sleep until next frame or user input
+        auto after_render = std::chrono::steady_clock::now();
+        float elapsed_since_last = std::chrono::duration<float>(after_render - impl_->last_frame_time_).count();
 
         DWORD wait_ms = 40;
         if (active_anim) {
-            wait_ms = (elapsed_ms < 8) ? static_cast<DWORD>(8 - elapsed_ms) : 1;
+            float remain_sec = target_frame_sec - elapsed_since_last;
+            if (remain_sec > 0.001f) {
+                wait_ms = static_cast<DWORD>(std::clamp(static_cast<int>(remain_sec * 1000.0f), 1, 40));
+            } else {
+                wait_ms = 1;
+            }
         }
-        MsgWaitForMultipleObjectsEx(0, nullptr, wait_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, wait_ms, QS_ALLINPUT);
     }
 
     timeEndPeriod(1);

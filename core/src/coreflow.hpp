@@ -99,8 +99,9 @@ inline constexpr std::uint32_t GOOL_INNER_ATTEMPTS = 2;
 // The three reconnect loops each carry their own copy of this constant in the Rust.
 inline constexpr std::uint32_t MAX_CONSECUTIVE_FAILS = 2;
 
-// env!("CARGO_PKG_VERSION") of the pinned core.
-inline constexpr std::string_view CORE_VERSION = "2.3.0";
+// Application and core versioning
+inline constexpr std::string_view APP_VERSION = "1.0.5";
+inline constexpr std::string_view CORE_VERSION = "1.0.5";
 inline constexpr std::string_view DEFAULT_SOCKS_LISTEN = "127.0.0.1:1819";
 
 // The fixed verification budgets lib.rs hard-codes at each call site.

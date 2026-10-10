@@ -311,6 +311,9 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
     impl_->emit_state({.kind = StateKind::Connecting});
 
     impl_->core_thread = std::make_unique<std::thread>([this, prof, cancel = impl_->cancel_token]() mutable {
+        impl_->emit_log(std::format("[+] Connecting (protocol: {}, mode: {})",
+            to_string(prof.protocol), prof.tun_mode ? "TUN" : "System Proxy"));
+
         std::vector<std::string> args = prof.as_args();
         std::map<std::string, std::string> env;
         env["HEMERA_CONFIG"] = (impl_->data_dir / "hemera.toml").string();
@@ -354,6 +357,7 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
         cbs.on_state_changed = [this, prof, cancel](const std::string& st) {
             if (st == "Connected") {
                 if (cancel.is_cancelled()) return;
+                impl_->emit_log(std::format("[+] Secure tunnel established to {}", prof.primary_addr()));
                 impl_->emit_state({
                     .kind = StateKind::Connected,
                     .socks_addr = prof.primary_addr(),
@@ -363,14 +367,25 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
                     auto http_front = prof.http_front();
                     std::string front = http_front.value_or("127.0.0.1:1819");
                     sysproxy::apply(front, impl_->backup_file, prof.primary_addr());
+                    impl_->emit_log(std::format("[+] System proxy configured: {}", front));
+                } else if (prof.tun_mode) {
+                    impl_->emit_log("[+] Virtual TUN interface active with default route");
                 }
             } else if (st == "Connecting") {
                 impl_->emit_state({.kind = StateKind::Connecting});
             } else if (st == "Error") {
-                if (prof.system_proxy) sysproxy::restore(impl_->backup_file);
+                if (prof.system_proxy) {
+                    sysproxy::restore(impl_->backup_file);
+                    impl_->emit_log("[*] Restored system proxy settings");
+                }
+                impl_->emit_log("[-] Connection error encountered");
                 impl_->emit_state({.kind = StateKind::Error, .error_message = "Connection encountered an error"});
             } else if (st == "Disconnected") {
-                if (prof.system_proxy) sysproxy::restore(impl_->backup_file);
+                if (prof.system_proxy) {
+                    sysproxy::restore(impl_->backup_file);
+                    impl_->emit_log("[*] Restored system proxy settings");
+                }
+                impl_->emit_log("[+] Disconnected cleanly");
                 impl_->emit_state({.kind = StateKind::Idle});
             }
         };
@@ -390,7 +405,11 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
         }
 
         if (rc != 0 && !cancel.is_cancelled()) {
-            if (prof.system_proxy) sysproxy::restore(impl_->backup_file);
+            if (prof.system_proxy) {
+                sysproxy::restore(impl_->backup_file);
+                impl_->emit_log("[*] Restored system proxy settings");
+            }
+            impl_->emit_log(std::format("[-] Core stopped with exit code {}", rc));
             impl_->emit_state({
                 .kind = StateKind::Error,
                 .error_message = std::format("Core exited with status {}", rc)
@@ -413,6 +432,7 @@ std::expected<void, std::string> HemeraEngine::disconnect() {
             return {};
         }
     }
+    impl_->emit_log("[*] Disconnecting tunnel...");
     impl_->emit_state({.kind = StateKind::Disconnecting});
     impl_->cancel_token.cancel();
 
@@ -423,6 +443,7 @@ std::expected<void, std::string> HemeraEngine::disconnect() {
     }
     if (sys_prox) {
         sysproxy::restore(impl_->backup_file);
+        impl_->emit_log("[*] Restored system proxy settings");
     }
 
     return {};

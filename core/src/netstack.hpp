@@ -269,6 +269,10 @@ public:
         return value;
     }
 
+    void push_front(T value) {
+        if (shared_) shared_->queue.push_front(std::move(value));
+    }
+
     [[nodiscard]] bool at_end() const {
         return !shared_ || (shared_->queue.empty() && shared_->senders == 0);
     }

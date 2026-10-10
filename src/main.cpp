@@ -16,6 +16,13 @@
 
 #pragma comment(lib, "winmm.lib")
 
+// Tell NVIDIA and AMD graphics drivers to strictly use low-power integrated GPU (Intel Iris Xe)
+// This completely avoids waking up the dGPU (NVIDIA RTX 3050) from D3-Cold state, eliminating the 2-second startup hitch!
+extern "C" {
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000000;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 0;
+}
+
 static void LogCrashDirect(EXCEPTION_POINTERS* ep) {
     HANDLE h = CreateFileW(L"crash_report.txt", GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
@@ -62,14 +69,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PWSTR pCmd
         return EXCEPTION_CONTINUE_SEARCH;
     });
 
-    std::ofstream lf("startup.log", std::ios::app);
-    lf << "wWinMain started, PID=" << GetCurrentProcessId() << std::endl;
-
     // Initialize COM for Direct2D, DirectWrite, WIC, and Shell
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
     // High-DPI Awareness v2
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+    // Disable Windows 11 EcoQoS (Power Throttling) so background/tray execution maintains high timer resolution and full throughput
+    PROCESS_POWER_THROTTLING_STATE power_throttling{};
+    power_throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    power_throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    power_throttling.StateMask = 0;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &power_throttling, sizeof(power_throttling));
 
     // Initialize Common Controls
     INITCOMMONCONTROLSEX icc{};
@@ -80,9 +91,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PWSTR pCmd
     // Single-instance check
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\Hemera_SingleInstance_Native_Mutex");
     DWORD mutex_err = GetLastError();
-    lf << "Mutex created, err=" << mutex_err << std::endl;
     if (hMutex && mutex_err == ERROR_ALREADY_EXISTS) {
-        lf << "ERROR_ALREADY_EXISTS -> exiting" << std::endl;
         HWND hExisting = FindWindowW(L"HemeraMainWindowClass", L"Hemera");
         if (hExisting) {
             ShowWindow(hExisting, SW_RESTORE);
@@ -91,7 +100,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PWSTR pCmd
         CloseHandle(hMutex);
         return 0;
     }
-    lf << "Single instance check passed" << std::endl;
 
     // Check for --minimized command line argument
     std::wstring_view cmd_line = pCmdLine ? pCmdLine : L"";
@@ -104,30 +112,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PWSTR pCmd
     engine->startup_cleanup();
 
     // Launch UI
-    lf << "Creating window..." << std::endl;
     hemera::gui::MainWindow window(hInstance, engine, start_minimized);
 
     if (!window.create()) {
-        lf << "window.create() FAILED!" << std::endl;
         if (hMutex) CloseHandle(hMutex);
         return 1;
     }
-    lf << "window.create() succeeded, entering message loop" << std::endl;
 
     timeBeginPeriod(1);
     int result = 0;
     try {
         result = window.run_message_loop();
-        lf << "run_message_loop returned with code=" << result << std::endl;
     } catch (const std::exception& e) {
-        lf << "FATAL EXCEPTION in run_message_loop: " << e.what() << std::endl;
+        (void)e;
         result = 2;
     } catch (...) {
-        lf << "FATAL UNKNOWN EXCEPTION in run_message_loop!" << std::endl;
         result = 3;
     }
     timeEndPeriod(1);
-    lf.flush();
 
     if (hMutex) {
         ReleaseMutex(hMutex);

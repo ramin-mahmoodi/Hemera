@@ -40,6 +40,7 @@ bool seq_lt(std::uint32_t a, std::uint32_t b) {
     return static_cast<std::int32_t>(a - b) < 0;
 }
 bool seq_gt(std::uint32_t a, std::uint32_t b) { return seq_lt(b, a); }
+bool seq_geq(std::uint32_t a, std::uint32_t b) { return !seq_lt(a, b); }
 std::uint32_t seq_add(std::uint32_t a, std::size_t n) {
     return a + static_cast<std::uint32_t>(n);
 }
@@ -252,10 +253,16 @@ public:
         const std::size_t mss = local_mss();
         // RFC 6928's initial window, the size smoltcp starts its congestion controller at.
         cwnd_ = std::min<std::size_t>(4 * mss, std::max<std::size_t>(2 * mss, 4380));
-        ssthresh_ = 4 * 1024 * 1024;
+        // Calibrate ssthresh to configured TX buffer size (prevent burst queue overflow)
+        ssthresh_ = std::max<std::size_t>(cfg_.tx_buf_size, 64 * 1024);
         dup_acks_ = 0;
         in_fast_recovery_ = false;
+        recover_seq_ = 0;
         rto_ = INITIAL_RTO;
+        rtt_time_.reset();
+        rtt_seq_ = 0;
+        rtt_retransmitted_ = false;
+        rtt_initialized_ = false;
     }
 
     [[nodiscard]] TcpState state() const { return state_; }
@@ -363,16 +370,53 @@ public:
                 remote_window_ = static_cast<std::size_t>(s.window) << remote_wscale_;
                 retire_acked();
 
-                // RFC 5681: exit fast recovery on fresh ACK
-                if (in_fast_recovery_) {
-                    cwnd_ = ssthresh_;
-                    in_fast_recovery_ = false;
-                } else {
-                    grow_cwnd(acked);
+                // Karn/Jacobson RTT calculation (RFC 6298)
+                if (rtt_time_.has_value() && !rtt_retransmitted_ && seq_geq(s.ack, rtt_seq_)) {
+                    const auto measured = std::chrono::duration_cast<Millis>(now - *rtt_time_);
+                    if (!rtt_initialized_) {
+                        srtt_ = measured;
+                        rttvar_ = measured / 2;
+                        rtt_initialized_ = true;
+                    } else {
+                        const auto diff = (measured > srtt_) ? (measured - srtt_) : (srtt_ - measured);
+                        rttvar_ = (3 * rttvar_ + diff) / 4;
+                        srtt_ = (7 * srtt_ + measured) / 8;
+                    }
+                    const Millis g{50}; // minimum timer granularity
+                    rto_ = std::clamp(srtt_ + std::max(g, 4 * rttvar_), Millis{100}, MAX_RTO);
+                    rtt_time_.reset();
+                } else if (!rtt_initialized_) {
+                    rto_ = INITIAL_RTO;
                 }
 
-                dup_acks_ = 0;
-                rto_ = INITIAL_RTO; // Any forward progress resets RTO backoff!
+                // RFC 6582 NewReno Fast Recovery
+                if (in_fast_recovery_) {
+                    if (seq_lt(s.ack, recover_seq_)) {
+                        // Partial ACK: retransmit first unacknowledged segment immediately!
+                        if (!retx_.empty()) {
+                            const RetxEntry& entry = retx_.front();
+                            if (!entry.syn && !entry.fin) {
+                                emit_packet(now, netpacket::TCP_ACK, entry.seq, rcv_nxt_, entry.data, {}, emit);
+                            }
+                        }
+                        if (cwnd_ > acked) {
+                            cwnd_ -= acked;
+                        } else {
+                            cwnd_ = segment_mss();
+                        }
+                        cwnd_ += segment_mss();
+                        next_retransmit_ = now + rto_;
+                        // Remain in Fast Recovery for any other lost segments in flight
+                    } else {
+                        // Full ACK: acknowledges all data up to recover_seq_
+                        cwnd_ = ssthresh_;
+                        in_fast_recovery_ = false;
+                        dup_acks_ = 0;
+                    }
+                } else {
+                    grow_cwnd(acked);
+                    dup_acks_ = 0;
+                }
 
                 if (retx_.empty()) {
                     next_retransmit_.reset();
@@ -395,7 +439,7 @@ public:
                 }
                 if (state_ == TcpState::Closed) return;
             } else if (s.ack == snd_una_) {
-                // Duplicate ACK: update window and check for RFC 5681 Fast Retransmit
+                // Duplicate ACK: update window and check for RFC 6582 Fast Retransmit
                 remote_window_ = static_cast<std::size_t>(s.window) << remote_wscale_;
                 if (parsed.payload.empty() &&
                     (s.flags & (netpacket::TCP_SYN | netpacket::TCP_FIN)) == 0 &&
@@ -407,10 +451,12 @@ public:
                         if (!entry.syn && !entry.fin) {
                             emit_packet(now, netpacket::TCP_ACK, entry.seq, rcv_nxt_, entry.data, {}, emit);
                         }
+                        rtt_retransmitted_ = true;
                         const std::size_t flight = static_cast<std::uint32_t>(snd_nxt_ - snd_una_);
                         ssthresh_ = std::max<std::size_t>(flight / 2, 2 * segment_mss());
                         cwnd_ = ssthresh_ + 3 * segment_mss();
                         in_fast_recovery_ = true;
+                        recover_seq_ = snd_nxt_; // Record recovery sequence for NewReno
                         next_retransmit_ = now + rto_;
                     } else if (dup_acks_ > 3 && in_fast_recovery_) {
                         // Inflate cwnd for additional dup ACKs
@@ -527,6 +573,7 @@ public:
                 } else {
                     emit_packet(now, netpacket::TCP_ACK, entry.seq, rcv_nxt_, entry.data, {}, emit);
                 }
+                rtt_retransmitted_ = true;
                 rto_ = std::min<Millis>(rto_ * 2, MAX_RTO);
                 next_retransmit_ = now + rto_;
                 // RFC 5681: a timeout halves ssthresh and restarts cwnd at one segment.
@@ -630,7 +677,8 @@ private:
             wscale_negotiated_ = false;
             local_wscale_ = 0;
         }
-        remote_window_ = static_cast<std::size_t>(s.window) << remote_wscale_;
+        // RFC 7323 Section 2.2: Window field in SYN segment MUST NOT be scaled
+        remote_window_ = static_cast<std::size_t>(s.window);
         const bool acked = (s.flags & netpacket::TCP_ACK) != 0;
         state_ = acked ? TcpState::Established : TcpState::SynReceived;
         emit_packet(now, netpacket::TCP_ACK, snd_nxt_, rcv_nxt_, {}, {}, emit);
@@ -751,6 +799,11 @@ private:
             const std::uint8_t flags =
                 netpacket::TCP_ACK | (tx_buf_.empty() ? netpacket::TCP_PSH : 0);
             retx_.push_back(RetxEntry{snd_nxt_, payload, false, false});
+            if (!rtt_time_.has_value()) {
+                rtt_seq_ = seq_add(snd_nxt_, static_cast<std::uint32_t>(n));
+                rtt_time_ = now;
+                rtt_retransmitted_ = false;
+            }
             emit_packet(now, flags, snd_nxt_, rcv_nxt_, payload, {}, emit);
             snd_nxt_ = seq_add(snd_nxt_, n);
             flight += n;
@@ -836,6 +889,15 @@ private:
     std::size_t ssthresh_ = 4 * 1024 * 1024;
     std::uint32_t dup_acks_ = 0;
     bool in_fast_recovery_ = false;
+    std::uint32_t recover_seq_ = 0;
+
+    // RFC 6298 RTT estimation
+    std::optional<TimePoint> rtt_time_;
+    std::uint32_t rtt_seq_ = 0;
+    bool rtt_retransmitted_ = false;
+    Millis srtt_{0};
+    Millis rttvar_{0};
+    bool rtt_initialized_ = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -1418,6 +1480,7 @@ bool NetStack::service_tcp(TimePoint now) {
         }
     }
 
+    (void)active_transfer;
     return backpressured;
 }
 
