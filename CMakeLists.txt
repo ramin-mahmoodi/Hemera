@@ -5,7 +5,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
     set(CMAKE_CXX_STANDARD 23)
-    add_compile_options(/std:c++latest /permissive- /utf-8 /W4 /EHsc /DUNICODE /D_UNICODE)
+    add_compile_options(/std:c++latest /permissive- /utf-8 /W4 /EHsc /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS)
 else()
     set(CMAKE_CXX_STANDARD 26)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -1993,7 +1993,7 @@ struct MainWindow::Impl {
 
         float about_y = sec4_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
         draw_text(L"About Hemera", fmt_body_.Get(), card_x + pad_x, about_y, ds.colors.text_primary);
-        std::wstring about_sub = L"v1.0.2   ›";
+        std::wstring about_sub = L"v1.0.3   ›";
         draw_text_right(about_sub, fmt_mono_.Get(), card_x + card_w - pad_x, about_y, ds.colors.text_muted);
 
         // Footer
@@ -2503,7 +2503,7 @@ struct MainWindow::Impl {
         draw_text_center(L"Hemera", fmt_hero_status_.Get(), cx, name_y, ds.colors.text_primary);
 
         float ver_y = name_y + scale_f(34, cur_dpi);
-        draw_text_center(L"Version 1.0.2", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
+        draw_text_center(L"Version 1.0.3", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
 
         // Subtitle text
         float desc_y = ver_y + scale_f(22, cur_dpi);
@@ -2555,7 +2555,7 @@ struct MainWindow::Impl {
         // Row 2: Releases & Updates
         float ry2 = card_y + row_h * 2.0f + text_mid_offset;
         draw_text(L"Releases & Changelog", fmt_body_.Get(), card_x + pad_x, ry2, ds.colors.text_primary);
-        draw_text_right(L"v1.0.2 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
+        draw_text_right(L"v1.0.3 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
 
         // Row 3: License
         float ry3 = card_y + row_h * 3.0f + text_mid_offset;
