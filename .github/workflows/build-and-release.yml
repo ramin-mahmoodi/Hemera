@@ -27,6 +27,14 @@ jobs:
       - name: Build Hemera Release
         run: cmake --build build --config Release
 
+      - name: Package Release ZIP Bundle
+        shell: pwsh
+        run: |
+          $ver = if ("${{ github.ref_name }}") { "${{ github.ref_name }}" } else { "latest" }
+          $zipName = "Hemera-${ver}-windows-x64.zip"
+          Compress-Archive -Path "build/Release/Hemera.exe", "build/Release/wintun.dll" -DestinationPath $zipName
+          echo "RELEASE_ZIP=$zipName" >> $env:GITHUB_ENV
+
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -34,6 +42,7 @@ jobs:
           path: |
             build/Release/Hemera.exe
             build/Release/wintun.dll
+            *.zip
           if-no-files-found: warn
 
       - name: Create GitHub Release
@@ -41,6 +50,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            ${{ env.RELEASE_ZIP }}
             build/Release/Hemera.exe
             build/Release/wintun.dll
           name: Hemera ${{ github.ref_name }}
