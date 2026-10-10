@@ -45,7 +45,7 @@ jobs:
 
       - name: Configure CMake (ARM64)
         if: matrix.arch == 'arm64'
-        run: cmake -B build -G "Visual Studio 17 2022" -A ARM64 -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -A ARM64 -DCMAKE_BUILD_TYPE=Release
 
       - name: Build Hemera Release
         run: cmake --build build --config Release
