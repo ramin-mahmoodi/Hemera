@@ -36,7 +36,10 @@ cmake --build "$bossBuild" --config Release
 
 # Ensure all libraries are accessible at top-level build dir
 Get-ChildItem -Path "$bossBuild" -Recurse -Filter "*.lib" | ForEach-Object {
-    Copy-Item $_.FullName -Destination "$bossBuild/$($_.Name)" -Force
+    $target = Join-Path $bossBuild $_.Name
+    if ($_.FullName -ne $target) {
+        Copy-Item $_.FullName -Destination $target -Force
+    }
 }
 
 # 2. nghttp2 (ARM64)
@@ -49,8 +52,10 @@ cmake --build "$ng2Build" --target nghttp2_static
 
 New-Item -ItemType Directory -Path "$ng2Build/lib" -Force | Out-Null
 Get-ChildItem -Path "$ng2Build" -Recurse -Filter "*.lib" | ForEach-Object {
-    Copy-Item $_.FullName -Destination "$ng2Build/lib/$($_.Name)" -Force
-    Copy-Item $_.FullName -Destination "$ng2Build/$($_.Name)" -Force
+    $target1 = Join-Path "$ng2Build/lib" $_.Name
+    if ($_.FullName -ne $target1) { Copy-Item $_.FullName -Destination $target1 -Force }
+    $target2 = Join-Path $ng2Build $_.Name
+    if ($_.FullName -ne $target2) { Copy-Item $_.FullName -Destination $target2 -Force }
 }
 
 # 3. nghttp3 (ARM64)
@@ -63,8 +68,10 @@ cmake --build "$ng3Build"
 
 New-Item -ItemType Directory -Path "$ng3Build/lib" -Force | Out-Null
 Get-ChildItem -Path "$ng3Build" -Recurse -Filter "*.lib" | ForEach-Object {
-    Copy-Item $_.FullName -Destination "$ng3Build/lib/$($_.Name)" -Force
-    Copy-Item $_.FullName -Destination "$ng3Build/$($_.Name)" -Force
+    $target1 = Join-Path "$ng3Build/lib" $_.Name
+    if ($_.FullName -ne $target1) { Copy-Item $_.FullName -Destination $target1 -Force }
+    $target2 = Join-Path $ng3Build $_.Name
+    if ($_.FullName -ne $target2) { Copy-Item $_.FullName -Destination $target2 -Force }
 }
 
 # 4. ngtcp2 with BoringSSL backend (ARM64)
@@ -83,9 +90,12 @@ cmake --build "$tcpBuild"
 New-Item -ItemType Directory -Path "$tcpBuild/lib" -Force | Out-Null
 New-Item -ItemType Directory -Path "$tcpBuild/crypto/boringssl" -Force | Out-Null
 Get-ChildItem -Path "$tcpBuild" -Recurse -Filter "*.lib" | ForEach-Object {
-    Copy-Item $_.FullName -Destination "$tcpBuild/lib/$($_.Name)" -Force
-    Copy-Item $_.FullName -Destination "$tcpBuild/crypto/boringssl/$($_.Name)" -Force
-    Copy-Item $_.FullName -Destination "$tcpBuild/$($_.Name)" -Force
+    $target1 = Join-Path "$tcpBuild/lib" $_.Name
+    if ($_.FullName -ne $target1) { Copy-Item $_.FullName -Destination $target1 -Force }
+    $target2 = Join-Path "$tcpBuild/crypto/boringssl" $_.Name
+    if ($_.FullName -ne $target2) { Copy-Item $_.FullName -Destination $target2 -Force }
+    $target3 = Join-Path $tcpBuild $_.Name
+    if ($_.FullName -ne $target3) { Copy-Item $_.FullName -Destination $target3 -Force }
 }
 
 Write-Host "=== All ARM64 vendor libraries built successfully! ===" -ForegroundColor Green
