@@ -1,5 +1,5 @@
 # Build script for ARM64 third-party libraries (BoringSSL, nghttp2, nghttp3, ngtcp2)
-# Designed to run inside an MSVC ARM64 developer environment (e.g. ilammy/msvc-dev-cmd with arch: arm64)
+# Designed to run inside an MSVC ARM64 developer environment (e.g. ilammy/msvc-dev-cmd with arch: x64_arm64)
 
 $ErrorActionPreference = "Stop"
 
@@ -8,7 +8,17 @@ Write-Host "Project root: $root"
 
 $vendor = Join-Path $root "core/vendor"
 $bossSrc = Join-Path $vendor "boringssl"
-$bossBuild = Join-Path $bossSrc "build_arm64"
+
+# BoringSSL source tree is omitted from git to keep repo size small; clone if not present
+if (-not (Test-Path "$bossSrc/gen/sources.cmake")) {
+    $bossSrc = Join-Path $vendor "boringssl_src"
+    if (-not (Test-Path "$bossSrc/CMakeLists.txt")) {
+        Write-Host "Cloning BoringSSL source for ARM64 build..." -ForegroundColor Yellow
+        git clone --depth 1 https://github.com/google/boringssl.git "$bossSrc"
+    }
+}
+
+$bossBuild = Join-Path $vendor "boringssl/build_arm64"
 $ng2Src = Join-Path $vendor "nghttp2"
 $ng2Build = Join-Path $ng2Src "build_arm64"
 $ng3Src = Join-Path $vendor "nghttp3"
@@ -49,14 +59,14 @@ cmake --build "$ng3Build"
 
 # 4. ngtcp2 with BoringSSL backend (ARM64)
 Write-Host "=== 4/4 Building ngtcp2 for ARM64 ===" -ForegroundColor Cyan
-$bossFwd = $bossSrc.Replace("\", "/")
+$bossIncludeFwd = (Join-Path $vendor "boringssl/include").Replace("\", "/")
 $bossBuildFwd = $bossBuild.Replace("\", "/")
 cmake -S "$tcpSrc" -B "$tcpBuild" -G Ninja `
   -DCMAKE_BUILD_TYPE=Release `
   -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
   -DENABLE_LIB_ONLY=ON -DENABLE_STATIC_LIB=ON -DENABLE_SHARED_LIB=OFF -DBUILD_TESTING=OFF `
   -DENABLE_BORINGSSL=ON -DENABLE_OPENSSL=OFF `
-  -DBORINGSSL_INCLUDE_DIR="$bossFwd/include" `
+  -DBORINGSSL_INCLUDE_DIR="$bossIncludeFwd" `
   -DBORINGSSL_LIBRARIES="$bossBuildFwd/ssl.lib;$bossBuildFwd/crypto.lib"
 cmake --build "$tcpBuild"
 

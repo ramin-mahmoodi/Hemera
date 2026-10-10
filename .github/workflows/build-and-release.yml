@@ -18,18 +18,20 @@ jobs:
       matrix:
         include:
           - arch: x64
+            msvc_arch: x64
             target: windows-x64
           - arch: arm64
+            msvc_arch: x64_arm64
             target: windows-arm64
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup MSVC developer environment (${{ matrix.arch }})
+      - name: Setup MSVC developer environment (${{ matrix.target }})
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: ${{ matrix.arch }}
+          arch: ${{ matrix.msvc_arch }}
 
       - name: Build ARM64 vendor libraries
         if: matrix.arch == 'arm64'
