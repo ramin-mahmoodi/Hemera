@@ -73,13 +73,17 @@ target_include_directories(hemera_core PUBLIC core/src)
 # core/vendor.
 target_include_directories(hemera_core PUBLIC
     core/vendor/boringssl/include
+    core/vendor/boringssl_src/include
     core/vendor/ngtcp2/lib/includes
     core/vendor/ngtcp2/build/lib/includes
+    core/vendor/ngtcp2/build_arm64/lib/includes
     core/vendor/ngtcp2/crypto/includes
     core/vendor/nghttp3/lib/includes
     core/vendor/nghttp3/build/lib/includes
+    core/vendor/nghttp3/build_arm64/lib/includes
     core/vendor/nghttp2/lib/includes
     core/vendor/nghttp2/build/lib/includes
+    core/vendor/nghttp2/build_arm64/lib/includes
     core/vendor/asio/include
     core/vendor/re2
 )
