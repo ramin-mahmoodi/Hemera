@@ -143,10 +143,17 @@ target_link_libraries(Hemera PRIVATE
     iphlpapi
 )
 
-# Copy wintun.dll to build outputs
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}")
-if(EXISTS "${CMAKE_BINARY_DIR}/Release")
-    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}/Release")
+# Copy wintun.dll to build outputs if present
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}")
+    if(EXISTS "${CMAKE_BINARY_DIR}/Release")
+        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}/Release")
+    endif()
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}")
+    if(EXISTS "${CMAKE_BINARY_DIR}/Release")
+        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}/Release")
+    endif()
 endif()
 
 add_custom_target(Hemera-GUI DEPENDS Hemera)
@@ -155,10 +162,21 @@ add_custom_command(TARGET Hemera POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:Hemera>
         "${CMAKE_CURRENT_SOURCE_DIR}/Hemera.exe"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll"
-        "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll"
 )
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll")
+    add_custom_command(TARGET Hemera POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll"
+            "$<TARGET_FILE_DIR:Hemera>/wintun.dll"
+    )
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll")
+    add_custom_command(TARGET Hemera POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll"
+            "$<TARGET_FILE_DIR:Hemera>/wintun.dll"
+    )
+endif()
 
 # Automated Test Suite (Console executable) - built only if tests exist
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runner.cpp")

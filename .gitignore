@@ -38,7 +38,8 @@ core/vendor/**/build/tests/
 
 # Tests & Binaries (as requested)
 tests/
-binaries/
+binaries/*
+!binaries/wintun.dll
 resources.rc
 spike/
 core/spike/
