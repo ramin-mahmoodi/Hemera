@@ -51,8 +51,6 @@ jobs:
         with:
           files: |
             ${{ env.RELEASE_ZIP }}
-            build/Release/Hemera.exe
-            build/Release/wintun.dll
           name: Hemera ${{ github.ref_name }}
           draft: false
           prerelease: false
