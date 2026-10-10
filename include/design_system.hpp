@@ -8,11 +8,37 @@
 #endif
 #include <windows.h>
 #include <objidl.h>
-#include <gdiplus.h>
+#include <d2d1.h>
+#include <dwrite.h>
 #include <string>
 #include <algorithm>
 
 namespace hemera::gui::ds {
+
+struct Color : D2D1_COLOR_F {
+    constexpr Color() noexcept : D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 1.0f} {}
+    constexpr Color(float r_, float g_, float b_, float a_ = 1.0f) noexcept : D2D1_COLOR_F{r_, g_, b_, a_} {}
+    constexpr Color(int a_, int r_, int g_, int b_) noexcept
+        : D2D1_COLOR_F{
+            static_cast<float>(r_) / 255.0f,
+            static_cast<float>(g_) / 255.0f,
+            static_cast<float>(b_) / 255.0f,
+            static_cast<float>(a_) / 255.0f
+        } {}
+
+    BYTE GetA() const noexcept { return static_cast<BYTE>(std::clamp(a * 255.0f + 0.5f, 0.0f, 255.0f)); }
+    BYTE GetR() const noexcept { return static_cast<BYTE>(std::clamp(r * 255.0f + 0.5f, 0.0f, 255.0f)); }
+    BYTE GetG() const noexcept { return static_cast<BYTE>(std::clamp(g * 255.0f + 0.5f, 0.0f, 255.0f)); }
+    BYTE GetB() const noexcept { return static_cast<BYTE>(std::clamp(b * 255.0f + 0.5f, 0.0f, 255.0f)); }
+};
+
+inline D2D1_COLOR_F to_d2d(const Color& c) noexcept {
+    return c;
+}
+
+inline D2D1_COLOR_F to_d2d_alpha(const Color& c, float alpha_mult) noexcept {
+    return D2D1::ColorF(c.r, c.g, c.b, c.a * std::clamp(alpha_mult, 0.0f, 1.0f));
+}
 
 enum class ThemeMode {
     System,
@@ -42,61 +68,61 @@ inline bool is_windows_dark_mode() {
 // ---- Color Palette Tokens (Matching tokens.css exactly) -----------------------------
 struct ColorTokens {
     // Canvas & Surfaces
-    Gdiplus::Color bg;                  // Window background (--bg)
-    Gdiplus::Color card_bg;             // Surface / card background (--surface)
-    Gdiplus::Color btn_bg;              // Button background idle (--btn)
-    Gdiplus::Color btn_on_bg;           // Button background connected (--btn-on)
-    Gdiplus::Color chip_bg;             // Active chip / segmented control (--chip)
-    Gdiplus::Color hover_bg;            // General hover background (--hov)
+    Color bg;                  // Window background (--bg)
+    Color card_bg;             // Surface / card background (--surface)
+    Color btn_bg;              // Button background idle (--btn)
+    Color btn_on_bg;           // Button background connected (--btn-on)
+    Color chip_bg;             // Active chip / segmented control (--chip)
+    Color hover_bg;            // General hover background (--hov)
 
     // Borders
-    Gdiplus::Color card_border;         // Primary border (--bd)
-    Gdiplus::Color btn_border;          // Secondary border (--bd2)
-    Gdiplus::Color btn_border_dim;      // Tertiary border (--bd3)
-    Gdiplus::Color border_hover;        // Border hover (--bdh)
-    Gdiplus::Color border_hover_bright; // Border hover bright (--bdh2)
-    Gdiplus::Color divider;             // Inner row divider (--bd)
+    Color card_border;         // Primary border (--bd)
+    Color btn_border;          // Secondary border (--bd2)
+    Color btn_border_dim;      // Tertiary border (--bd3)
+    Color border_hover;        // Border hover (--bdh)
+    Color border_hover_bright; // Border hover bright (--bdh2)
+    Color divider;             // Inner row divider (--bd)
 
     // Typography & Icons
-    Gdiplus::Color text_primary;        // High-contrast text (--tx)
-    Gdiplus::Color text_secondary;      // Secondary text (--tx2)
-    Gdiplus::Color icon_color;          // Neutral icon stroke (--ic)
-    Gdiplus::Color text_muted;          // Subtitles & labels (--mu)
-    Gdiplus::Color text_submuted;       // Metric header tags (--mu2)
-    Gdiplus::Color text_dim;            // Footnotes & captions (--fa)
+    Color text_primary;        // High-contrast text (--tx)
+    Color text_secondary;      // Secondary text (--tx2)
+    Color icon_color;          // Neutral icon stroke (--ic)
+    Color text_muted;          // Subtitles & labels (--mu)
+    Color text_submuted;       // Metric header tags (--mu2)
+    Color text_dim;            // Footnotes & captions (--fa)
 
     // Accent (Teal + Indigo)
-    Gdiplus::Color accent;              // Primary accent (--ac: Teal)
-    Gdiplus::Color accent_ram;          // Secondary accent (--ac2: RAM line, Indigo)
-    Gdiplus::Color accent_bg;           // Accent button background (--btn-on)
-    Gdiplus::Color accent_hover;        // Accent button hover
-    Gdiplus::Color info;                // Info tag / cyan (--info)
-    Gdiplus::Color warning;             // Warning (--warn)
-    Gdiplus::Color error;               // Error (--err)
+    Color accent;              // Primary accent (--ac: Teal)
+    Color accent_ram;          // Secondary accent (--ac2: RAM line, Indigo)
+    Color accent_bg;           // Accent button background (--btn-on)
+    Color accent_hover;        // Accent button hover
+    Color info;                // Info tag / cyan (--info)
+    Color warning;             // Warning (--warn)
+    Color error;               // Error (--err)
 
     // Hero Power Button
-    Gdiplus::Color hero_idle_bg;
-    Gdiplus::Color hero_idle_border;
-    Gdiplus::Color hero_idle_icon;
+    Color hero_idle_bg;
+    Color hero_idle_border;
+    Color hero_idle_icon;
 
     // Glow effects
-    Gdiplus::Color hero_glow_on_inner;
-    Gdiplus::Color hero_glow_on_outer;
-    Gdiplus::Color hero_glow_err_inner;
-    Gdiplus::Color hero_glow_err_outer;
-    Gdiplus::Color hero_glow_off;
+    Color hero_glow_on_inner;
+    Color hero_glow_on_outer;
+    Color hero_glow_err_inner;
+    Color hero_glow_err_outer;
+    Color hero_glow_off;
 
     // Ambient background radial glows
-    Gdiplus::Color gl_idle;
-    Gdiplus::Color gl_conn;
-    Gdiplus::Color gl_on;
-    Gdiplus::Color gl_err;
-    Gdiplus::Color gl_warn;
+    Color gl_idle;
+    Color gl_conn;
+    Color gl_on;
+    Color gl_err;
+    Color gl_warn;
 
     // Dropdown & Popups
-    Gdiplus::Color dropdown_bg;
-    Gdiplus::Color dropdown_hover;
-    Gdiplus::Color dropdown_border;
+    Color dropdown_bg;
+    Color dropdown_hover;
+    Color dropdown_border;
 
     // Win32 GDI COLORREF
     COLORREF win_bg   = RGB(11, 11, 13);
@@ -235,7 +261,7 @@ struct MetricTokens {
     int window_width          = 420; // 420 DIPs strictly matching artboard
     int window_height         = 720; // 720 DIPs strictly matching artboard
     int padding_x             = 28;  // 28 DIPs side padding
-    int padding_top           = 28;  // 28 DIPs top padding
+    int padding_top           = 36;  // 36 DIPs top padding (providing breathing room below Chrome caption buttons)
     int padding_bottom        = 24;  // 24 DIPs bottom padding
 
     int radius_card           = 16;  // 16 DIPs border-radius for cards

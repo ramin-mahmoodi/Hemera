@@ -131,6 +131,7 @@ constexpr Row rows[] = {
     {"--route-block", "HEMERA_ROUTE_BLOCK", arg_value},
     {"--route-direct", "HEMERA_ROUTE_DIRECT", arg_value},
     {"--routes", "HEMERA_ROUTES_FILE", arg_value},
+    {"--tun", "HEMERA_TUN_MODE", "1"},
 
     // TLS
     {"--tls-groups", "HEMERA_TLS_GROUPS", arg_value},

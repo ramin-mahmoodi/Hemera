@@ -61,6 +61,7 @@
 #include "masque_h2.hpp"
 #include "sysprofile.hpp"
 #include "identity.hpp"
+#include "tun_device.hpp"
 
 #include <atomic>
 #include <algorithm>
@@ -90,6 +91,7 @@ namespace {
 
 namespace cf = hemera::core::coreflow;
 namespace localapi = hemera::core::localapi;
+namespace tun = hemera::core::tun;
 
 using hemera::core::CliOutcome;
 using hemera::core::Identity;
@@ -100,6 +102,7 @@ using hemera::core::load_last_connection;
 using hemera::core::save_last_connection;
 using hemera::core::settings_from_environment;
 using hemera::core::trim;
+using hemera::core::is_truthy;
 
 using cf::Cancel;
 using cf::Error;
@@ -1518,6 +1521,12 @@ public:
         threads_.clear();
     }
 
+    void set_tun_device(std::unique_ptr<tun::TunDevice> dev) {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        tun_ = std::move(dev);
+    }
+    [[nodiscard]] tun::TunDevice* tun_device() { return tun_.get(); }
+
 private:
     StackQueue queue_;
     QueueSink sink_;
@@ -1525,6 +1534,7 @@ private:
     LockedAssigned assigned_;
     ControlQueue control_;
     std::unique_ptr<ns::NetStack> stack_;
+    std::unique_ptr<tun::TunDevice> tun_;
     std::mutex mutex_;
     std::chrono::milliseconds last_tick_{2000};
     const std::size_t mtu_;
@@ -1544,6 +1554,9 @@ ns::SendOutcome QueueSink::try_send(std::span<const std::uint8_t> packet) {
 
 tr::Room LockedInbound::try_send(std::span<const std::uint8_t> ip_packet) {
     const std::lock_guard<std::mutex> lock(hop_.mutex());
+    if (tun::TunDevice* tun = hop_.tun_device(); tun != nullptr) {
+        tun->write_packet(ip_packet);
+    }
     if (ns::NetStack* stack = hop_.stack(); stack != nullptr) {
         stack->submit_inbound(std::vector<std::uint8_t>(ip_packet.begin(), ip_packet.end()));
     }
@@ -3072,6 +3085,44 @@ void serve_http_client(Hop& hop, ProxyOptions& options, eg::Stop& run_stop, SOCK
     relay_pair(client, *tunnel, stop, linger);
 }
 
+void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& identity,
+                            const SocketAddr& peer, const Cancel& cancel) {
+    const auto tun_val = settings.get("HEMERA_TUN_MODE");
+    if (!tun_val.has_value() || !is_truthy(*tun_val)) {
+        return;
+    }
+    emit(Level::Info, "[*] initializing native Wintun TUN adapter (full-system mode)...");
+    tun::TunConfig cfg;
+    cfg.adapter_name = "Hemera";
+    cfg.tunnel_type = "HemeraTunnel";
+    cfg.ipv4 = identity.ipv4;
+    cfg.ipv6 = identity.ipv6;
+    cfg.peer_endpoint = peer;
+    if (auto dns = settings.get("HEMERA_DNS")) {
+        cfg.dns = std::string(*dns);
+    }
+    auto created = tun::TunDevice::create(cfg);
+    if (!created.has_value()) {
+        emit(Level::Warn, "[!] failed to initialize TUN device: " + created.error() + "; falling back to proxy mode");
+        return;
+    }
+    emit(Level::Info, "[+] native Wintun TUN adapter active; full-system routing engaged");
+    tun::TunDevice* dev = created->get();
+    hop.set_tun_device(std::move(*created));
+
+    hop.add_thread(std::thread([&hop, &cancel, dev] {
+        HANDLE read_ev = reinterpret_cast<HANDLE>(dev->read_wait_event());
+        while (!cancel.is_cancelled() && !hop.stop().asked()) {
+            DWORD wait = WaitForSingleObject(read_ev, 50);
+            if (wait == WAIT_OBJECT_0) {
+                dev->drain_read_packets(64, [&hop](std::span<const uint8_t> pkt) {
+                    (void)hop.queue().push(pkt);
+                });
+            }
+        }
+    }));
+}
+
 // The listener itself: Rust's serve(), the listening line, the world-reachable warning, the accept
 // loop with accept_backoff and one thread per client up to client_limit(). `http` switches the body
 // from the SOCKS5 handshake to the CONNECT listener, which is the only difference between the two
@@ -3873,6 +3924,8 @@ private:
         return Exec::Ran;
     }
 
+    attach_tun_if_enabled(hop, settings, ctx.primary, request.peer, cancel);
+
     hop.add_thread(std::thread(
         [&hop, &options, &cancel] { serve_proxy(hop, options, options.socks_listen, "socks5", false, cancel); }));
     if (options.http_listen.has_value()) {
@@ -3963,6 +4016,8 @@ private:
         reply.error = Error::other(std::move(settled.error()));
         return Exec::Ran;
     }
+
+    attach_tun_if_enabled(hop, settings, ctx.primary, request.peer, cancel);
 
     hop.add_thread(std::thread(
         [&hop, &options, &cancel] { serve_proxy(hop, options, options.socks_listen, "socks5", false, cancel); }));
@@ -4129,6 +4184,7 @@ private:
     if (http.warning.has_value()) emit(Level::Warn, *http.warning);
     ProxyOptions options{settings, routes, ctx.listen, http.listen};
     Hop& inner_ref = **inner;
+    attach_tun_if_enabled(inner_ref, settings, ctx.secondary ? *ctx.secondary : ctx.primary, inner_peer, cancel);
     (*inner)->add_thread(std::thread([&inner_ref, &options, &cancel] {
         serve_proxy(inner_ref, options, options.socks_listen, "socks5", false, cancel);
     }));
@@ -4306,6 +4362,7 @@ private:
     if (http.warning.has_value()) emit(Level::Warn, *http.warning);
     ProxyOptions options{settings, routes, ctx.listen, http.listen};
     Hop& inner_ref = *inner;
+    attach_tun_if_enabled(inner_ref, settings, ctx.secondary ? *ctx.secondary : ctx.primary, request.peer, cancel);
     inner->add_thread(std::thread([&inner_ref, &options, &cancel] {
         serve_proxy(inner_ref, options, options.socks_listen, "socks5", false, cancel);
     }));
@@ -4596,6 +4653,7 @@ private:
     if (http.warning.has_value()) emit(Level::Warn, *http.warning);
     ProxyOptions options{settings, routes, ctx.listen, http.listen};
     Hop& inner_ref = *inner;
+    attach_tun_if_enabled(inner_ref, settings, ctx.secondary ? *ctx.secondary : ctx.primary, request.peer, cancel);
     inner->add_thread(std::thread([&inner_ref, &options, &cancel] {
         serve_proxy(inner_ref, options, options.socks_listen, "socks5", false, cancel);
     }));
@@ -4983,11 +5041,22 @@ template <class Flow>
 // matching binary. The filter returns EXECUTE_HANDLER so the process still exits with the
 // exception's own code; the terminate handler aborts, as terminate would.
 
+void crash_log_line(const char* line) {
+    std::fprintf(stderr, "%s\n", line);
+    std::fflush(stderr);
+    FILE* f = std::fopen("last_crash.log", "a");
+    if (f) {
+        std::fprintf(f, "%s\n", line);
+        std::fclose(f);
+    }
+}
+
 void crash_print_rva(const char* what, const void* addr) {
+    char buf[256];
     const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
-        std::fprintf(stderr, "[FATAL] hemera %s at %p (no module list)\n", what, addr);
-        std::fflush(stderr);
+        std::snprintf(buf, sizeof buf, "[FATAL] hemera %s at %p (no module list)", what, addr);
+        crash_log_line(buf);
         return;
     }
     MODULEENTRY32 entry{};
@@ -4997,24 +5066,24 @@ void crash_print_rva(const char* what, const void* addr) {
         do {
             const auto base = reinterpret_cast<std::uintptr_t>(entry.modBaseAddr);
             if (here >= base && here < base + entry.modBaseSize) {
-                std::fprintf(stderr, "[FATAL] hemera %s at %ls+0x%zx\n", what, entry.szModule,
+                std::snprintf(buf, sizeof buf, "[FATAL] hemera %s at %ls+0x%zx", what, entry.szModule,
                              here - base);
-                std::fflush(stderr);
+                crash_log_line(buf);
                 CloseHandle(snapshot);
                 return;
             }
         } while (Module32Next(snapshot, &entry) != FALSE);
     }
     CloseHandle(snapshot);
-    std::fprintf(stderr, "[FATAL] hemera %s at %p (outside all modules)\n", what, addr);
-    std::fflush(stderr);
+    std::snprintf(buf, sizeof buf, "[FATAL] hemera %s at %p (outside all modules)", what, addr);
+    crash_log_line(buf);
 }
 
 LONG WINAPI crash_filter(EXCEPTION_POINTERS* info) {
+    char buf[128];
     const DWORD code = info->ExceptionRecord->ExceptionCode;
-    std::fprintf(stderr, "[FATAL] hemera crashed: exception 0x%08lx\n",
-                 static_cast<unsigned long>(code));
-    std::fflush(stderr);
+    std::snprintf(buf, sizeof buf, "[FATAL] hemera crashed: exception 0x%08lx", static_cast<unsigned long>(code));
+    crash_log_line(buf);
     crash_print_rva("fault", info->ExceptionRecord->ExceptionAddress);
     void* frames[16]{};
     const WORD taken = CaptureStackBackTrace(0, 16, frames, nullptr);
@@ -5027,8 +5096,7 @@ LONG WINAPI crash_filter(EXCEPTION_POINTERS* info) {
 }
 
 void crash_terminated() {
-    std::fprintf(stderr, "[FATAL] hemera terminated: uncaught exception\n");
-    std::fflush(stderr);
+    crash_log_line("[FATAL] hemera terminated: uncaught exception");
     void* frames[16]{};
     const WORD taken = CaptureStackBackTrace(0, 16, frames, nullptr);
     for (WORD i = 0; i < taken; ++i) {
@@ -5107,10 +5175,10 @@ int run_inproc(const std::vector<std::string>& args,
     hooks.prompt = make_prompt();
     hooks.bind_listener = make_bind_listener();
     hooks.install_netstack_guard = [] {};
-    hooks.spawn_stats_reporter = [&settings, &cancel, callbacks] {
+    hooks.spawn_stats_reporter = [&settings, cancel, callbacks] {
         if (!::hemera::core::enabled()) return;
         const auto every = ::hemera::core::report_interval(settings);
-        std::thread([every, settings, &cancel, callbacks] {
+        std::thread([every, settings, cancel, callbacks] {
             while (!cancel.is_cancelled()) {
                 interruptible_sleep(every, cancel);
                 if (cancel.is_cancelled()) break;

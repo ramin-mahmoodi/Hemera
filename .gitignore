@@ -84,3 +84,7 @@ cropped_screenshot.png
 build_icons.py
 test_*.py
 check_*.py
+graphify-out/
+startup.log
+crash_report.txt
+hemera_engine.log

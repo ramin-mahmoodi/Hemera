@@ -357,6 +357,9 @@ struct ConnectionProfile {
             args.push_back("--routes");
             args.push_back(routes_file);
         }
+        if (tun_mode) {
+            args.push_back("--tun");
+        }
 
         return args;
     }

@@ -63,6 +63,7 @@ add_library(hemera_core STATIC
     core/src/wireguard.cpp
     core/src/zerotrust.cpp
     core/src/hemera_cli.cpp
+    core/src/tun_device.cpp
 )
 target_include_directories(hemera_core PUBLIC core/src)
 
@@ -99,16 +100,8 @@ target_link_directories(hemera_core PUBLIC
     core/vendor/ngtcp2/build/crypto/boringssl
 )
 target_link_libraries(hemera_core PUBLIC
-    re2 nghttp3 nghttp2 ngtcp2_crypto_boringssl ngtcp2 ssl pki crypto ws2_32 mswsock bcrypt
+    re2 nghttp3 nghttp2 ngtcp2_crypto_boringssl ngtcp2 ssl pki crypto ws2_32 mswsock bcrypt iphlpapi
 )
-
-# The native core: the console program that replaces the bundled Rust binaries/hemera.exe. Same
-# flags, same output; it is also what a differential run against the Rust binary is driven from.
-add_executable(hemera-core core/src/hemera_main.cpp)
-target_link_libraries(hemera-core PRIVATE hemera_core ws2_32 mswsock)
-target_link_options(hemera-core PRIVATE "/MAP")
-target_include_directories(hemera-core PRIVATE include core/src core/vendor/asio/include)
-set_target_properties(hemera-core PROPERTIES OUTPUT_NAME hemera)
 
 # Windows Native GUI Application (WIN32 Subsystem, No Qt, Zero external dependencies)
 add_executable(Hemera WIN32
@@ -121,6 +114,8 @@ add_executable(Hemera WIN32
     gui_resources.rc
 )
 
+target_link_options(Hemera PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:wWinMainCRTStartup")
+
 target_include_directories(Hemera PRIVATE
     include
     core/src
@@ -129,7 +124,9 @@ target_include_directories(Hemera PRIVATE
 
 target_link_libraries(Hemera PRIVATE
     hemera_core
-    gdiplus
+    d2d1
+    dwrite
+    windowscodecs
     ws2_32
     mswsock
     wininet
@@ -143,9 +140,25 @@ target_link_libraries(Hemera PRIVATE
     ole32
     winmm
     psapi
+    iphlpapi
 )
 
+# Copy wintun.dll to build outputs
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}")
+if(EXISTS "${CMAKE_BINARY_DIR}/Release")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}/Release")
+endif()
+
 add_custom_target(Hemera-GUI DEPENDS Hemera)
+
+add_custom_command(TARGET Hemera POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:Hemera>
+        "${CMAKE_CURRENT_SOURCE_DIR}/Hemera.exe"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll"
+        "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll"
+)
 
 # Automated Test Suite (Console executable) - built only if tests exist
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runner.cpp")

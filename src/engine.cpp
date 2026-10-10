@@ -9,11 +9,13 @@
 #include "network.hpp"
 #include "sysproxy.hpp"
 #include "inproc_core.hpp"
+#include "tun_device.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <malloc.h>
 #include <shlobj.h>
 #include <fstream>
 #include <iostream>
@@ -118,6 +120,8 @@ struct HemeraEngine::Impl {
     }
 
     void emit_state(const ConnectionState& new_state) {
+        std::ofstream f("hemera_engine.log", std::ios::app);
+        f << "[STATE] kind=" << static_cast<int>(new_state.kind) << " err=" << new_state.error_message << std::endl;
         StateCallback cb;
         {
             std::lock_guard lock(mutex);
@@ -130,6 +134,8 @@ struct HemeraEngine::Impl {
     }
 
     void emit_log(std::string_view line) {
+        std::ofstream f("hemera_engine.log", std::ios::app);
+        f << "[LOG] " << line << std::endl;
         LogCallback cb;
         {
             std::lock_guard lock(mutex);
@@ -258,6 +264,14 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
     }
 
     ConnectionProfile prof = custom_profile.value_or(load_profile());
+    if (prof.tun_mode && !hemera::core::tun::TunDevice::is_elevated()) {
+        impl_->emit_state({
+            .kind = StateKind::Error,
+            .error_message = "TUN mode requires Administrator privileges. Please restart Hemera as Administrator."
+        });
+        return std::unexpected("TUN mode requires Administrator privileges");
+    }
+
     impl_->profile = prof;
     impl_->cancel_token = hemera::core::Cancel();
 
@@ -271,12 +285,21 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
     impl_->core_thread = std::make_unique<std::thread>([this, prof, cancel = impl_->cancel_token]() mutable {
         std::vector<std::string> args = prof.as_args();
         std::map<std::string, std::string> env;
+        if (prof.tun_mode) env["HEMERA_TUN_MODE"] = "1";
         if (prof.masque_http2) env["HEMERA_MASQUE_HTTP2"] = "1";
-        if (prof.fragment) env["HEMERA_MASQUE_H2_FRAGMENT"] = "1";
+        if (prof.fragment) {
+            env["HEMERA_MASQUE_H2_FRAGMENT"] = "1";
+            env["HEMERA_MASQUE_H2_FRAGMENT_SNI"] = "1";
+        }
         if (prof.ech) env["HEMERA_ECH"] = "auto";
         if (!prof.exit_loc.empty()) env["HEMERA_EXIT_LOC"] = prof.exit_loc;
         if (!prof.dns.empty()) env["HEMERA_DNS"] = prof.dns;
         if (!prof.route_direct.empty()) env["HEMERA_ROUTE_DIRECT"] = prof.route_direct;
+        if (prof.protocol == Protocol::Wireguard || prof.protocol == Protocol::Gool || prof.protocol == Protocol::WarpInWarp) {
+            env["HEMERA_NOIZE"] = std::string(to_string(prof.wg_noize));
+        } else {
+            env["HEMERA_NOIZE"] = std::string(to_string(prof.masque_noize));
+        }
         if (prof.protocol == Protocol::WarpInWarp) env["HEMERA_GOOL_MODE"] = "classic";
         if (!prof.access_email.empty()) env["HEMERA_ACCESS_EMAIL"] = prof.access_email;
         if (!prof.access_client_id.empty()) env["HEMERA_ACCESS_CLIENT_ID"] = prof.access_client_id;
@@ -297,7 +320,7 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
             }
             if (scb) scb(st);
         };
-        cbs.on_state_changed = [this, prof, &cancel](const std::string& st) {
+        cbs.on_state_changed = [this, prof, cancel](const std::string& st) {
             if (st == "Connected") {
                 if (cancel.is_cancelled()) return;
                 impl_->emit_state({
@@ -305,7 +328,7 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
                     .socks_addr = prof.primary_addr(),
                     .connected_at_ms = current_time_ms()
                 });
-                if (prof.system_proxy) {
+                if (!prof.tun_mode && prof.system_proxy) {
                     auto http_front = prof.http_front();
                     std::string front = http_front.value_or("127.0.0.1:1819");
                     sysproxy::apply(front, impl_->backup_file, prof.primary_addr());
@@ -321,7 +344,20 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
             }
         };
 
+        {
+            std::ofstream f("hemera_engine.log", std::ios::app);
+            f << "[CONNECT] Starting run_inproc with args:";
+            for (const auto& a : args) f << " " << a;
+            f << std::endl;
+        }
+
         int rc = hemera::core::run_inproc(args, env, cancel, cbs);
+
+        {
+            std::ofstream f("hemera_engine.log", std::ios::app);
+            f << "[CONNECT] run_inproc finished with rc=" << rc << " cancelled=" << cancel.is_cancelled() << std::endl;
+        }
+
         if (rc != 0 && !cancel.is_cancelled()) {
             if (prof.system_proxy) sysproxy::restore(impl_->backup_file);
             impl_->emit_state({
@@ -334,6 +370,10 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
                 .kind = StateKind::Idle
             });
         }
+
+        // Reclaim network stack, crypto contexts, and CRT heap buffers on disconnect
+        _heapmin();
+        SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
     });
 
     return {};
@@ -353,6 +393,8 @@ std::expected<void, std::string> HemeraEngine::disconnect() {
     }
 
     impl_->emit_state({.kind = StateKind::Idle});
+    _heapmin();
+    SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
     return {};
 }
 
@@ -362,6 +404,7 @@ std::expected<void, std::string> HemeraEngine::submit_access_code(std::string_vi
 
 void HemeraEngine::startup_cleanup() {
     sysproxy::restore_stale(impl_->backup_file);
+    hemera::core::tun::TunDevice::cleanup_stale_adapter("Hemera");
 }
 
 void HemeraEngine::shutdown_blocking() {

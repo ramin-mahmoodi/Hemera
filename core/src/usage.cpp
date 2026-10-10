@@ -190,6 +190,7 @@ Routing (which traffic goes where):
   --route-direct <list>    send these straight out, bypassing the tunnel
   --routes <path>          load both lists from a file with [block] and [direct]
                            sections
+  --tun                    route all system traffic through native Wintun (VPN mode)
                            list entries are comma or newline separated and may be:
                              example.com          the name and every subdomain
                              full:example.com     that exact name only
@@ -293,6 +294,7 @@ Environment variables:
   HEMERA_ROUTE_BLOCK               --route-block
   HEMERA_ROUTE_DIRECT              --route-direct
   HEMERA_ROUTES_FILE               --routes
+  HEMERA_TUN_MODE                  --tun
   HEMERA_CONFIG                    --config
   HEMERA_WG_CONFIG                 --wg-config
   HEMERA_MASQUE_CONFIG             --masque-config
