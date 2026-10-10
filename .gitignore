@@ -40,6 +40,10 @@ core/vendor/**/build/tests/
 tests/
 binaries/*
 !binaries/wintun.dll
+!binaries/x64/
+!binaries/x64/**
+!binaries/arm64/
+!binaries/arm64/**
 resources.rc
 spike/
 core/spike/

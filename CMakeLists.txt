@@ -92,13 +92,26 @@ target_compile_definitions(hemera_core PUBLIC NGTCP2_STATICLIB NGHTTP3_STATICLIB
 set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 add_subdirectory(core/vendor/re2 EXCLUDE_FROM_ALL)
 
-target_link_directories(hemera_core PUBLIC
-    core/vendor/boringssl/build
-    core/vendor/nghttp3/build/lib
-    core/vendor/nghttp2/build/lib
-    core/vendor/ngtcp2/build/lib
-    core/vendor/ngtcp2/build/crypto/boringssl
-)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64" OR CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
+    target_link_directories(hemera_core PUBLIC
+        core/vendor/boringssl/build_arm64
+        core/vendor/boringssl/build_arm64/crypto
+        core/vendor/boringssl/build_arm64/ssl
+        core/vendor/boringssl/build_arm64/pki
+        core/vendor/nghttp3/build_arm64/lib
+        core/vendor/nghttp2/build_arm64/lib
+        core/vendor/ngtcp2/build_arm64/lib
+        core/vendor/ngtcp2/build_arm64/crypto/boringssl
+    )
+else()
+    target_link_directories(hemera_core PUBLIC
+        core/vendor/boringssl/build
+        core/vendor/nghttp3/build/lib
+        core/vendor/nghttp2/build/lib
+        core/vendor/ngtcp2/build/lib
+        core/vendor/ngtcp2/build/crypto/boringssl
+    )
+endif()
 target_link_libraries(hemera_core PUBLIC
     re2 nghttp3 nghttp2 ngtcp2_crypto_boringssl ngtcp2 ssl pki crypto ws2_32 mswsock bcrypt iphlpapi
 )
@@ -143,16 +156,26 @@ target_link_libraries(Hemera PRIVATE
     iphlpapi
 )
 
-# Copy wintun.dll to build outputs if present
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll")
-    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}")
-    if(EXISTS "${CMAKE_BINARY_DIR}/Release")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}/Release")
+# Copy wintun.dll to build outputs if present (architecture-aware)
+set(WINTUN_SRC "")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64" OR CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/binaries/arm64/wintun.dll")
+        set(WINTUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/binaries/arm64/wintun.dll")
     endif()
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll")
-    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}")
+else()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/binaries/x64/wintun.dll")
+        set(WINTUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/binaries/x64/wintun.dll")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll")
+        set(WINTUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll")
+        set(WINTUN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll")
+    endif()
+endif()
+
+if(WINTUN_SRC)
+    file(COPY "${WINTUN_SRC}" DESTINATION "${CMAKE_BINARY_DIR}")
     if(EXISTS "${CMAKE_BINARY_DIR}/Release")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll" DESTINATION "${CMAKE_BINARY_DIR}/Release")
+        file(COPY "${WINTUN_SRC}" DESTINATION "${CMAKE_BINARY_DIR}/Release")
     endif()
 endif()
 
@@ -164,16 +187,10 @@ add_custom_command(TARGET Hemera POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/Hemera.exe"
 )
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll")
+if(WINTUN_SRC)
     add_custom_command(TARGET Hemera POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/binaries/wintun.dll"
-            "$<TARGET_FILE_DIR:Hemera>/wintun.dll"
-    )
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll")
-    add_custom_command(TARGET Hemera POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/wintun.dll"
+            "${WINTUN_SRC}"
             "$<TARGET_FILE_DIR:Hemera>/wintun.dll"
     )
 endif()
