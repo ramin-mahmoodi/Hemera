@@ -433,22 +433,10 @@ set(sbindir         "${CMAKE_INSTALL_FULL_SBINDIR}")
 foreach(name
    lib/libnghttp2.pc
    lib/includes/nghttp2/nghttp2ver.h
-   integration-tests/config.go
-   integration-tests/setenv
-   doc/conf.py
-   doc/index.rst
-   doc/package_README.rst
-   doc/tutorial-client.rst
-   doc/tutorial-server.rst
-   doc/tutorial-hpack.rst
-   doc/nghttpx-howto.rst
-   doc/h2load-howto.rst
-   doc/building-android-binary.rst
-   doc/nghttp2.h.rst
-   doc/nghttp2ver.h.rst
-   doc/contribute.rst
 )
-  configure_file("${name}.in" "${name}" @ONLY)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${name}.in")
+    configure_file("${name}.in" "${name}" @ONLY)
+  endif()
 endforeach()
 
 if(APPLE)
@@ -462,24 +450,30 @@ include_directories(
 set(PKGDATADIR "${CMAKE_INSTALL_FULL_DATADIR}/${CMAKE_PROJECT_NAME}")
 set(PKGLIBDIR "${CMAKE_INSTALL_FULL_LIBDIR}/${CMAKE_PROJECT_NAME}")
 
-install(FILES README.rst DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/README.rst")
+  install(FILES README.rst DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+endif()
 
 add_subdirectory(lib)
-#add_subdirectory(lib/includes)
-add_subdirectory(third-party)
-add_subdirectory(src)
-add_subdirectory(examples)
-if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
-  add_subdirectory(tests)
-  #add_subdirectory(tests/testdata)
-  add_subdirectory(integration-tests)
+
+if(NOT ENABLE_LIB_ONLY)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party")
+    add_subdirectory(third-party)
+  endif()
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_subdirectory(src)
+  endif()
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+    add_subdirectory(examples)
+  endif()
+  if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    add_subdirectory(tests)
+    add_subdirectory(integration-tests)
+  endif()
+  if(ENABLE_DOC AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/doc")
+    add_subdirectory(doc)
+  endif()
 endif()
-if(ENABLE_DOC)
-  add_subdirectory(doc)
-endif()
-add_subdirectory(contrib)
-add_subdirectory(script)
-add_subdirectory(bpf)
 
 
 string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type)
