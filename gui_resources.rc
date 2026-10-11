@@ -18,7 +18,7 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName",      "Hemera Project"
-            VALUE "FileDescription",  "Hemera - Native Windows Network Client"
+            VALUE "FileDescription",  "Hemera"
             VALUE "FileVersion",      "1.0.6.0"
             VALUE "InternalName",     "Hemera"
             VALUE "LegalCopyright",   "Copyright (C) 2026 Hemera Project. All rights reserved."
