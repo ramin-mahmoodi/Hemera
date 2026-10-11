@@ -65,6 +65,18 @@ std::size_t buffer_override(const Settings& settings, std::string_view key, std:
     return bytes;
 }
 
+std::size_t channel_capacity_override(const Settings& settings, std::size_t fallback) {
+    const auto value = settings.get("HEMERA_CHANNEL_CAPACITY");
+    if (!value) return fallback;
+
+    const std::string_view text = trim(*value);
+    std::size_t count = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), count);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) return fallback;
+    if (count < 64 || count > 65536) return fallback;
+    return count;
+}
+
 } // namespace
 
 std::string_view label(Tier tier) {
@@ -138,6 +150,8 @@ Tuning build(std::size_t cpus, std::optional<std::uint64_t> mem_mb, const Settin
         buffer_override(settings, "HEMERA_NETSTACK_TCP_RX", tuning.netstack_tcp_rx_buf);
     tuning.netstack_tcp_tx_buf =
         buffer_override(settings, "HEMERA_NETSTACK_TCP_TX", tuning.netstack_tcp_tx_buf);
+    tuning.channel_capacity =
+        channel_capacity_override(settings, tuning.channel_capacity);
     return tuning;
 }
 

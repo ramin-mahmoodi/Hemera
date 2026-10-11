@@ -1535,7 +1535,7 @@ public:
 class Hop {
 public:
     Hop(const Settings& settings, std::size_t mtu)
-        : queue_(sysprofile::channel_capacity(settings)),
+        : queue_(std::max<std::size_t>(2048, sysprofile::channel_capacity(settings))),
           sink_(*this),
           inbound_(*this),
           assigned_(*this),
@@ -1798,11 +1798,9 @@ class H2Outbound final : public carrier_h2::OutboundSource {
 public:
     explicit H2Outbound(Hop& hop) : hop_(hop) {}
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> try_recv() override {
-        const std::lock_guard<std::mutex> lock(hop_.mutex());
         return hop_.queue().pull();
     }
     [[nodiscard]] bool gone() const override {
-        const std::lock_guard<std::mutex> lock(hop_.mutex());
         return hop_.queue().ended();
     }
 
@@ -3389,17 +3387,20 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
         size_t dropped_count = 0;
         auto last_report = std::chrono::steady_clock::now();
         while (!cancel.is_cancelled() && !hop.stop().asked()) {
+            bool batch_stalled = false;
             // Drain all available packets from Wintun receive ring buffer
-            const size_t drained = dev->drain_read_packets(256, [&hop, &dropped_count, &cancel](std::span<const uint8_t> pkt) -> bool {
+            const size_t drained = dev->drain_read_packets(256, [&](std::span<const uint8_t> pkt) -> bool {
                 if (cancel.is_cancelled() || hop.stop().asked()) return false;
-                // If queue is already full and dropping in this batch, avoid stalling for 5ms on every packet
-                const auto wait_budget = std::chrono::milliseconds(dropped_count > 0 ? 0 : 2);
+                // Give a 2ms budget for the carrier to pull; if this batch hit capacity, avoid stalling on subsequent packets
+                const auto wait_budget = std::chrono::milliseconds(batch_stalled ? 0 : 2);
                 const auto outcome = hop.queue().push_wait(pkt, wait_budget, [&] {
                     return cancel.is_cancelled() || hop.stop().asked();
                 });
                 if (outcome == ns::SendOutcome::Ok) {
                     ::hemera::core::add_up(pkt.size());
+                    batch_stalled = false;
                 } else if (outcome == ns::SendOutcome::Full) {
+                    batch_stalled = true;
                     ++dropped_count;
                 } else if (outcome == ns::SendOutcome::Closed) {
                     return false;

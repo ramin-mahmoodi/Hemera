@@ -1549,18 +1549,19 @@ struct MainWindow::Impl {
         lower.reserve(raw_line.size());
         for (char c : raw_line) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
 
-        if (lower.find("error") != std::string::npos || lower.find("fail") != std::string::npos ||
-            lower.find("fatal") != std::string::npos || raw_line.find("[-] ") != std::string::npos ||
-            lower.find("crash") != std::string::npos) {
-            entry.category = LogCategory::Error;
-            entry.tag = L"ERR";
-            entry.tag_color = ds.colors.error;
-        } else if (lower.find("warn") != std::string::npos || lower.find("retrying") != std::string::npos ||
-                   lower.find("timeout") != std::string::npos || lower.find("timed out") != std::string::npos ||
-                   lower.find("stale") != std::string::npos || lower.find("dropped") != std::string::npos) {
+        if (lower.find("warn") != std::string::npos || lower.find("pressure") != std::string::npos ||
+            lower.find("retrying") != std::string::npos || lower.find("timeout") != std::string::npos ||
+            lower.find("timed out") != std::string::npos || lower.find("stale") != std::string::npos ||
+            lower.find("dropped") != std::string::npos) {
             entry.category = LogCategory::Warn;
             entry.tag = L"WARN";
             entry.tag_color = ds.colors.warning;
+        } else if (lower.find("error") != std::string::npos || lower.find("fail") != std::string::npos ||
+                   lower.find("fatal") != std::string::npos || raw_line.find("[-] ") != std::string::npos ||
+                   lower.find("crash") != std::string::npos) {
+            entry.category = LogCategory::Error;
+            entry.tag = L"ERR";
+            entry.tag_color = ds.colors.error;
         } else if (lower.find("wireguard") != std::string::npos || lower.find("handshake") != std::string::npos ||
                    lower.find("noise") != std::string::npos || lower.find("psk") != std::string::npos ||
                    lower.find("key") != std::string::npos || lower.find("ech") != std::string::npos ||
