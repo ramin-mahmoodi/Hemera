@@ -3372,12 +3372,6 @@ struct MainWindow::Impl {
                 return 0;
             }
 
-            case WM_DWMCOMPOSITIONCHANGED: {
-                MARGINS margins = { 0, 0, 1, 0 };
-                DwmExtendFrameIntoClientArea(hwnd, &margins);
-                return 0;
-            }
-
             case WM_NCCALCSIZE: {
                 if (wParam == TRUE) {
                     return 0; // Cover entire window without OS non-client frame
@@ -4320,10 +4314,6 @@ bool MainWindow::create() {
     DwmSetWindowAttribute(impl_->hwnd_, 35 /* DWMWA_CAPTION_COLOR */, &caption_col, sizeof(caption_col));
     COLORREF caption_txt = dark_mode ? RGB(237, 237, 237) : RGB(24, 24, 27);
     DwmSetWindowAttribute(impl_->hwnd_, 36 /* DWMWA_TEXT_COLOR */, &caption_txt, sizeof(caption_txt));
-
-    // Extend frame into client area to activate native Windows DWM hardware-accelerated drop shadow
-    MARGINS margins = { 0, 0, 1, 0 };
-    DwmExtendFrameIntoClientArea(impl_->hwnd_, &margins);
 
     SetWindowPos(impl_->hwnd_, nullptr, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
