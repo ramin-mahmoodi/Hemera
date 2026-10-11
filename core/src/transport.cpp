@@ -593,10 +593,6 @@ struct SessionState {
 
     void send_out(const std::uint8_t* data, std::size_t len) {
         if (len == 0) return;
-        // TEMP-DIAG (QUIC silence chase): every outbound datagram size post-handshake.
-        if (established_ever) {
-            note("outbound pkt: " + std::to_string(len) + " bytes");
-        }
         auto r = io->send(dest, std::span<const std::uint8_t>(data, len));
         if (r) {
             ++tx_packets;
@@ -648,7 +644,6 @@ struct SessionState {
                 if (nd >= 0) {
                     if (accepted) {
                         ++datagrams_sent;
-                        note("dgram sent: " + std::to_string(nd) + " bytes (accepted)");
                     } else {
                         ++datagrams_dropped; // a lost unreliable datagram
                         note("dgram dropped by ngtcp2 (accepted=0, nd=" + std::to_string(nd) +
@@ -720,10 +715,6 @@ struct SessionState {
                 ERR_error_string_n(bssl_err, err_buf, sizeof(err_buf));
                 note("BoringSSL err: " + std::string(err_buf));
             }
-        }
-        // TEMP-DIAG (QUIC silence chase): every inbound datagram once the request is out.
-        else if (phase == Session::Phase::Request || phase == Session::Phase::Ready) {
-            note("inbound pkt: " + std::to_string(data.size()) + " bytes");
         }
     }
 
@@ -933,7 +924,6 @@ int cb_recv_datagram(ngtcp2_conn* conn, std::uint32_t flags, const std::uint8_t*
         s->note("inbound dgram ignored (different stream or context id)");
         return 0;
     }
-    s->note("inbound dgram: " + std::to_string(datalen) + " bytes");
     ++s->datagrams_received;
     s->datagram_delivered = true;
     if (s->inbound != nullptr) {
@@ -960,16 +950,6 @@ int cb_h3_recv_header(nghttp3_conn* conn, std::int64_t stream_id, std::int32_t t
     (void)flags;
     (void)sud;
     auto* s = static_cast<SessionState*>(cud);
-    // TEMP-DIAG (QUIC silence chase): every response header as it arrives.
-    {
-        const nghttp3_vec n = nghttp3_rcbuf_get_buf(name);
-        const nghttp3_vec v = nghttp3_rcbuf_get_buf(value);
-        std::string line = "[h3] hdr stream=" + std::to_string(stream_id) +
-                           " token=" + std::to_string(token) + " name=" +
-                           std::string(reinterpret_cast<const char*>(n.base), n.len) + " value=" +
-                           std::string(reinterpret_cast<const char*>(v.base), v.len);
-        s->note(line);
-    }
     if (token == NGHTTP3_QPACK_TOKEN__STATUS && stream_id == s->req_stream) {
         const nghttp3_vec v = nghttp3_rcbuf_get_buf(value);
         std::uint16_t parsed = 0;
@@ -985,12 +965,8 @@ int cb_h3_recv_header(nghttp3_conn* conn, std::int64_t stream_id, std::int32_t t
 
 int cb_h3_recv_settings2(nghttp3_conn* conn, const nghttp3_proto_settings* settings, void* cud) {
     (void)conn;
-    auto* s = static_cast<SessionState*>(cud);
-    // TEMP-DIAG (QUIC silence chase): server SETTINGS receipt.
-    s->note(std::string("[h3] server settings: h3_datagram=") +
-            std::to_string(settings->h3_datagram) + " enable_connect_protocol=" +
-            std::to_string(settings->enable_connect_protocol));
     (void)settings;
+    (void)cud;
     return 0;
 }
 
@@ -1500,11 +1476,6 @@ Session::Tick Session::tick(TimePoint now) {
             if (next_probe_in < d) d = next_probe_in;
         }
         out.delay = d;
-        // TEMP-DIAG (QUIC 35s chase): suspiciously long sleeps.
-        if (d > Millis(1000) && s->phase != Session::Phase::Handshake) {
-            s->note("tick delay " + std::to_string(d.count()) + "ms in phase " +
-                    std::to_string(static_cast<int>(s->phase)));
-        }
     }
     return out;
 }

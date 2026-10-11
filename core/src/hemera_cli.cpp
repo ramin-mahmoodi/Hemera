@@ -1175,6 +1175,13 @@ void hunt_wg(const ExecContext& ctx, const FlowRequest& request, FlowReply& repl
         return;
     }
 
+    // For single WireGuard (want == 1), only 1 endpoint is needed.
+    // Capping target to 2 with a 2s quiet window finalizes in ~2.5s instead of stalling 15+ seconds.
+    if ((want == 0 || want == 1) && st.target_successes > 2) {
+        st.target_successes = 2;
+        st.quiet_after_first = std::min(st.quiet_after_first, std::chrono::milliseconds(2000));
+    }
+
     // wg_prober.rs::build_wg_candidates sources: anchors + sampled pool. Zero-trust runs prefer
     // the zt prefixes, the way the MASQUE scan prefers its own zt CIDRs.
     const bool zt = pr::zero_trust_mode(settings);
