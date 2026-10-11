@@ -1879,11 +1879,18 @@ struct MainWindow::Impl {
             draw_text_right(proto_name, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + r1_pad_y, ds.colors.text_primary);
 
             // Row 2: Transport
-            std::wstring transport_val = L"HTTP/2 · TLS mask";
-            if (profile.protocol == Protocol::Wireguard) transport_val = L"UDP · Noise";
-            else if (profile.protocol == Protocol::Mim) transport_val = L"TCP · TLS mask";
-            else if (profile.protocol == Protocol::Masque && !profile.masque_http2) transport_val = L"QUIC / HTTP/3";
-            else if (!profile.exit_loc.empty()) transport_val = std::wstring(profile.exit_loc.begin(), profile.exit_loc.end()) + L" · Balanced";
+            std::wstring transport_val = L"QUIC / HTTP/3";
+            if (profile.protocol == Protocol::Wireguard || profile.protocol == Protocol::WarpInWarp) {
+                transport_val = L"UDP · Noise";
+            } else if (profile.protocol == Protocol::Mim) {
+                transport_val = L"TCP · TLS mask";
+            } else if (profile.protocol == Protocol::Masque && profile.masque_http2) {
+                transport_val = L"HTTP/2 · TLS mask";
+            } else if (profile.protocol == Protocol::Gool) {
+                transport_val = L"QUIC / HTTP/3";
+            } else if (!profile.exit_loc.empty()) {
+                transport_val = std::wstring(profile.exit_loc.begin(), profile.exit_loc.end()) + L" · Balanced";
+            }
             draw_text(L"Transport", fmt_card_label_.Get(), card_x + label_pad_x, card_y + row1_h + r2_pad_y, ds.colors.text_muted);
             draw_text_right(transport_val, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + row1_h + r2_pad_y, ds.colors.text_primary);
 

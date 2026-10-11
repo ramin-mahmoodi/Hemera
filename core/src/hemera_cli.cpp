@@ -787,9 +787,16 @@ struct CheckOutcome {
                                             : remaining;
         HANDLE h = reinterpret_cast<HANDLE>((*io)->read_event());
         if (h != nullptr && delay.count() > 0) {
-            const DWORD res = WaitForSingleObject(h, static_cast<DWORD>(delay.count()));
-            if (res == WAIT_OBJECT_0) {
-                (*io)->reset_read_event();
+            const auto wait_end = std::chrono::steady_clock::now() + delay;
+            while (!cancel.is_cancelled() && std::chrono::steady_clock::now() < wait_end) {
+                const auto chunk = std::min<std::chrono::milliseconds>(
+                    std::chrono::milliseconds(50),
+                    std::chrono::duration_cast<std::chrono::milliseconds>(wait_end - std::chrono::steady_clock::now()));
+                const DWORD res = WaitForSingleObject(h, static_cast<DWORD>(chunk.count()));
+                if (res == WAIT_OBJECT_0) {
+                    (*io)->reset_read_event();
+                    break;
+                }
             }
         } else {
             interruptible_sleep_ms(delay, cancel);
@@ -904,6 +911,13 @@ void hunt_masque(const ExecContext& ctx, const FlowRequest& request, FlowReply& 
         reply.ok = false;
         reply.error = Error::no_clean_endpoint();
         return;
+    }
+
+    // In IPv4 MASQUE scans, Cloudflare Anycast CONNECT-IP only routes to ~2-4 gateways (162.159.198.1/2).
+    // Capping target_successes to 2 lets the scanner finalize promptly instead of stalling for 120s.
+    if (effective.ip == pr::IpScan::V4 && st.target_successes > 2) {
+        st.target_successes = 2;
+        st.quiet_after_first = std::min(st.quiet_after_first, std::chrono::milliseconds(3000));
     }
 
     // lib.rs:1262-1273's MasqueProbe: the identity's certificate and key (lengths only, never text),
