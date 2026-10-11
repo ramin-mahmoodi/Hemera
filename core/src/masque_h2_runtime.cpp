@@ -551,6 +551,12 @@ public:
             return std::unexpected(
                 Stop::failed(prefixed("tls", "the server name was refused")));
         }
+        if (SSL_set_alpn_protos(link->ssl_.get(), H2_ALPN.data(),
+                                static_cast<unsigned>(H2_ALPN.size())) != 0) {
+            clear_ssl_error();
+            return std::unexpected(
+                Stop::failed(prefixed("tls", "SSL_set_alpn_protos failed on connection")));
+        }
         SSL_set_connect_state(link->ssl_.get());
         return link;
     }
@@ -1428,10 +1434,8 @@ std::expected<Millis, std::string> verify_h2_with(const H2TunnelConfig& cfg, Mil
     // Rust's one sentence.
     auto brought_up = connect_tls(cfg, settings, dial, deadline, observer);
     if (!brought_up) return std::unexpected(render(brought_up.error()));
-    // The h2 crate's handshake fails when the edge does not speak h2; nghttp2 would instead put
-    // a preface on the wire and read the reset back, so the check the handshake implies is said
-    // here, in the open, before anything is sent.
-    if (const std::string alpn = alpn_text((*brought_up)->ssl()); alpn != "h2") {
+    const std::string alpn = alpn_text((*brought_up)->ssl());
+    if (!alpn.empty() && alpn != "h2") {
         return std::unexpected(
             prefixed("masque", "h2 handshake: edge negotiated '" + alpn + "', not h2"));
     }
@@ -1566,12 +1570,12 @@ std::expected<void, std::string> run_with(const H2TunnelConfig& cfg, const Setti
     const Deadline bring_up = Deadline::open_ended();
     auto tls = connect_tls(cfg, settings, dial, bring_up, observer);
     if (!tls) return std::unexpected(run_render(tls.error()));
-    // Same ALPN rule as verify_h2_with above: no preface at a server that did not pick h2.
-    if (const std::string alpn = alpn_text((*tls)->ssl()); alpn != "h2") {
+    const std::string alpn = alpn_text((*tls)->ssl());
+    if (!alpn.empty() && alpn != "h2") {
         return std::unexpected(
             prefixed("masque", "h2 handshake: edge negotiated '" + alpn + "', not h2"));
     }
-    note(observer, "[h2] tls established; alpn=" + alpn_text((*tls)->ssl()));   // 414-420
+    note(observer, "[h2] tls established; alpn=" + alpn);
 
     // 422-425, 444-449, 451-460: h2_builder().handshake(tls), the driver task, h2.ready() and
     // send_request(req, false). One open() makes the session with the flow control of h2_flow and

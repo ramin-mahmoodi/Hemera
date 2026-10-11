@@ -1021,7 +1021,9 @@ void hunt_masque(const ExecContext& ctx, const FlowRequest& request, FlowReply& 
                 params.local_ipv4 = probe.local_ipv4;
                 check = verify_quic(settings, params, cancel);
             }
-            if (!check.ok) continue; // prober.rs:434/456 is a log::trace!, under the filter
+            if (!check.ok) {
+                continue;
+            }
 
             const pr::ProbeResult result{candidate.first, candidate.second, check.rtt};
             const std::lock_guard<std::mutex> lock(shared.mutex);
@@ -1175,11 +1177,10 @@ void hunt_wg(const ExecContext& ctx, const FlowRequest& request, FlowReply& repl
         return;
     }
 
-    // For single WireGuard (want == 1), only 1 endpoint is needed.
-    // Capping target to 2 with a 2s quiet window finalizes in ~2.5s instead of stalling 15+ seconds.
-    if ((want == 0 || want == 1) && st.target_successes > 2) {
-        st.target_successes = 2;
-        st.quiet_after_first = std::min(st.quiet_after_first, std::chrono::milliseconds(2000));
+    // For single WireGuard (want == 1), scan up to 10 endpoints so the best latency candidate is picked.
+    if (want == 0 || want == 1) {
+        st.target_successes = std::max<std::size_t>(st.target_successes, 10);
+        st.quiet_after_first = std::min(st.quiet_after_first, std::chrono::milliseconds(3000));
     }
 
     // wg_prober.rs::build_wg_candidates sources: anchors + sampled pool. Zero-trust runs prefer

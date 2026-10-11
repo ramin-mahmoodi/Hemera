@@ -692,7 +692,7 @@ WgHuntStep WgHunt::on_result(const WgProbeResult& pr, time_point now) {
     ++found_;
 
     bool terminate = false;
-    const std::size_t target_distinct = std::max<std::size_t>(want_, 2);
+    const std::size_t target_distinct = want_ > 1 ? want_ : 10;
     if (distinct_by_ip(verified_).size() >= target_distinct) {
         step.logs.push_back(wg_found_separate_line(target_distinct));
         terminate = true;
