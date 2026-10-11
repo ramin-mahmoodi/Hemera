@@ -160,6 +160,7 @@ public:
     [[nodiscard]] bool connected() const;
     [[nodiscard]] bool wait_readable(std::chrono::milliseconds timeout) override;
     [[nodiscard]] void* read_event() const;
+    void reset_read_event();
 
     [[nodiscard]] SocketAddr local() const override;
     [[nodiscard]] std::expected<std::size_t, std::string> send(

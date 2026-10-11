@@ -1340,19 +1340,26 @@ public:
         return outcome;
     }
 
-    [[nodiscard]] ns::SendOutcome push_wait(std::span<const std::uint8_t> packet, std::chrono::milliseconds timeout) {
+    [[nodiscard]] ns::SendOutcome push_wait(std::span<const std::uint8_t> packet,
+                                            std::chrono::milliseconds timeout,
+                                            const std::function<bool()>& stop_check = nullptr) {
+        ns::Permit<std::vector<std::uint8_t>> permit;
         ns::SendOutcome outcome;
         {
             std::unique_lock<std::mutex> lock(cv_mutex_);
-            outcome = tx_.try_send(std::vector<std::uint8_t>(packet.begin(), packet.end()));
+            if (stop_check && stop_check()) return ns::SendOutcome::Closed;
+            outcome = tx_.try_reserve(permit);
             if (outcome == ns::SendOutcome::Full && timeout.count() > 0) {
                 space_cv_.wait_for(lock, timeout, [&] {
-                    outcome = tx_.try_send(std::vector<std::uint8_t>(packet.begin(), packet.end()));
+                    if (stop_check && stop_check()) return true;
+                    outcome = tx_.try_reserve(permit);
                     return outcome != ns::SendOutcome::Full;
                 });
             }
         }
-        if (outcome == ns::SendOutcome::Ok) {
+        if (stop_check && stop_check()) return ns::SendOutcome::Closed;
+        if (outcome == ns::SendOutcome::Ok && permit.valid()) {
+            permit.commit(std::vector<std::uint8_t>(packet.begin(), packet.end()));
             cv_.notify_one();
             if (event_) SetEvent(event_);
         }
@@ -1886,7 +1893,10 @@ void run_quic_hop(Hop& hop, quic::TunnelConfig tunnel, const Settings& settings,
                 hop.queue().event()
             };
             const DWORD count = handles[0] ? 2 : 1;
-            WaitForMultipleObjects(count, handles, FALSE, static_cast<DWORD>(delay.count()));
+            const DWORD res = WaitForMultipleObjects(count, handles, FALSE, static_cast<DWORD>(delay.count()));
+            if (res == WAIT_OBJECT_0) {
+                (*io)->reset_read_event();
+            }
         }
         if (closing) break; // one turn after the close went out is all the flush needs
     }
@@ -2032,6 +2042,7 @@ public:
         // TcpSender::send awaits room; here that await is the retry, and a Full is not an error.
         std::vector<std::uint8_t> payload(bytes.begin(), bytes.end());
         for (;;) {
+            const auto epoch_before = hop_.app_epoch();
             ns::SendOutcome outcome;
             {
                 const std::lock_guard<std::mutex> lock(hop_.mutex());
@@ -2046,7 +2057,7 @@ public:
                 case ns::SendOutcome::Full: break;
             }
             if (stop.asked() || hop_.stop().asked()) return std::unexpected(std::string(eg::STOPPED));
-            hop_.wait_app(std::chrono::milliseconds(5), &stop);
+            hop_.wait_app_since(epoch_before, std::chrono::milliseconds(5), &stop);
         }
     }
 
@@ -2072,6 +2083,7 @@ public:
     [[nodiscard]] bool send_to(const SocketAddr& dst, std::span<const std::uint8_t> data) {
         for (;;) {
             if (hop_.stop().asked()) return false;
+            const auto epoch_before = hop_.app_epoch();
             ns::SendOutcome outcome;
             {
                 const std::lock_guard<std::mutex> lock(hop_.mutex());
@@ -2083,7 +2095,7 @@ public:
             }
             if (outcome == ns::SendOutcome::Closed) return false;
             if (hop_.stop().asked()) return false;
-            hop_.wait_app(std::chrono::milliseconds(5));
+            hop_.wait_app_since(epoch_before, std::chrono::milliseconds(5));
         }
     }
 
@@ -2145,6 +2157,7 @@ struct ProxyOptions {
     }
     const auto finish = std::chrono::steady_clock::now() + budget.value_or(std::chrono::milliseconds(0));
     for (;;) {
+        const auto epoch_before = hop.app_epoch();
         {
             const std::lock_guard<std::mutex> lock(hop.mutex());
             if (ticket.ready()) {
@@ -2162,7 +2175,7 @@ struct ProxyOptions {
         if (budget.has_value() && std::chrono::steady_clock::now() >= finish) {
             return std::unexpected(std::string(eg::TIMED_OUT) + "connect timed out");
         }
-        hop.wait_app(std::chrono::milliseconds(5));
+        hop.wait_app_since(epoch_before, std::chrono::milliseconds(5));
     }
 }
 
@@ -3325,11 +3338,17 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
         auto last_report = std::chrono::steady_clock::now();
         while (!cancel.is_cancelled() && !hop.stop().asked()) {
             // Drain all available packets from Wintun receive ring buffer
-            const size_t drained = dev->drain_read_packets(256, [&hop, &dropped_count](std::span<const uint8_t> pkt) {
-                const auto outcome = hop.queue().push_wait(pkt, std::chrono::milliseconds(5));
+            const size_t drained = dev->drain_read_packets(256, [&hop, &dropped_count, &cancel](std::span<const uint8_t> pkt) -> bool {
+                if (cancel.is_cancelled() || hop.stop().asked()) return false;
+                const auto outcome = hop.queue().push_wait(pkt, std::chrono::milliseconds(5), [&] {
+                    return cancel.is_cancelled() || hop.stop().asked();
+                });
                 if (outcome == ns::SendOutcome::Full) {
                     ++dropped_count;
+                } else if (outcome == ns::SendOutcome::Closed) {
+                    return false;
                 }
+                return true;
             });
             if (dropped_count > 0) {
                 const auto now = std::chrono::steady_clock::now();

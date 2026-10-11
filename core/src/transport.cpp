@@ -287,7 +287,13 @@ std::expected<std::optional<Arrived>, std::string> WinUdp::receive() {
                                &len);
     if (got == SOCKET_ERROR) {
         const int code = WSAGetLastError();
-        if (code == WSAEWOULDBLOCK) return std::optional<Arrived>{};
+        if (code == WSAEWOULDBLOCK) {
+            if (impl_->event != WSA_INVALID_EVENT && impl_->fd != INVALID_SOCKET) {
+                WSANETWORKEVENTS ev{};
+                WSAEnumNetworkEvents(impl_->fd, impl_->event, &ev);
+            }
+            return std::optional<Arrived>{};
+        }
         return std::unexpected("recv: socket error " + std::to_string(code));
     }
     buf.resize(static_cast<std::size_t>(got));
@@ -317,6 +323,13 @@ bool WinUdp::wait_readable(std::chrono::milliseconds timeout) {
 
 void* WinUdp::read_event() const {
     return (impl_ && impl_->event != WSA_INVALID_EVENT) ? reinterpret_cast<void*>(impl_->event) : nullptr;
+}
+
+void WinUdp::reset_read_event() {
+    if (impl_ && impl_->event != WSA_INVALID_EVENT && impl_->fd != INVALID_SOCKET) {
+        WSANETWORKEVENTS ev{};
+        WSAEnumNetworkEvents(impl_->fd, impl_->event, &ev);
+    }
 }
 
 // ---------------------------------------------------------------------------

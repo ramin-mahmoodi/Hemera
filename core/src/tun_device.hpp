@@ -41,7 +41,7 @@ public:
     // Returns the number of packets processed
     virtual size_t drain_read_packets(
         size_t max_packets,
-        const std::function<void(std::span<const uint8_t>)>& on_packet) = 0;
+        const std::function<bool(std::span<const uint8_t>)>& on_packet) = 0;
 
     // Event handle signaled by Wintun when packets are ready to be read
     [[nodiscard]] virtual void* read_wait_event() const = 0;
