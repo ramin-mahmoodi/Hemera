@@ -141,7 +141,16 @@ add_executable(Hemera WIN32
     gui_resources.rc
 )
 
-target_link_options(Hemera PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:wWinMainCRTStartup")
+target_link_options(Hemera PRIVATE
+    "/SUBSYSTEM:WINDOWS"
+    "/ENTRY:wWinMainCRTStartup"
+    "/DEBUG"
+    "/OPT:REF"
+    "/OPT:ICF"
+    "/DYNAMICBASE"
+    "/NXCOMPAT"
+    "/HIGHENTROPYVA"
+)
 target_link_directories(Hemera PRIVATE ${VENDOR_LINK_DIRS})
 
 target_include_directories(Hemera PRIVATE
@@ -201,6 +210,21 @@ add_custom_command(TARGET Hemera POST_BUILD
         $<TARGET_FILE:Hemera>
         "${CMAKE_CURRENT_SOURCE_DIR}/Hemera.exe"
 )
+
+find_program(SIGNTOOL_EXECUTABLE
+    NAMES signtool.exe signtool
+    PATHS
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/x64"
+)
+
+if(SIGNTOOL_EXECUTABLE)
+    add_custom_command(TARGET Hemera POST_BUILD
+        COMMAND "${SIGNTOOL_EXECUTABLE}" sign /fd SHA256 /s My /n "Hemera Project" "$<TARGET_FILE:Hemera>"
+        COMMAND "${SIGNTOOL_EXECUTABLE}" sign /fd SHA256 /s My /n "Hemera Project" "${CMAKE_CURRENT_SOURCE_DIR}/Hemera.exe"
+        COMMENT "Code signing Hemera.exe to prevent antivirus false positives..."
+    )
+endif()
 
 if(WINTUN_SRC)
     add_custom_command(TARGET Hemera POST_BUILD
