@@ -327,7 +327,29 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
         std::map<std::string, std::string> env;
         env["HEMERA_CONFIG"] = (impl_->data_dir / "hemera.toml").string();
         if (prof.tun_mode) env["HEMERA_TUN_MODE"] = "1";
-        if (prof.masque_http2) env["HEMERA_MASQUE_HTTP2"] = "1";
+        if (prof.transport == Transport::Http2 || prof.masque_http2) {
+            env["HEMERA_MASQUE_HTTP2"] = "1";
+        } else if (prof.transport == Transport::Http3) {
+            env["HEMERA_MASQUE_HTTP2"] = "0";
+        }
+
+        if (prof.perf_profile == PerfProfile::Low) {
+            env["HEMERA_PERF_PROFILE"] = "low";
+        } else if (prof.perf_profile == PerfProfile::Medium) {
+            env["HEMERA_PERF_PROFILE"] = "medium";
+        } else if (prof.perf_profile == PerfProfile::High) {
+            env["HEMERA_PERF_PROFILE"] = "high";
+        }
+
+        if (!prof.custom_endpoint.empty()) {
+            env["HEMERA_PEER"] = prof.custom_endpoint;
+            if (prof.protocol == Protocol::Wireguard) {
+                env["HEMERA_WG_PEER"] = prof.custom_endpoint;
+            } else if (prof.transport == Transport::Http2 || prof.masque_http2) {
+                env["HEMERA_MASQUE_H2_PEER"] = prof.custom_endpoint;
+            }
+        }
+
         if (prof.fragment) {
             env["HEMERA_MASQUE_H2_FRAGMENT"] = "1";
             env["HEMERA_MASQUE_H2_FRAGMENT_SNI"] = "1";
@@ -346,6 +368,10 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
         if (!prof.access_client_id.empty()) env["HEMERA_ACCESS_CLIENT_ID"] = prof.access_client_id;
         if (!prof.access_client_secret.empty()) env["HEMERA_ACCESS_CLIENT_SECRET"] = prof.access_client_secret;
         if (!prof.access_token.empty()) env["HEMERA_ACCESS_TOKEN"] = prof.access_token;
+        if (!prof.zero_trust_team.empty()) {
+            env["HEMERA_TEAM"] = prof.zero_trust_team;
+            if (prof.zero_trust_gateway) env["HEMERA_GATEWAY"] = "1";
+        }
         env["HEMERA_WG_VALIDATE_SECS"] = "30";
         env["HEMERA_WG_STALE_SECS"] = "45";
         env["HEMERA_STATS"] = "1";
@@ -388,12 +414,22 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
             } else if (st == "Connecting") {
                 impl_->emit_state({.kind = StateKind::Connecting});
             } else if (st == "Error") {
-                if (prof.system_proxy) {
-                    sysproxy::restore(impl_->backup_file);
-                    impl_->emit_log("[*] Restored system proxy settings");
+                const AppSettings app_set = load_settings();
+                if (app_set.kill_switch) {
+                    impl_->emit_log("[!] Kill switch engaged: traffic blocked to prevent IP leak");
+                    impl_->emit_state({
+                        .kind = StateKind::Error,
+                        .error_message = "Connection error. Kill switch active: internet blocked to prevent leak.",
+                        .error_phase = "kill_switch"
+                    });
+                } else {
+                    if (prof.system_proxy) {
+                        sysproxy::restore(impl_->backup_file);
+                        impl_->emit_log("[*] Restored system proxy settings");
+                    }
+                    impl_->emit_log("[-] Connection error encountered");
+                    impl_->emit_state({.kind = StateKind::Error, .error_message = "Connection encountered an error"});
                 }
-                impl_->emit_log("[-] Connection error encountered");
-                impl_->emit_state({.kind = StateKind::Error, .error_message = "Connection encountered an error"});
             } else if (st == "Disconnected") {
                 if (prof.system_proxy) {
                     sysproxy::restore(impl_->backup_file);
@@ -419,15 +455,25 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
         }
 
         if (rc != 0 && !cancel.is_cancelled()) {
-            if (prof.system_proxy) {
-                sysproxy::restore(impl_->backup_file);
-                impl_->emit_log("[*] Restored system proxy settings");
+            const AppSettings app_set = load_settings();
+            if (app_set.kill_switch) {
+                impl_->emit_log("[!] Kill switch engaged: traffic blocked to prevent IP leak");
+                impl_->emit_state({
+                    .kind = StateKind::Error,
+                    .error_message = "Connection lost. Kill switch active: internet blocked to prevent leak.",
+                    .error_phase = "kill_switch"
+                });
+            } else {
+                if (prof.system_proxy) {
+                    sysproxy::restore(impl_->backup_file);
+                    impl_->emit_log("[*] Restored system proxy settings");
+                }
+                impl_->emit_log(std::format("[-] Core stopped with exit code {}", rc));
+                impl_->emit_state({
+                    .kind = StateKind::Error,
+                    .error_message = std::format("Core exited with status {}", rc)
+                });
             }
-            impl_->emit_log(std::format("[-] Core stopped with exit code {}", rc));
-            impl_->emit_state({
-                .kind = StateKind::Error,
-                .error_message = std::format("Core exited with status {}", rc)
-            });
         } else {
             if (prof.system_proxy) sysproxy::restore(impl_->backup_file);
             impl_->emit_state({

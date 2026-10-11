@@ -429,6 +429,9 @@ inline Value profile_to_json(const ConnectionProfile& p, bool sanitize_credentia
     o["tun_mode"] = p.tun_mode;
     o["fragment"] = p.fragment;
     o["ech"] = p.ech;
+    o["transport"] = std::string(to_string(p.transport));
+    o["perf_profile"] = std::string(to_string(p.perf_profile));
+    o["custom_endpoint"] = p.custom_endpoint;
     return Value(std::move(o));
 }
 
@@ -441,6 +444,10 @@ inline ConnectionProfile profile_from_json(const Value& val) {
     p.ip_version = ip_version_from_string(val.get("ip_version").as_string("v4"));
     p.quick_reconnect = val.get("quick_reconnect").as_bool(true);
     p.masque_http2 = val.get("masque_http2").as_bool(false);
+    p.transport = transport_from_string(val.get("transport").as_string(p.masque_http2 ? "h2" : "auto"));
+    if (p.transport == Transport::Http2) p.masque_http2 = true;
+    p.perf_profile = perf_profile_from_string(val.get("perf_profile").as_string("auto"));
+    p.custom_endpoint = val.get("custom_endpoint").as_string("");
     p.masque_noize = masque_noize_from_string(val.get("masque_noize").as_string("firewall"));
     p.wg_noize = wg_noize_from_string(val.get("wg_noize").as_string("balanced"));
     p.bind_address = val.get("bind_address").as_string(std::string(DEFAULT_BIND_ADDRESS));

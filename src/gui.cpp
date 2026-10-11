@@ -269,8 +269,8 @@ struct MainWindow::Impl {
     float seg_target_x_ = 0.0f;
 
     // Settings Toggle Switch smooth animations (0.0 to 1.0)
-    // [0]=autostart, [1]=close_to_tray, [2]=kill_switch, [3]=system_proxy, [4]=fragment, [5]=ech, [6]=route_direct, [7]=tun_mode
-    float switch_anim_[8] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+    // [0]=autostart, [1]=close_to_tray, [2]=kill_switch, [3]=system_proxy, [4]=fragment, [5]=ech, [6]=route_direct, [7]=tun_mode, [8]=zero_trust_gateway
+    float switch_anim_[9] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 
     // About view hovers & state
     bool about_src_hovered_ = false;
@@ -319,9 +319,13 @@ struct MainWindow::Impl {
     ConnectionProfile edit_profile_{};
     AppSettings edit_settings_{};
 
-    // Inline SOCKS5 proxy editing in Settings (Zero HWND, 100% GDI+)
+    // Inline text editing in Settings (Zero HWND, 100% Direct2D)
     bool is_editing_socks_ = false;
     std::wstring socks_edit_buffer_{};
+    bool is_editing_endpoint_ = false;
+    std::wstring endpoint_edit_buffer_{};
+    bool is_editing_team_ = false;
+    std::wstring team_edit_buffer_{};
     float caret_blink_timer_ = 0.0f;
 
     // Real System Metrics & Live Throughput & Sparkline History (30 points)
@@ -1041,6 +1045,7 @@ struct MainWindow::Impl {
         switch_anim_[5] = edit_profile_.ech ? 1.0f : 0.0f;
         switch_anim_[6] = (!edit_profile_.route_direct.empty()) ? 1.0f : 0.0f;
         switch_anim_[7] = edit_profile_.tun_mode ? 1.0f : 0.0f;
+        switch_anim_[8] = edit_profile_.zero_trust_gateway ? 1.0f : 0.0f;
 
         // Initialize Appearance segment target
         int seg_idx = (edit_settings_.theme == "light") ? 1 : ((edit_settings_.theme == "dark") ? 2 : 0);
@@ -1205,6 +1210,8 @@ struct MainWindow::Impl {
         gear_rotation_ = 0.0f;
         active_dropdown_ = -1;
         is_editing_socks_ = false;
+        is_editing_endpoint_ = false;
+        is_editing_team_ = false;
         reset_hovers();
 
         if (view_ == ActiveView::Settings) {
@@ -1237,6 +1244,8 @@ struct MainWindow::Impl {
         edit_profile_ = engine_->active_profile();
         edit_settings_ = engine_->load_settings();
         socks_edit_buffer_ = std::wstring(edit_profile_.bind_address.begin(), edit_profile_.bind_address.end());
+        endpoint_edit_buffer_ = std::wstring(edit_profile_.custom_endpoint.begin(), edit_profile_.custom_endpoint.end());
+        team_edit_buffer_ = std::wstring(edit_profile_.zero_trust_team.begin(), edit_profile_.zero_trust_team.end());
         int seg_idx = (edit_settings_.theme == "light") ? 1 : ((edit_settings_.theme == "dark") ? 2 : 0);
         seg_target_x_ = static_cast<float>(seg_idx);
         seg_anim_x_ = static_cast<float>(seg_idx);
@@ -1249,6 +1258,7 @@ struct MainWindow::Impl {
         switch_anim_[5] = edit_profile_.ech ? 1.0f : 0.0f;
         switch_anim_[6] = (!edit_profile_.route_direct.empty()) ? 1.0f : 0.0f;
         switch_anim_[7] = edit_profile_.tun_mode ? 1.0f : 0.0f;
+        switch_anim_[8] = edit_profile_.zero_trust_gateway ? 1.0f : 0.0f;
     }
 
     void commit_settings_save() {
@@ -1259,6 +1269,22 @@ struct MainWindow::Impl {
                 if (wc < 128) s.push_back(static_cast<char>(wc));
             }
             edit_profile_.bind_address = s;
+        }
+        {
+            std::string s;
+            s.reserve(endpoint_edit_buffer_.size());
+            for (wchar_t wc : endpoint_edit_buffer_) {
+                if (wc < 128) s.push_back(static_cast<char>(wc));
+            }
+            edit_profile_.custom_endpoint = s;
+        }
+        {
+            std::string s;
+            s.reserve(team_edit_buffer_.size());
+            for (wchar_t wc : team_edit_buffer_) {
+                if (wc < 128) s.push_back(static_cast<char>(wc));
+            }
+            edit_profile_.zero_trust_team = s;
         }
         autostart::set_enabled(edit_settings_.autostart);
         engine_->save_settings(edit_settings_);
@@ -1273,7 +1299,7 @@ struct MainWindow::Impl {
         if (std::abs(hero_target_scale_ - hero_scale_) > 0.0005f) return true;
         if (std::abs(gear_anim_t_ - (settings_btn_hovered_ ? 1.0f : 0.0f)) > 0.001f) return true;
         if (std::abs(seg_target_x_ - seg_anim_x_) > 0.001f) return true;
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 9; ++i) {
             float t_val = 0.0f;
             if (i == 0) t_val = edit_settings_.autostart ? 1.0f : 0.0f;
             else if (i == 1) t_val = edit_settings_.close_to_tray ? 1.0f : 0.0f;
@@ -1283,6 +1309,7 @@ struct MainWindow::Impl {
             else if (i == 5) t_val = edit_profile_.ech ? 1.0f : 0.0f;
             else if (i == 6) t_val = (!edit_profile_.route_direct.empty()) ? 1.0f : 0.0f;
             else if (i == 7) t_val = edit_profile_.tun_mode ? 1.0f : 0.0f;
+            else if (i == 8) t_val = edit_profile_.zero_trust_gateway ? 1.0f : 0.0f;
             if (std::abs(t_val - switch_anim_[i]) > 0.001f) return true;
         }
         if (std::abs(target_scroll_y_ - scroll_anim_y_) > 0.05f) return true;
@@ -1290,7 +1317,7 @@ struct MainWindow::Impl {
         if (shake_timer_ > 0.0f) return true;
         if (copy_timer_ > 0.0f) return true;
         if (logs_copy_timer_ > 0.0f) return true;
-        if (is_editing_socks_) return true;
+        if (is_editing_socks_ || is_editing_endpoint_ || is_editing_team_) return true;
         if (is_checking_update_) return true;
 
         if (view_ == ActiveView::Home) {
@@ -1402,8 +1429,8 @@ struct MainWindow::Impl {
             needs_repaint = true;
         }
 
-        // 6. Smooth Toggle Switch animation transitions (8 switches)
-        for (int i = 0; i < 8; ++i) {
+        // 6. Smooth Toggle Switch animation transitions (9 switches)
+        for (int i = 0; i < 9; ++i) {
             float t_val = 0.0f;
             if (i == 0) t_val = edit_settings_.autostart ? 1.0f : 0.0f;
             else if (i == 1) t_val = edit_settings_.close_to_tray ? 1.0f : 0.0f;
@@ -1413,6 +1440,7 @@ struct MainWindow::Impl {
             else if (i == 5) t_val = edit_profile_.ech ? 1.0f : 0.0f;
             else if (i == 6) t_val = (!edit_profile_.route_direct.empty()) ? 1.0f : 0.0f;
             else if (i == 7) t_val = edit_profile_.tun_mode ? 1.0f : 0.0f;
+            else if (i == 8) t_val = edit_profile_.zero_trust_gateway ? 1.0f : 0.0f;
 
             float s_diff = t_val - switch_anim_[i];
             if (std::abs(s_diff) > 0.001f) {
@@ -1459,7 +1487,7 @@ struct MainWindow::Impl {
             shake_timer_ = std::max(0.0f, shake_timer_ - dt);
             needs_repaint = true;
         }
-        if (is_editing_socks_) {
+        if (is_editing_socks_ || is_editing_endpoint_ || is_editing_team_) {
             caret_blink_timer_ += dt;
             needs_repaint = true;
         }
@@ -2028,12 +2056,12 @@ struct MainWindow::Impl {
             float r3_pad_y = (row3_h - static_cast<float>(scale(14, cur_dpi))) / 2.0f;
 
             // Row 1: Protocol
-            std::wstring proto_name = L"WARP-in-WARP / gool";
+            std::wstring proto_name = L"Auto (Fastest)";
             switch (profile.protocol) {
                 case Protocol::Auto: proto_name = L"Auto (Fastest)"; break;
-                case Protocol::Gool: proto_name = L"WARP over MASQUE (gool)"; break;
-                case Protocol::WarpInWarp: proto_name = L"WARP-in-WARP / gool"; break;
-                case Protocol::Masque: proto_name = profile.masque_http2 ? L"MASQUE (HTTP/2)" : L"MASQUE (HTTP/3)"; break;
+                case Protocol::Gool: proto_name = L"Gool (WARP over MASQUE)"; break;
+                case Protocol::WarpInWarp: proto_name = L"WARP-in-WARP"; break;
+                case Protocol::Masque: proto_name = L"MASQUE"; break;
                 case Protocol::Wireguard: proto_name = L"WireGuard"; break;
                 case Protocol::Mim: proto_name = L"MiM"; break;
                 default: break;
@@ -2042,17 +2070,17 @@ struct MainWindow::Impl {
             draw_text_right(proto_name, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + r1_pad_y, ds.colors.text_primary);
 
             // Row 2: Transport
-            std::wstring transport_val = L"QUIC / HTTP/3";
-            if (profile.protocol == Protocol::Wireguard || profile.protocol == Protocol::WarpInWarp) {
+            std::wstring transport_val = L"Auto (QUIC / UDP)";
+            if (profile.transport == Transport::Http2 || profile.masque_http2) {
+                transport_val = L"HTTP/2 · TLS (TCP)";
+            } else if (profile.transport == Transport::Http3) {
+                transport_val = L"HTTP/3 · QUIC (UDP)";
+            } else if (profile.protocol == Protocol::Wireguard || profile.protocol == Protocol::WarpInWarp) {
                 transport_val = L"UDP · Noise";
             } else if (profile.protocol == Protocol::Mim) {
                 transport_val = L"TCP · TLS mask";
-            } else if (profile.protocol == Protocol::Masque && profile.masque_http2) {
-                transport_val = L"HTTP/2 · TLS mask";
             } else if (profile.protocol == Protocol::Gool) {
                 transport_val = L"QUIC / HTTP/3";
-            } else if (!profile.exit_loc.empty()) {
-                transport_val = std::wstring(profile.exit_loc.begin(), profile.exit_loc.end()) + L" · Balanced";
             }
             draw_text(L"Transport", fmt_card_label_.Get(), card_x + label_pad_x, card_y + row1_h + r2_pad_y, ds.colors.text_muted);
             draw_text_right(transport_val, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + row1_h + r2_pad_y, ds.colors.text_primary);
@@ -2237,25 +2265,25 @@ struct MainWindow::Impl {
         // ── Card 2: CONNECTION & ROUTING ──
         float sec2_y = card1_y + card1_h + scale_f(24, cur_dpi);
         float card2_y = sec2_y + scale_f(22, cur_dpi);
-        float card2_h = row_h * 5.0f;
+        float card2_h = row_h * 6.0f;
 
         render_animated_block(anim_delay::Tertiary, cur_dpi, scroll_mat, [&]() {
             draw_text(L"CONNECTION & ROUTING", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec2_y, ds.colors.text_submuted);
 
             int card2_hover_idx = -1;
-            if (hovered_settings_row_ >= 0 && hovered_settings_row_ < 4) {
+            if (hovered_settings_row_ >= 0 && hovered_settings_row_ <= 4) {
                 card2_hover_idx = hovered_settings_row_;
             } else if (hovered_settings_row_ == 16) {
-                card2_hover_idx = 4;
+                card2_hover_idx = 5;
             }
             if (card2_hover_idx >= 0) {
                 float hy = card2_y + static_cast<float>(card2_hover_idx) * row_h;
-                fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card2_hover_idx, 5, ds.colors.dropdown_hover);
+                fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card2_hover_idx, 6, ds.colors.dropdown_hover);
             }
 
             draw_rounded_rect(card_x, card2_y, card_w, card2_h, radius_card, ds.colors.card_border, 1.0f);
 
-            for (int i = 1; i < 5; ++i) {
+            for (int i = 1; i < 6; ++i) {
                 draw_line(card_x, card2_y + row_h * static_cast<float>(i), card_x + card_w, card2_y + row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
             }
 
@@ -2265,7 +2293,7 @@ struct MainWindow::Impl {
                 case Protocol::Auto: proto_lbl = L"Auto ▾"; break;
                 case Protocol::Gool: proto_lbl = L"Gool (WARP over MASQUE) ▾"; break;
                 case Protocol::WarpInWarp: proto_lbl = L"WARP-in-WARP (Classic) ▾"; break;
-                case Protocol::Masque: proto_lbl = edit_profile_.masque_http2 ? L"MASQUE (H2) ▾" : L"MASQUE (H3) ▾"; break;
+                case Protocol::Masque: proto_lbl = L"MASQUE ▾"; break;
                 case Protocol::Wireguard: proto_lbl = L"WireGuard ▾"; break;
                 case Protocol::Mim: proto_lbl = L"MiM ▾"; break;
             }
@@ -2273,7 +2301,18 @@ struct MainWindow::Impl {
             draw_text(L"Protocol", fmt_body_.Get(), card_x + pad_x, row_y0, ds.colors.text_muted);
             draw_text_right(proto_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y0, ds.colors.text_primary);
 
-            // Row 1: Scan mode
+            // Row 1: Transport
+            std::wstring trans_lbl = L"Auto ▾";
+            switch (edit_profile_.transport) {
+                case Transport::Http3: trans_lbl = L"HTTP/3 (QUIC) ▾"; break;
+                case Transport::Http2: trans_lbl = L"HTTP/2 (TCP) ▾"; break;
+                default: break;
+            }
+            float row_y1 = card2_y + row_h + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Transport", fmt_body_.Get(), card_x + pad_x, row_y1, ds.colors.text_muted);
+            draw_text_right(trans_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y1, ds.colors.text_primary);
+
+            // Row 2: Scan mode
             std::wstring scan_lbl = L"Balanced (Recommended) ▾";
             switch (edit_profile_.scan_mode) {
                 case ScanMode::Turbo: scan_lbl = L"Turbo (Fastest) ▾"; break;
@@ -2282,107 +2321,173 @@ struct MainWindow::Impl {
                 case ScanMode::Ironclad: scan_lbl = L"Ironclad ▾"; break;
                 default: break;
             }
-            float row_y1 = card2_y + row_h + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"Scan mode", fmt_body_.Get(), card_x + pad_x, row_y1, ds.colors.text_muted);
-            draw_text_right(scan_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y1, ds.colors.text_primary);
-
-            // Row 2: Exit location
-            std::wstring exit_lbl = edit_profile_.exit_loc.empty() ? L"Auto (Fastest) ▾" : (std::wstring(edit_profile_.exit_loc.begin(), edit_profile_.exit_loc.end()) + L" ▾");
             float row_y2 = card2_y + row_h * 2.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"Exit location", fmt_body_.Get(), card_x + pad_x, row_y2, ds.colors.text_muted);
-            draw_text_right(exit_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y2, ds.colors.text_primary);
+            draw_text(L"Scan mode", fmt_body_.Get(), card_x + pad_x, row_y2, ds.colors.text_muted);
+            draw_text_right(scan_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y2, ds.colors.text_primary);
 
-            // Row 3: IP version
-            std::wstring ip_lbl = (edit_profile_.ip_version == IpVersion::V6) ? L"IPv6 ▾" : (edit_profile_.ip_version == IpVersion::Both ? L"Dual ▾" : L"IPv4 ▾");
+            // Row 3: Exit location
+            std::wstring exit_lbl = edit_profile_.exit_loc.empty() ? L"Auto (Fastest) ▾" : (std::wstring(edit_profile_.exit_loc.begin(), edit_profile_.exit_loc.end()) + L" ▾");
             float row_y3 = card2_y + row_h * 3.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"IP version", fmt_body_.Get(), card_x + pad_x, row_y3, ds.colors.text_muted);
-            draw_text_right(ip_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y3, ds.colors.text_primary);
+            draw_text(L"Exit location", fmt_body_.Get(), card_x + pad_x, row_y3, ds.colors.text_muted);
+            draw_text_right(exit_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y3, ds.colors.text_primary);
 
-            // Row 4: Bypass local traffic
+            // Row 4: IP version
+            std::wstring ip_lbl = (edit_profile_.ip_version == IpVersion::V6) ? L"IPv6 ▾" : (edit_profile_.ip_version == IpVersion::Both ? L"Dual ▾" : L"IPv4 ▾");
             float row_y4 = card2_y + row_h * 4.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"Bypass local traffic", fmt_body_.Get(), card_x + pad_x, row_y4, ds.colors.text_primary);
-            draw_animated_toggle(sw_x, card2_y + row_h * 4.0f + (row_h - scale_f(24, cur_dpi)) / 2.0f, 6);
+            draw_text(L"IP version", fmt_body_.Get(), card_x + pad_x, row_y4, ds.colors.text_muted);
+            draw_text_right(ip_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y4, ds.colors.text_primary);
+
+            // Row 5: Bypass local traffic
+            float row_y5 = card2_y + row_h * 5.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Bypass local traffic", fmt_body_.Get(), card_x + pad_x, row_y5, ds.colors.text_primary);
+            draw_animated_toggle(sw_x, card2_y + row_h * 5.0f + (row_h - scale_f(24, cur_dpi)) / 2.0f, 6);
         });
 
         // ── Card 3: ANTI-CENSORSHIP & NETWORK ──
         float sec3_y = card2_y + card2_h + scale_f(24, cur_dpi);
         float card3_y = sec3_y + scale_f(22, cur_dpi);
-        float card3_h = row_h * 5.0f;
+        float card3_h = row_h * 7.0f;
 
         render_animated_block(anim_delay::Quaternary, cur_dpi, scroll_mat, [&]() {
             draw_text(L"ANTI-CENSORSHIP & NETWORK", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec3_y, ds.colors.text_submuted);
 
             int card3_hover_idx = -1;
-            if (hovered_settings_row_ == 14) card3_hover_idx = 0;
-            else if (hovered_settings_row_ == 15) card3_hover_idx = 1;
-            else if (hovered_settings_row_ >= 4 && hovered_settings_row_ <= 6) card3_hover_idx = hovered_settings_row_ - 2;
+            if (hovered_settings_row_ == 30) card3_hover_idx = 0;
+            else if (hovered_settings_row_ == 14) card3_hover_idx = 1;
+            else if (hovered_settings_row_ == 15) card3_hover_idx = 2;
+            else if (hovered_settings_row_ == 31) card3_hover_idx = 3;
+            else if (hovered_settings_row_ == 32) card3_hover_idx = 4;
+            else if (hovered_settings_row_ == 33) card3_hover_idx = 5;
+            else if (hovered_settings_row_ == 34) card3_hover_idx = 6;
 
             if (card3_hover_idx >= 0) {
                 float hy = card3_y + static_cast<float>(card3_hover_idx) * row_h;
-                fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card3_hover_idx, 5, ds.colors.dropdown_hover);
+                fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card3_hover_idx, 7, ds.colors.dropdown_hover);
             }
 
             draw_rounded_rect(card_x, card3_y, card_w, card3_h, radius_card, ds.colors.card_border, 1.0f);
 
-            for (int i = 1; i < 5; ++i) {
+            for (int i = 1; i < 7; ++i) {
                 draw_line(card_x, card3_y + row_h * static_cast<float>(i), card_x + card_w, card3_y + row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
             }
 
-            // Row 0: TLS fragmentation
+            // Row 0: Performance profile
+            std::wstring perf_lbl = L"Auto (Balanced) ▾";
+            switch (edit_profile_.perf_profile) {
+                case PerfProfile::Low: perf_lbl = L"Low (Power Save) ▾"; break;
+                case PerfProfile::Medium: perf_lbl = L"Medium ▾"; break;
+                case PerfProfile::High: perf_lbl = L"High (Max) ▾"; break;
+                default: break;
+            }
             float r3_y0 = card3_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"TLS fragmentation", fmt_body_.Get(), card_x + pad_x, r3_y0, ds.colors.text_primary);
-            draw_animated_toggle(sw_x, card3_y + (row_h - scale_f(24, cur_dpi)) / 2.0f, 4);
+            draw_text(L"Performance profile", fmt_body_.Get(), card_x + pad_x, r3_y0, ds.colors.text_muted);
+            draw_text_right(perf_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y0, ds.colors.text_primary);
 
-            // Row 1: ECH
+            // Row 1: TLS fragmentation
             float r3_y1 = card3_y + row_h + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"Encrypted Client Hello (ECH)", fmt_body_.Get(), card_x + pad_x, r3_y1, ds.colors.text_primary);
-            draw_animated_toggle(sw_x, card3_y + row_h + (row_h - scale_f(24, cur_dpi)) / 2.0f, 5);
+            draw_text(L"TLS fragmentation", fmt_body_.Get(), card_x + pad_x, r3_y1, ds.colors.text_primary);
+            draw_animated_toggle(sw_x, card3_y + row_h + (row_h - scale_f(24, cur_dpi)) / 2.0f, 4);
 
-            // Row 2: Obfuscation
+            // Row 2: ECH
+            float r3_y2 = card3_y + row_h * 2.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Encrypted Client Hello (ECH)", fmt_body_.Get(), card_x + pad_x, r3_y2, ds.colors.text_primary);
+            draw_animated_toggle(sw_x, card3_y + row_h * 2.0f + (row_h - scale_f(24, cur_dpi)) / 2.0f, 5);
+
+            // Row 3: Obfuscation
             std::wstring noize_lbl = L"Balanced ▾";
             switch (edit_profile_.masque_noize) {
                 case MasqueNoize::Gfw: noize_lbl = L"Aggressive ▾"; break;
                 case MasqueNoize::Off: noize_lbl = L"Off ▾"; break;
                 default: break;
             }
-            float r3_y2 = card3_y + row_h * 2.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"Obfuscation", fmt_body_.Get(), card_x + pad_x, r3_y2, ds.colors.text_muted);
-            draw_text_right(noize_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y2, ds.colors.text_primary);
+            float r3_y3 = card3_y + row_h * 3.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Obfuscation", fmt_body_.Get(), card_x + pad_x, r3_y3, ds.colors.text_muted);
+            draw_text_right(noize_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y3, ds.colors.text_primary);
 
-            // Row 3: DNS server
+            // Row 4: DNS server
             std::wstring dns_lbl = L"Auto (1.1.1.1) ▾";
             if (edit_profile_.dns == "1.1.1.2") dns_lbl = L"Security (1.1.1.2) ▾";
             else if (edit_profile_.dns == "8.8.8.8") dns_lbl = L"Google (8.8.8.8) ▾";
             else if (edit_profile_.dns == "9.9.9.9") dns_lbl = L"Quad9 (9.9.9.9) ▾";
             else if (!edit_profile_.dns.empty()) dns_lbl = std::wstring(edit_profile_.dns.begin(), edit_profile_.dns.end()) + L" ▾";
-            float r3_y3 = card3_y + row_h * 3.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"DNS server", fmt_body_.Get(), card_x + pad_x, r3_y3, ds.colors.text_muted);
-            draw_text_right(dns_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y3, ds.colors.text_primary);
-
-            // Row 4: SOCKS5 proxy
             float r3_y4 = card3_y + row_h * 4.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-            draw_text(L"SOCKS5 proxy", fmt_body_.Get(), card_x + pad_x, r3_y4, ds.colors.text_muted);
+            draw_text(L"DNS server", fmt_body_.Get(), card_x + pad_x, r3_y4, ds.colors.text_muted);
+            draw_text_right(dns_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y4, ds.colors.text_primary);
+
+            // Row 5: SOCKS5 proxy
+            float r3_y5 = card3_y + row_h * 5.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"SOCKS5 proxy", fmt_body_.Get(), card_x + pad_x, r3_y5, ds.colors.text_muted);
             std::wstring socks_display = socks_edit_buffer_.empty() ? L"127.0.0.1:1819" : socks_edit_buffer_;
             if (is_editing_socks_) {
                 bool show_caret = (std::fmod(caret_blink_timer_, 1.0f) < 0.5f);
                 socks_display += show_caret ? L"|" : L" ";
-                draw_text_right(socks_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y4, ds.colors.accent);
+                draw_text_right(socks_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y5, ds.colors.accent);
             } else {
-                draw_text_right(socks_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y4, ds.colors.text_primary);
+                draw_text_right(socks_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y5, ds.colors.text_primary);
+            }
+
+            // Row 6: Custom clean IP
+            float r3_y6 = card3_y + row_h * 6.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Custom clean IP", fmt_body_.Get(), card_x + pad_x, r3_y6, ds.colors.text_muted);
+            std::wstring endpoint_display = endpoint_edit_buffer_.empty() ? L"Auto (Scanner)" : endpoint_edit_buffer_;
+            if (is_editing_endpoint_) {
+                bool show_caret = (std::fmod(caret_blink_timer_, 1.0f) < 0.5f);
+                endpoint_display += show_caret ? L"|" : L" ";
+                draw_text_right(endpoint_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y6, ds.colors.accent);
+            } else {
+                draw_text_right(endpoint_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y6, endpoint_edit_buffer_.empty() ? ds.colors.text_muted : ds.colors.text_primary);
             }
         });
 
-        // ── Card 4: ABOUT Row ──
+        // ── Card 4: CLOUDFLARE ZERO TRUST ──
         float sec4_y = card3_y + card3_h + scale_f(24, cur_dpi);
+        float card4_y = sec4_y + scale_f(22, cur_dpi);
+        float card4_h = row_h * 2.0f;
 
         render_animated_block(anim_delay::Quinary, cur_dpi, scroll_mat, [&]() {
-            if (hovered_settings_row_ == 20) {
-                fill_card_row_hover(card_x, sec4_y, card_w, row_h, radius_card, 0, 1, ds.colors.dropdown_hover);
+            draw_text(L"CLOUDFLARE ZERO TRUST", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec4_y, ds.colors.text_submuted);
+
+            int card4_hover_idx = -1;
+            if (hovered_settings_row_ == 40) card4_hover_idx = 0;
+            else if (hovered_settings_row_ == 41) card4_hover_idx = 1;
+
+            if (card4_hover_idx >= 0) {
+                float hy = card4_y + static_cast<float>(card4_hover_idx) * row_h;
+                fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card4_hover_idx, 2, ds.colors.dropdown_hover);
             }
 
-            draw_rounded_rect(card_x, sec4_y, card_w, row_h, radius_card, ds.colors.card_border, 1.0f);
+            draw_rounded_rect(card_x, card4_y, card_w, card4_h, radius_card, ds.colors.card_border, 1.0f);
+            draw_line(card_x, card4_y + row_h, card_x + card_w, card4_y + row_h, ds.colors.card_border, 1.0f);
 
-            float about_y = sec4_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            // Row 0: Team domain
+            float r4_y0 = card4_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Team domain", fmt_body_.Get(), card_x + pad_x, r4_y0, ds.colors.text_muted);
+            std::wstring team_display = team_edit_buffer_.empty() ? L"None (Public WARP)" : team_edit_buffer_;
+            if (is_editing_team_) {
+                bool show_caret = (std::fmod(caret_blink_timer_, 1.0f) < 0.5f);
+                team_display += show_caret ? L"|" : L" ";
+                draw_text_right(team_display, fmt_mono_.Get(), card_x + card_w - pad_x, r4_y0, ds.colors.accent);
+            } else {
+                draw_text_right(team_display, fmt_mono_.Get(), card_x + card_w - pad_x, r4_y0, team_edit_buffer_.empty() ? ds.colors.text_muted : ds.colors.text_primary);
+            }
+
+            // Row 1: Gateway inspection
+            float r4_y1 = card4_y + row_h + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Gateway inspection", fmt_body_.Get(), card_x + pad_x, r4_y1, ds.colors.text_primary);
+            draw_animated_toggle(sw_x, card4_y + row_h + (row_h - scale_f(24, cur_dpi)) / 2.0f, 8);
+        });
+
+        // ── Card 5: ABOUT Row ──
+        float sec5_y = card4_y + card4_h + scale_f(24, cur_dpi);
+
+        render_animated_block(anim_delay::Senary, cur_dpi, scroll_mat, [&]() {
+            if (hovered_settings_row_ == 20) {
+                fill_card_row_hover(card_x, sec5_y, card_w, row_h, radius_card, 0, 1, ds.colors.dropdown_hover);
+            }
+
+            draw_rounded_rect(card_x, sec5_y, card_w, row_h, radius_card, ds.colors.card_border, 1.0f);
+
+            float about_y = sec5_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
             draw_text(L"About Hemera", fmt_body_.Get(), card_x + pad_x, about_y, ds.colors.text_primary);
             std::wstring about_sub = L"v1.0.6   ›";
             draw_text_right(about_sub, fmt_mono_.Get(), card_x + card_w - pad_x, about_y, ds.colors.text_muted);
@@ -2390,12 +2495,12 @@ struct MainWindow::Impl {
 
         // Footer
         render_animated_block(anim_delay::Footer, cur_dpi, scroll_mat, [&]() {
-            draw_text_center(L"Hemera · Free and open source proxy", fmt_footnote_.Get(), w / 2.0f, sec4_y + row_h + scale_f(24, cur_dpi), ds.colors.text_dim);
+            draw_text_center(L"Hemera · Free and open source proxy", fmt_footnote_.Get(), w / 2.0f, sec5_y + row_h + scale_f(24, cur_dpi), ds.colors.text_dim);
         });
 
         // Dynamic scroll bounds (stops right after footer with a neat 20px bottom padding, zero dead space)
         float dpi_scale = static_cast<float>(cur_dpi) / 96.0f;
-        float content_bottom = sec4_y + row_h + scale_f(24.0f + 14.0f + 20.0f, cur_dpi);
+        float content_bottom = sec5_y + row_h + scale_f(24.0f + 14.0f + 20.0f, cur_dpi);
         if (content_bottom > h) {
             max_scroll_ = static_cast<int>(std::ceil((content_bottom - h) / dpi_scale));
         } else {
@@ -2482,19 +2587,21 @@ struct MainWindow::Impl {
 
         float sec2_y = card1_y + card1_h + scale_f(24, cur_dpi);
         float card2_y = sec2_y + scale_f(22, cur_dpi);
-        float card2_h = row_h * 5.0f;
+        float card2_h = row_h * 6.0f;
 
         float sec3_y = card2_y + card2_h + scale_f(24, cur_dpi);
         float card3_y = sec3_y + scale_f(22, cur_dpi);
 
         float sy = std::round(scale_f(scroll_anim_y_, cur_dpi));
         float anchor_y = card2_y - sy;
-        if (active_dropdown_ >= 0 && active_dropdown_ < 4) {
+        if (active_dropdown_ >= 0 && active_dropdown_ < 5) {
             anchor_y = card2_y + static_cast<float>(active_dropdown_) * row_h - sy;
-        } else if (active_dropdown_ == 4) {
-            anchor_y = card3_y + 2.0f * row_h - sy;
         } else if (active_dropdown_ == 5) {
+            anchor_y = card3_y + 0.0f * row_h - sy;
+        } else if (active_dropdown_ == 6) {
             anchor_y = card3_y + 3.0f * row_h - sy;
+        } else if (active_dropdown_ == 7) {
+            anchor_y = card3_y + 4.0f * row_h - sy;
         }
 
         float item_h = static_cast<float>(scale(ds.metrics.dropdown_item_h, cur_dpi));
@@ -2523,17 +2630,20 @@ struct MainWindow::Impl {
                 if (opt_id == 101) return (edit_profile_.protocol == Protocol::Auto);
                 if (opt_id == 102) return (edit_profile_.protocol == Protocol::Gool);
                 if (opt_id == 103) return (edit_profile_.protocol == Protocol::WarpInWarp);
-                if (opt_id == 104) return (edit_profile_.protocol == Protocol::Masque && !edit_profile_.masque_http2);
-                if (opt_id == 105) return (edit_profile_.protocol == Protocol::Masque && edit_profile_.masque_http2);
+                if (opt_id == 104) return (edit_profile_.protocol == Protocol::Masque);
                 if (opt_id == 106) return (edit_profile_.protocol == Protocol::Wireguard);
                 if (opt_id == 107) return (edit_profile_.protocol == Protocol::Mim);
             } else if (active_dropdown_ == 1) {
+                if (opt_id == 701) return (edit_profile_.transport == Transport::Auto);
+                if (opt_id == 702) return (edit_profile_.transport == Transport::Http3);
+                if (opt_id == 703) return (edit_profile_.transport == Transport::Http2);
+            } else if (active_dropdown_ == 2) {
                 if (opt_id == 201) return (edit_profile_.scan_mode == ScanMode::Balanced);
                 if (opt_id == 202) return (edit_profile_.scan_mode == ScanMode::Turbo);
                 if (opt_id == 203) return (edit_profile_.scan_mode == ScanMode::Thorough);
                 if (opt_id == 204) return (edit_profile_.scan_mode == ScanMode::Verified);
                 if (opt_id == 205) return (edit_profile_.scan_mode == ScanMode::Ironclad);
-            } else if (active_dropdown_ == 2) {
+            } else if (active_dropdown_ == 3) {
                 if (opt_id == 301) return edit_profile_.exit_loc.empty();
                 if (opt_id == 302) return (edit_profile_.exit_loc == "US");
                 if (opt_id == 303) return (edit_profile_.exit_loc == "DE");
@@ -2544,15 +2654,20 @@ struct MainWindow::Impl {
                 if (opt_id == 308) return (edit_profile_.exit_loc == "JP");
                 if (opt_id == 309) return (edit_profile_.exit_loc == "TR");
                 if (opt_id == 310) return (edit_profile_.exit_loc == "CA");
-            } else if (active_dropdown_ == 3) {
+            } else if (active_dropdown_ == 4) {
                 if (opt_id == 401) return (edit_profile_.ip_version == IpVersion::V4);
                 if (opt_id == 402) return (edit_profile_.ip_version == IpVersion::V6);
                 if (opt_id == 403) return (edit_profile_.ip_version == IpVersion::Both);
-            } else if (active_dropdown_ == 4) {
+            } else if (active_dropdown_ == 5) {
+                if (opt_id == 801) return (edit_profile_.perf_profile == PerfProfile::Auto);
+                if (opt_id == 802) return (edit_profile_.perf_profile == PerfProfile::Low);
+                if (opt_id == 803) return (edit_profile_.perf_profile == PerfProfile::Medium);
+                if (opt_id == 804) return (edit_profile_.perf_profile == PerfProfile::High);
+            } else if (active_dropdown_ == 6) {
                 if (opt_id == 501) return (edit_profile_.masque_noize == MasqueNoize::Firewall);
                 if (opt_id == 502) return (edit_profile_.masque_noize == MasqueNoize::Gfw);
                 if (opt_id == 503) return (edit_profile_.masque_noize == MasqueNoize::Off);
-            } else if (active_dropdown_ == 5) {
+            } else if (active_dropdown_ == 7) {
                 if (opt_id == 601) return edit_profile_.dns.empty();
                 if (opt_id == 602) return (edit_profile_.dns == "1.1.1.2");
                 if (opt_id == 603) return (edit_profile_.dns == "8.8.8.8");
@@ -2582,19 +2697,22 @@ struct MainWindow::Impl {
     void handle_dropdown_selection(int opt_id) {
         if (active_dropdown_ == 0) {
             if (opt_id == 101) { edit_profile_.protocol = Protocol::Auto; }
-            else if (opt_id == 102) { edit_profile_.protocol = Protocol::Gool; edit_profile_.masque_http2 = false; }
-            else if (opt_id == 103) { edit_profile_.protocol = Protocol::WarpInWarp; edit_profile_.masque_http2 = false; }
-            else if (opt_id == 104) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = false; }
-            else if (opt_id == 105) { edit_profile_.protocol = Protocol::Masque; edit_profile_.masque_http2 = true; }
+            else if (opt_id == 102) { edit_profile_.protocol = Protocol::Gool; }
+            else if (opt_id == 103) { edit_profile_.protocol = Protocol::WarpInWarp; }
+            else if (opt_id == 104) { edit_profile_.protocol = Protocol::Masque; }
             else if (opt_id == 106) { edit_profile_.protocol = Protocol::Wireguard; }
             else if (opt_id == 107) { edit_profile_.protocol = Protocol::Mim; }
         } else if (active_dropdown_ == 1) {
+            if (opt_id == 701) { edit_profile_.transport = Transport::Auto; edit_profile_.masque_http2 = false; }
+            else if (opt_id == 702) { edit_profile_.transport = Transport::Http3; edit_profile_.masque_http2 = false; }
+            else if (opt_id == 703) { edit_profile_.transport = Transport::Http2; edit_profile_.masque_http2 = true; }
+        } else if (active_dropdown_ == 2) {
             if (opt_id == 201) edit_profile_.scan_mode = ScanMode::Balanced;
             else if (opt_id == 202) edit_profile_.scan_mode = ScanMode::Turbo;
             else if (opt_id == 203) edit_profile_.scan_mode = ScanMode::Thorough;
             else if (opt_id == 204) edit_profile_.scan_mode = ScanMode::Verified;
             else if (opt_id == 205) edit_profile_.scan_mode = ScanMode::Ironclad;
-        } else if (active_dropdown_ == 2) {
+        } else if (active_dropdown_ == 3) {
             if (opt_id == 301) edit_profile_.exit_loc = "";
             else if (opt_id == 302) edit_profile_.exit_loc = "US";
             else if (opt_id == 303) edit_profile_.exit_loc = "DE";
@@ -2605,15 +2723,20 @@ struct MainWindow::Impl {
             else if (opt_id == 308) edit_profile_.exit_loc = "JP";
             else if (opt_id == 309) edit_profile_.exit_loc = "TR";
             else if (opt_id == 310) edit_profile_.exit_loc = "CA";
-        } else if (active_dropdown_ == 3) {
+        } else if (active_dropdown_ == 4) {
             if (opt_id == 401) edit_profile_.ip_version = IpVersion::V4;
             else if (opt_id == 402) edit_profile_.ip_version = IpVersion::V6;
             else if (opt_id == 403) edit_profile_.ip_version = IpVersion::Both;
-        } else if (active_dropdown_ == 4) {
+        } else if (active_dropdown_ == 5) {
+            if (opt_id == 801) edit_profile_.perf_profile = PerfProfile::Auto;
+            else if (opt_id == 802) edit_profile_.perf_profile = PerfProfile::Low;
+            else if (opt_id == 803) edit_profile_.perf_profile = PerfProfile::Medium;
+            else if (opt_id == 804) edit_profile_.perf_profile = PerfProfile::High;
+        } else if (active_dropdown_ == 6) {
             if (opt_id == 501) { edit_profile_.masque_noize = MasqueNoize::Firewall; edit_profile_.wg_noize = WgNoize::Balanced; }
             else if (opt_id == 502) { edit_profile_.masque_noize = MasqueNoize::Gfw; edit_profile_.wg_noize = WgNoize::Aggressive; }
             else if (opt_id == 503) { edit_profile_.masque_noize = MasqueNoize::Off; edit_profile_.wg_noize = WgNoize::Off; }
-        } else if (active_dropdown_ == 5) {
+        } else if (active_dropdown_ == 7) {
             if (opt_id == 601) edit_profile_.dns = "";
             else if (opt_id == 602) edit_profile_.dns = "1.1.1.2";
             else if (opt_id == 603) edit_profile_.dns = "8.8.8.8";
@@ -4049,13 +4172,17 @@ struct MainWindow::Impl {
 
                     float sec2_y = card1_y + card1_h + scale_f(24, cur_dpi);
                     float card2_y = sec2_y + scale_f(22, cur_dpi);
-                    float card2_h = row_h * 5.0f;
+                    float card2_h = row_h * 6.0f;
 
                     float sec3_y = card2_y + card2_h + scale_f(24, cur_dpi);
                     float card3_y = sec3_y + scale_f(22, cur_dpi);
-                    float card3_h = row_h * 5.0f;
+                    float card3_h = row_h * 7.0f;
 
                     float sec4_y = card3_y + card3_h + scale_f(24, cur_dpi);
+                    float card4_y = sec4_y + scale_f(22, cur_dpi);
+                    float card4_h = row_h * 2.0f;
+
+                    float sec5_y = card4_y + card4_h + scale_f(24, cur_dpi);
 
                     impl->save_btn_hovered_ = false;
 
@@ -4069,16 +4196,22 @@ struct MainWindow::Impl {
                             else impl->hovered_settings_row_ = 10 + r;
                         } else if (y >= card2_y && y <= card2_y + card2_h) {
                             int r = static_cast<int>((y - card2_y) / row_h);
-                            if (r == 4) impl->hovered_settings_row_ = 16;
+                            if (r == 5) impl->hovered_settings_row_ = 16;
                             else impl->hovered_settings_row_ = r;
                         } else if (y >= card3_y && y <= card3_y + card3_h) {
                             int r = static_cast<int>((y - card3_y) / row_h);
-                            if (r == 0) impl->hovered_settings_row_ = 14;
-                            else if (r == 1) impl->hovered_settings_row_ = 15;
-                            else if (r == 2) impl->hovered_settings_row_ = 4;
-                            else if (r == 3) impl->hovered_settings_row_ = 5;
-                            else if (r == 4) impl->hovered_settings_row_ = 6;
-                        } else if (y >= sec4_y && y <= sec4_y + row_h) {
+                            if (r == 0) impl->hovered_settings_row_ = 30;
+                            else if (r == 1) impl->hovered_settings_row_ = 14;
+                            else if (r == 2) impl->hovered_settings_row_ = 15;
+                            else if (r == 3) impl->hovered_settings_row_ = 31;
+                            else if (r == 4) impl->hovered_settings_row_ = 32;
+                            else if (r == 5) impl->hovered_settings_row_ = 33;
+                            else if (r == 6) impl->hovered_settings_row_ = 34;
+                        } else if (y >= card4_y && y <= card4_y + card4_h) {
+                            int r = static_cast<int>((y - card4_y) / row_h);
+                            if (r == 0) impl->hovered_settings_row_ = 40;
+                            else if (r == 1) impl->hovered_settings_row_ = 41;
+                        } else if (y >= sec5_y && y <= sec5_y + row_h) {
                             impl->hovered_settings_row_ = 20; // About row
                         }
                     }
@@ -4175,26 +4308,47 @@ struct MainWindow::Impl {
             }
 
             case WM_CHAR: {
-                if (impl->view_ == ActiveView::Settings && impl->is_editing_socks_) {
+                if (impl->view_ == ActiveView::Settings) {
                     wchar_t ch = static_cast<wchar_t>(wParam);
-                    if (ch == VK_BACK) {
-                        if (!impl->socks_edit_buffer_.empty()) {
-                            impl->socks_edit_buffer_.pop_back();
+                    std::wstring* target_buf = nullptr;
+                    bool* editing_flag = nullptr;
+                    if (impl->is_editing_socks_) {
+                        target_buf = &impl->socks_edit_buffer_;
+                        editing_flag = &impl->is_editing_socks_;
+                    } else if (impl->is_editing_endpoint_) {
+                        target_buf = &impl->endpoint_edit_buffer_;
+                        editing_flag = &impl->is_editing_endpoint_;
+                    } else if (impl->is_editing_team_) {
+                        target_buf = &impl->team_edit_buffer_;
+                        editing_flag = &impl->is_editing_team_;
+                    }
+
+                    if (target_buf && editing_flag) {
+                        if (ch == VK_BACK) {
+                            if (!target_buf->empty()) {
+                                target_buf->pop_back();
+                                InvalidateRect(hwnd, nullptr, FALSE);
+                            }
+                        } else if (ch == VK_RETURN) {
+                            *editing_flag = false;
+                            impl->commit_settings_save();
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        } else if (ch == VK_ESCAPE) {
+                            if (editing_flag == &impl->is_editing_socks_) {
+                                impl->socks_edit_buffer_ = std::wstring(impl->edit_profile_.bind_address.begin(), impl->edit_profile_.bind_address.end());
+                            } else if (editing_flag == &impl->is_editing_endpoint_) {
+                                impl->endpoint_edit_buffer_ = std::wstring(impl->edit_profile_.custom_endpoint.begin(), impl->edit_profile_.custom_endpoint.end());
+                            } else if (editing_flag == &impl->is_editing_team_) {
+                                impl->team_edit_buffer_ = std::wstring(impl->edit_profile_.zero_trust_team.begin(), impl->edit_profile_.zero_trust_team.end());
+                            }
+                            *editing_flag = false;
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        } else if (ch >= 32 && ch < 127) {
+                            target_buf->push_back(ch);
                             InvalidateRect(hwnd, nullptr, FALSE);
                         }
-                    } else if (ch == VK_RETURN) {
-                        impl->is_editing_socks_ = false;
-                        impl->commit_settings_save();
-                        InvalidateRect(hwnd, nullptr, FALSE);
-                    } else if (ch == VK_ESCAPE) {
-                        impl->is_editing_socks_ = false;
-                        impl->socks_edit_buffer_ = std::wstring(impl->edit_profile_.bind_address.begin(), impl->edit_profile_.bind_address.end());
-                        InvalidateRect(hwnd, nullptr, FALSE);
-                    } else if (ch >= 32 && ch < 127) {
-                        impl->socks_edit_buffer_.push_back(ch);
-                        InvalidateRect(hwnd, nullptr, FALSE);
+                        return 0;
                     }
-                    return 0;
                 }
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             }
@@ -4229,10 +4383,22 @@ struct MainWindow::Impl {
                     }
                 }
 
-                if (impl->view_ == ActiveView::Settings && impl->is_editing_socks_ && impl->hovered_settings_row_ != 6) {
-                    impl->is_editing_socks_ = false;
-                    impl->commit_settings_save();
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                if (impl->view_ == ActiveView::Settings) {
+                    if (impl->is_editing_socks_ && impl->hovered_settings_row_ != 33) {
+                        impl->is_editing_socks_ = false;
+                        impl->commit_settings_save();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                    if (impl->is_editing_endpoint_ && impl->hovered_settings_row_ != 34) {
+                        impl->is_editing_endpoint_ = false;
+                        impl->commit_settings_save();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    }
+                    if (impl->is_editing_team_ && impl->hovered_settings_row_ != 40) {
+                        impl->is_editing_team_ = false;
+                        impl->commit_settings_save();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    }
                 }
 
                 if (impl->active_dropdown_ >= 0) {
@@ -4302,14 +4468,20 @@ struct MainWindow::Impl {
                             { L"Auto (Best available)", 101 },
                             { L"Gool (WARP over MASQUE)", 102 },
                             { L"WARP-in-WARP (Classic)", 103 },
-                            { L"MASQUE (HTTP/3 QUIC)", 104 },
-                            { L"MASQUE (HTTP/2 TCP)", 105 },
+                            { L"MASQUE", 104 },
                             { L"WireGuard", 106 },
                             { L"MiM (MASQUE-in-MASQUE)", 107 }
                         };
                         InvalidateRect(hwnd, nullptr, FALSE);
                     } else if (impl->home_route_hovered_) {
                         impl->switch_view(ActiveView::Settings);
+                        impl->active_dropdown_ = 1;
+                        impl->dropdown_options_ = {
+                            { L"Auto (Optimal)", 701 },
+                            { L"HTTP/3 (QUIC / UDP)", 702 },
+                            { L"HTTP/2 (TLS / TCP)", 703 }
+                        };
+                        InvalidateRect(hwnd, nullptr, FALSE);
                     } else if (impl->copy_btn_hovered_) {
                         auto prof = impl->engine_->active_profile();
                         std::wstring addr(prof.bind_address.begin(), prof.bind_address.end());
@@ -4385,6 +4557,10 @@ struct MainWindow::Impl {
                         impl->edit_profile_.ech = !impl->edit_profile_.ech;
                         impl->commit_settings_save();
                         InvalidateRect(hwnd, nullptr, FALSE);
+                    } else if (impl->hovered_settings_row_ == 41) {
+                        impl->edit_profile_.zero_trust_gateway = !impl->edit_profile_.zero_trust_gateway;
+                        impl->commit_settings_save();
+                        InvalidateRect(hwnd, nullptr, FALSE);
                     } else if (impl->hovered_settings_row_ == 20) {
                         impl->switch_view(ActiveView::About);
                     } else if (impl->hovered_settings_row_ >= 0) {
@@ -4395,14 +4571,21 @@ struct MainWindow::Impl {
                                 { L"Auto (Best available)", 101 },
                                 { L"Gool (WARP over MASQUE)", 102 },
                                 { L"WARP-in-WARP (Classic)", 103 },
-                                { L"MASQUE (HTTP/3 QUIC)", 104 },
-                                { L"MASQUE (HTTP/2 TCP)", 105 },
+                                { L"MASQUE", 104 },
                                 { L"WireGuard", 106 },
                                 { L"MiM (MASQUE-in-MASQUE)", 107 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
                         } else if (r == 1) {
                             impl->active_dropdown_ = 1;
+                            impl->dropdown_options_ = {
+                                { L"Auto (Optimal)", 701 },
+                                { L"HTTP/3 (QUIC / UDP)", 702 },
+                                { L"HTTP/2 (TLS / TCP)", 703 }
+                            };
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        } else if (r == 2) {
+                            impl->active_dropdown_ = 2;
                             impl->dropdown_options_ = {
                                 { L"Balanced (Recommended)", 201 },
                                 { L"Turbo (Fastest)", 202 },
@@ -4411,8 +4594,8 @@ struct MainWindow::Impl {
                                 { L"Ironclad (Anti-block)", 205 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
-                        } else if (r == 2) {
-                            impl->active_dropdown_ = 2;
+                        } else if (r == 3) {
+                            impl->active_dropdown_ = 3;
                             impl->dropdown_options_ = {
                                 { L"Auto (Fastest)", 301 },
                                 { L"United States (US)", 302 },
@@ -4426,24 +4609,33 @@ struct MainWindow::Impl {
                                 { L"Canada (CA)", 310 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
-                        } else if (r == 3) {
-                            impl->active_dropdown_ = 3;
+                        } else if (r == 4) {
+                            impl->active_dropdown_ = 4;
                             impl->dropdown_options_ = {
                                 { L"IPv4", 401 },
                                 { L"IPv6", 402 },
                                 { L"Dual (Both)", 403 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
-                        } else if (r == 4) {
-                            impl->active_dropdown_ = 4;
+                        } else if (r == 30) {
+                            impl->active_dropdown_ = 5;
+                            impl->dropdown_options_ = {
+                                { L"Auto (Balanced)", 801 },
+                                { L"Low (Power Save)", 802 },
+                                { L"Medium (Balanced)", 803 },
+                                { L"High (Max Throughput)", 804 }
+                            };
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        } else if (r == 31) {
+                            impl->active_dropdown_ = 6;
                             impl->dropdown_options_ = {
                                 { L"Balanced (Firewall)", 501 },
                                 { L"Aggressive (GFW)", 502 },
                                 { L"Off", 503 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
-                        } else if (r == 5) {
-                            impl->active_dropdown_ = 5;
+                        } else if (r == 32) {
+                            impl->active_dropdown_ = 7;
                             impl->dropdown_options_ = {
                                 { L"Auto (1.1.1.1)", 601 },
                                 { L"Cloudflare Security (1.1.1.2)", 602 },
@@ -4451,8 +4643,22 @@ struct MainWindow::Impl {
                                 { L"Quad9 (9.9.9.9)", 604 }
                             };
                             InvalidateRect(hwnd, nullptr, FALSE);
-                        } else if (r == 6) {
+                        } else if (r == 33) {
                             impl->is_editing_socks_ = true;
+                            impl->is_editing_endpoint_ = false;
+                            impl->is_editing_team_ = false;
+                            impl->caret_blink_timer_ = 0.0f;
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        } else if (r == 34) {
+                            impl->is_editing_endpoint_ = true;
+                            impl->is_editing_socks_ = false;
+                            impl->is_editing_team_ = false;
+                            impl->caret_blink_timer_ = 0.0f;
+                            InvalidateRect(hwnd, nullptr, FALSE);
+                        } else if (r == 40) {
+                            impl->is_editing_team_ = true;
+                            impl->is_editing_socks_ = false;
+                            impl->is_editing_endpoint_ = false;
                             impl->caret_blink_timer_ = 0.0f;
                             InvalidateRect(hwnd, nullptr, FALSE);
                         }

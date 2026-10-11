@@ -79,8 +79,9 @@ namespace anim_delay {
     constexpr float Secondary = 0.12f; ///< Main interactive card / terminal
     constexpr float Tertiary  = 0.18f; ///< Secondary card / resources / details
     constexpr float Quaternary= 0.24f; ///< Network / links / extra controls
-    constexpr float Quinary   = 0.30f; ///< About row / secondary options
-    constexpr float Footer    = 0.36f; ///< Footers & captions
+    constexpr float Quinary   = 0.30f; ///< Zero Trust / secondary cards
+    constexpr float Senary    = 0.36f; ///< About row
+    constexpr float Footer    = 0.42f; ///< Footers & captions
 }
 
 } // namespace hemera::gui

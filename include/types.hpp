@@ -41,6 +41,53 @@ inline Protocol protocol_from_string(std::string_view s) {
     return Protocol::Auto;
 }
 
+// Carrier Transports (MASQUE / Gool / Auto)
+enum class Transport {
+    Auto,
+    Http3, // QUIC (UDP)
+    Http2  // TLS (TCP)
+};
+
+inline std::string_view to_string(Transport t) {
+    switch (t) {
+        case Transport::Auto: return "auto";
+        case Transport::Http3: return "h3";
+        case Transport::Http2: return "h2";
+    }
+    return "auto";
+}
+
+inline Transport transport_from_string(std::string_view s) {
+    if (s == "h2" || s == "http2" || s == "tcp") return Transport::Http2;
+    if (s == "h3" || s == "http3" || s == "quic" || s == "udp") return Transport::Http3;
+    return Transport::Auto;
+}
+
+// Hardware Performance Profiles
+enum class PerfProfile {
+    Auto,
+    Low,
+    Medium,
+    High
+};
+
+inline std::string_view to_string(PerfProfile p) {
+    switch (p) {
+        case PerfProfile::Auto: return "auto";
+        case PerfProfile::Low: return "low";
+        case PerfProfile::Medium: return "medium";
+        case PerfProfile::High: return "high";
+    }
+    return "auto";
+}
+
+inline PerfProfile perf_profile_from_string(std::string_view s) {
+    if (s == "low") return PerfProfile::Low;
+    if (s == "medium" || s == "mid") return PerfProfile::Medium;
+    if (s == "high") return PerfProfile::High;
+    return PerfProfile::Auto;
+}
+
 // Scan Modes
 enum class ScanMode {
     Turbo,
@@ -176,10 +223,13 @@ inline constexpr std::chrono::milliseconds GRACEFUL_SHUTDOWN_GRACE = std::chrono
 // Connection Profile
 struct ConnectionProfile {
     Protocol protocol = Protocol::Auto;
+    Transport transport = Transport::Auto;
+    PerfProfile perf_profile = PerfProfile::Auto;
     ScanMode scan_mode = ScanMode::Balanced;
     IpVersion ip_version = IpVersion::V4;
     bool quick_reconnect = true;
     bool masque_http2 = false;
+    std::string custom_endpoint;
     MasqueNoize masque_noize = MasqueNoize::Firewall;
     WgNoize wg_noize = WgNoize::Balanced;
     std::string bind_address = std::string(DEFAULT_BIND_ADDRESS);
@@ -284,9 +334,35 @@ struct ConnectionProfile {
         // Quick reconnect
         args.push_back(quick_reconnect ? "--quick-reconnect" : "--no-quick-reconnect");
 
-        // MASQUE HTTP/2 transport
-        if (masque_http2) {
+        // Carrier transport
+        if (transport == Transport::Http2 || masque_http2) {
             args.push_back("--h2");
+        } else if (transport == Transport::Http3) {
+            args.push_back("--h3");
+        }
+
+        // Hardware performance profile
+        if (perf_profile == PerfProfile::Low) {
+            args.push_back("--perf");
+            args.push_back("low");
+        } else if (perf_profile == PerfProfile::Medium) {
+            args.push_back("--perf");
+            args.push_back("medium");
+        } else if (perf_profile == PerfProfile::High) {
+            args.push_back("--perf");
+            args.push_back("high");
+        }
+
+        // Custom clean endpoint
+        if (!custom_endpoint.empty()) {
+            if (protocol == Protocol::Wireguard) {
+                args.push_back("--wg-peer");
+            } else if (transport == Transport::Http2 || masque_http2) {
+                args.push_back("--h2-peer");
+            } else {
+                args.push_back("--peer");
+            }
+            args.push_back(custom_endpoint);
         }
 
         // Anti-censorship: TLS fragmentation & ECH
