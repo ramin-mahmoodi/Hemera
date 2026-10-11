@@ -126,10 +126,12 @@ struct RealSystemMetrics {
     void sample() {
         if (!process_handle) process_handle = GetCurrentProcess();
 
-        // 1. Process Memory (Working Set RAM in MB)
+        // 1. Process Memory (Private Memory matching Windows Task Manager)
         PROCESS_MEMORY_COUNTERS_EX pmc{};
+        pmc.cb = sizeof(pmc);
         if (GetProcessMemoryInfo(process_handle, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc))) {
-            ram_mb = static_cast<double>(pmc.WorkingSetSize) / (1024.0 * 1024.0);
+            SIZE_T mem = (pmc.PrivateUsage > 0) ? pmc.PrivateUsage : pmc.WorkingSetSize;
+            ram_mb = static_cast<double>(mem) / (1024.0 * 1024.0);
         }
 
         // 2. Process CPU Usage (%)
