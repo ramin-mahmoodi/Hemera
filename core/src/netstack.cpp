@@ -789,9 +789,10 @@ private:
             // Congestion avoidance: cwnd += MSS * acked / cwnd, at least a byte.
             cwnd_ += std::max<std::size_t>(1, (mss * static_cast<std::size_t>(acked_bytes)) / cwnd_);
         }
-        // Cap cwnd_ to socket send buffer capacity to prevent bursting beyond carrier capacity
-        if (cwnd_ > cfg_.tx_buf_size) {
-            cwnd_ = cfg_.tx_buf_size;
+        // Cap cwnd_ to standard maximum TCP window (4 MB) to prevent integer overflow
+        constexpr std::size_t MAX_CWND = 4 * 1024 * 1024;
+        if (cwnd_ > MAX_CWND) {
+            cwnd_ = MAX_CWND;
         }
     }
 

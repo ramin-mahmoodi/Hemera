@@ -172,21 +172,19 @@ public:
 
     size_t drain_read_packets(
         size_t max_packets,
-        const std::function<bool(std::span<const uint8_t>)>& on_packet) override {
+        const std::function<void(std::span<const uint8_t>)>& on_packet) override {
         std::lock_guard<std::mutex> lock(recv_mutex_);
         if (!session_ || !g_wintun.ReceivePacket || !g_wintun.ReleaseReceivePacket) return 0;
 
         size_t count = 0;
-        while (count < max_packets) {
+        const size_t limit = (max_packets == 0) ? (std::numeric_limits<size_t>::max)() : max_packets;
+        while (count < limit) {
             DWORD size = 0;
             BYTE* pkt = g_wintun.ReceivePacket(session_, &size);
             if (!pkt) break;
 
             if (on_packet && size > 0) {
-                if (!on_packet(std::span<const uint8_t>(pkt, size))) {
-                    // Backpressure: consumer is full. Leave packet in Wintun ring without releasing it.
-                    break;
-                }
+                on_packet(std::span<const uint8_t>(pkt, size));
             }
             g_wintun.ReleaseReceivePacket(session_, pkt);
             count++;

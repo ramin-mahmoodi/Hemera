@@ -37,12 +37,11 @@ public:
     // If wait_ms > 0, waits on Wintun read wait event up to wait_ms before reading
     virtual std::vector<uint8_t> read_packet(uint32_t wait_ms = 0) = 0;
 
-    // Drains up to max_packets available in the ring buffer into the provided sink function.
-    // If on_packet returns false, processing stops and the packet remains unreleased in the ring buffer.
+    // Drains up to max_packets available in the ring buffer into the provided sink function
     // Returns the number of packets processed
     virtual size_t drain_read_packets(
         size_t max_packets,
-        const std::function<bool(std::span<const uint8_t>)>& on_packet) = 0;
+        const std::function<void(std::span<const uint8_t>)>& on_packet) = 0;
 
     // Event handle signaled by Wintun when packets are ready to be read
     [[nodiscard]] virtual void* read_wait_event() const = 0;

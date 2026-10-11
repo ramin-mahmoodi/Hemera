@@ -1827,15 +1827,13 @@ void run_quic_hop(Hop& hop, quic::TunnelConfig tunnel, const Settings& settings,
 
         const auto delay = tick.delay.value_or(std::chrono::milliseconds(20));
         if (delay.count() > 0 && !closing) {
-            const auto deadline = std::chrono::steady_clock::now() + delay;
-            while (std::chrono::steady_clock::now() < deadline && !cancel.is_cancelled() && !hop.stop().asked()) {
-                if ((*io)->wait_readable(std::chrono::milliseconds(2))) {
-                    break;
-                }
+            // Wait up to delay (capped at 20ms to allow timely queue checks without 2ms polling loop)
+            const auto slice = std::clamp(delay, std::chrono::milliseconds(1), std::chrono::milliseconds(20));
+            if (!(*io)->wait_readable(slice)) {
+                // If socket had no traffic during the slice, check outbound queue
                 if (session.ready()) {
                     if (auto pkt = hop.queue().pull_wait(std::chrono::milliseconds(0))) {
                         hop.queue().push_front(std::move(*pkt));
-                        break;
                     }
                 }
             }
@@ -3272,20 +3270,13 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
     hop.add_thread(std::thread([&hop, cancel, dev] {
         HANDLE read_ev = reinterpret_cast<HANDLE>(dev->read_wait_event());
         while (!cancel.is_cancelled() && !hop.stop().asked()) {
-            DWORD wait = WaitForSingleObject(read_ev, 50);
-            if (wait == WAIT_OBJECT_0) {
-                bool backpressured = false;
-                dev->drain_read_packets(64, [&hop, &backpressured](std::span<const uint8_t> pkt) -> bool {
-                    const auto outcome = hop.queue().push(pkt);
-                    if (outcome == ns::SendOutcome::Full) {
-                        backpressured = true;
-                        return false;
-                    }
-                    return outcome == ns::SendOutcome::Ok;
-                });
-                if (backpressured) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                }
+            // Drain all available packets from Wintun receive ring buffer
+            const size_t drained = dev->drain_read_packets(256, [&hop](std::span<const uint8_t> pkt) {
+                (void)hop.queue().push(pkt);
+            });
+            // When ring is empty, wait for incoming packet signal or a 20ms fallback
+            if (drained == 0) {
+                WaitForSingleObject(read_ev, 20);
             }
         }
     }));
