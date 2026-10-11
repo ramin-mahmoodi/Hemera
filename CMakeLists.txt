@@ -141,7 +141,7 @@ add_executable(Hemera WIN32
     gui_resources.rc
 )
 
-target_link_options(Hemera PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:wWinMainCRTStartup" "/DEBUG" "/MAP:Hemera.map")
+target_link_options(Hemera PRIVATE "/SUBSYSTEM:WINDOWS" "/ENTRY:wWinMainCRTStartup")
 target_link_directories(Hemera PRIVATE ${VENDOR_LINK_DIRS})
 
 target_include_directories(Hemera PRIVATE
