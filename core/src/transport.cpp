@@ -632,6 +632,13 @@ struct SessionState {
         for (int guard = 0; guard < 4096; ++guard) {
             if (!pending.empty()) {
                 std::vector<std::uint8_t>& d = pending.front();
+                const std::size_t max_dgram_size = ngtcp2_conn_get_max_tx_udp_payload_size2(conn);
+                if (max_dgram_size > 0 && d.size() > max_dgram_size) {
+                    ++datagrams_dropped;
+                    pending.erase(pending.begin());
+                    continue;
+                }
+
                 ngtcp2_vec dv;
                 dv.base = d.data();
                 dv.len = d.size();
@@ -641,24 +648,21 @@ struct SessionState {
                     conn, &ps.path, &pi, txbuf.data(), txbuf.size(), &accepted,
                     NGTCP2_WRITE_DATAGRAM_FLAG_NONE, next_dgram_id++, &dv, 1, ts_now);
                 if (nd > 0) send_out(txbuf.data(), static_cast<std::size_t>(nd));
-                if (nd >= 0) {
-                    if (accepted) {
-                        ++datagrams_sent;
-                    } else {
-                        ++datagrams_dropped; // a lost unreliable datagram
-                        note("dgram dropped by ngtcp2 (accepted=0, nd=" + std::to_string(nd) +
-                             ", dgram_len=" + std::to_string(dv.len) +
-                             ", txbuf=" + std::to_string(txbuf.size()) +
-                             ", max_tx=" + std::to_string(ngtcp2_conn_get_max_tx_udp_payload_size2(conn)) +
-                             ", path_max=" + std::to_string(ngtcp2_conn_get_path_max_tx_udp_payload_size2(conn)) + ")");
-                    }
-                } else {
-                    // quic.rs logs a datagram dgram_send turns down and lets it go; a write error is
-                    // the same loss seen from this side, so it is counted and named, not swallowed.
+                if (nd < 0) {
                     ++datagrams_dropped;
-                    note("dgram_send error: " + std::string(ngtcp2_strerror(static_cast<int>(nd))));
+                    pending.erase(pending.begin());
+                    break;
                 }
-                pending.erase(pending.begin());
+                if (accepted) {
+                    ++datagrams_sent;
+                    pending.erase(pending.begin());
+                    continue;
+                }
+                // When nd == 0 (congestion control or amplification limit), no more packets can be sent right now.
+                // Keep the datagram in pending so it transmits on the next tick once the window opens.
+                if (nd == 0) {
+                    break;
+                }
                 continue;
             }
 
