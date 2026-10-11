@@ -17,6 +17,7 @@ inline constexpr UINT WM_HEMERA_LOG          = WM_USER + 102;
 inline constexpr UINT WM_HEMERA_BUDGET       = WM_USER + 103;
 inline constexpr UINT WM_HEMERA_ACCESS_CODE  = WM_USER + 104;
 inline constexpr UINT WM_HEMERA_TRAY         = WM_USER + 105;
+inline constexpr UINT WM_HEMERA_STATS        = WM_USER + 106;
 
 class MainWindow {
 public:

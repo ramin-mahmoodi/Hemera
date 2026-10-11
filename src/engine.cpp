@@ -339,6 +339,8 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
         if (!prof.access_token.empty()) env["HEMERA_ACCESS_TOKEN"] = prof.access_token;
         env["HEMERA_WG_VALIDATE_SECS"] = "30";
         env["HEMERA_WG_STALE_SECS"] = "45";
+        env["HEMERA_STATS"] = "1";
+        env["HEMERA_STATS_SECS"] = "1";
 
         hemera::core::InprocCallbacks cbs;
         cbs.on_log = [this](std::string_view l) {
