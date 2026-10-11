@@ -10,6 +10,7 @@
 #include "sysproxy.hpp"
 #include "inproc_core.hpp"
 #include "tun_device.hpp"
+#include "stats.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -283,6 +284,14 @@ ConnectionProfile HemeraEngine::active_profile() const {
 
 LiveStats HemeraEngine::current_stats() const {
     std::lock_guard lock(impl_->mutex);
+    if (impl_->core_thread && impl_->core_thread->joinable()) {
+        const auto snap = hemera::core::snapshot();
+        return LiveStats{
+            .up = snap.up,
+            .down = snap.down,
+            .uptime = static_cast<uint64_t>(snap.uptime.count())
+        };
+    }
     return impl_->stats;
 }
 

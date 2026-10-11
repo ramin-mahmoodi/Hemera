@@ -1743,8 +1743,10 @@ tr::Room LockedInbound::try_send(std::span<const std::uint8_t> ip_packet) {
     {
         const std::lock_guard<std::mutex> lock(hop_.mutex());
         if (tun::TunDevice* tun = hop_.tun_device(); tun != nullptr) {
+            ::hemera::core::add_down(ip_packet.size());
             tun->write_packet(ip_packet);
         } else if (ns::NetStack* stack = hop_.stack(); stack != nullptr) {
+            ::hemera::core::add_down(ip_packet.size());
             stack->submit_inbound(std::vector<std::uint8_t>(ip_packet.begin(), ip_packet.end()));
         }
     }
@@ -2355,6 +2357,7 @@ void relay_sockets_asio(SOCKET raw1, SOCKET raw2, eg::Stop& stop, eg::Millis lin
             [&sock1, &sock2, ctx, &pump_1_to_2](const asio::error_code& r_ec, std::size_t n) {
                 if (ctx->cancelled.load(std::memory_order_relaxed)) return;
                 if (!r_ec && n > 0) {
+                    ::hemera::core::add_up(n);
                     asio::async_write(sock2, asio::buffer(ctx->buf1.data(), n),
                         [&sock1, &sock2, ctx, &pump_1_to_2](const asio::error_code& w_ec, std::size_t /*written*/) {
                             if (w_ec || ctx->cancelled.load(std::memory_order_relaxed)) {
@@ -2381,6 +2384,7 @@ void relay_sockets_asio(SOCKET raw1, SOCKET raw2, eg::Stop& stop, eg::Millis lin
             [&sock1, &sock2, ctx, linger, linger_timer, &pump_2_to_1](const asio::error_code& r_ec, std::size_t n) {
                 if (ctx->cancelled.load(std::memory_order_relaxed)) return;
                 if (!r_ec && n > 0) {
+                    ::hemera::core::add_down(n);
                     asio::async_write(sock1, asio::buffer(ctx->buf2.data(), n),
                         [&sock1, &sock2, ctx, &pump_2_to_1](const asio::error_code& w_ec, std::size_t /*written*/) {
                             if (w_ec || ctx->cancelled.load(std::memory_order_relaxed)) {
@@ -2437,6 +2441,7 @@ void relay_pair(eg::ByteStream& client, eg::ByteStream& tunnel, eg::Stop& stop,
             const auto attempt = client.read(buffer.data(), buffer.size(),
                                              std::chrono::milliseconds(50), stop);
             if (attempt.kind == eg::ReadAttempt::Kind::Bytes && attempt.count > 0) {
+                ::hemera::core::add_up(attempt.count);
                 if (!tunnel.write(std::span<const std::uint8_t>(buffer.data(), attempt.count), stop)
                         .has_value()) {
                     break;
@@ -2457,6 +2462,7 @@ void relay_pair(eg::ByteStream& client, eg::ByteStream& tunnel, eg::Stop& stop,
             const auto attempt = tunnel.read(buffer.data(), buffer.size(),
                                              std::chrono::milliseconds(50), stop);
             if (attempt.kind == eg::ReadAttempt::Kind::Bytes && attempt.count > 0) {
+                ::hemera::core::add_down(attempt.count);
                 if (!client.write(std::span<const std::uint8_t>(buffer.data(), attempt.count), stop)
                         .has_value()) {
                     break;
@@ -2476,6 +2482,7 @@ void relay_pair(eg::ByteStream& client, eg::ByteStream& tunnel, eg::Stop& stop,
                     if (last.kind == eg::ReadAttempt::Kind::Bytes && last.count > 0) {
                         // Still writing what the client sends after our half closed: Rust keeps the
                         // client's bytes flowing to the closed tunnel until its own EOF.
+                        ::hemera::core::add_up(last.count);
                         (void)tunnel.write(std::span<const std::uint8_t>(buffer.data(), last.count),
                                            stop);
                     }
@@ -2829,6 +2836,7 @@ void serve_udp_associate(Hop& hop, ProxyOptions& options, eg::Stop& stop, eg::So
                 if (tunnel.ended()) break; // Rust's `None => break`
                 continue;
             }
+            ::hemera::core::add_down(arrived->data.size());
             answer_client(arrived->from, arrived->data);
         }
         stop.set();
@@ -2929,6 +2937,7 @@ void serve_udp_associate(Hop& hop, ProxyOptions& options, eg::Stop& stop, eg::So
             const std::optional<IpAddress> address =
                 target_address(hop, options, framed->target, stop);
             if (!address.has_value()) continue;
+            ::hemera::core::add_up(framed->payload.size());
             if (!tunnel.send_to(SocketAddr{*address, framed->port}, framed->payload)) break;
         }
     }
@@ -3340,6 +3349,7 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
             // Drain all available packets from Wintun receive ring buffer
             const size_t drained = dev->drain_read_packets(256, [&hop, &dropped_count, &cancel](std::span<const uint8_t> pkt) -> bool {
                 if (cancel.is_cancelled() || hop.stop().asked()) return false;
+                ::hemera::core::add_up(pkt.size());
                 const auto outcome = hop.queue().push_wait(pkt, std::chrono::milliseconds(5), [&] {
                     return cancel.is_cancelled() || hop.stop().asked();
                 });

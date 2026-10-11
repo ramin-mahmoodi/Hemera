@@ -499,7 +499,7 @@ struct MainWindow::Impl {
         );
 
         D2D1_RENDER_TARGET_PROPERTIES rt_props = D2D1::RenderTargetProperties(
-            D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+            D2D1_RENDER_TARGET_TYPE_DEFAULT,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
             96.0f, 96.0f,
             D2D1_RENDER_TARGET_USAGE_NONE,
@@ -558,7 +558,7 @@ struct MainWindow::Impl {
         render_target_->FillRectangle(D2D1::RectF(x, y, x + w, y + h), brush_.Get());
     }
 
-    void draw_rect(float x, float y, float w, float h, const Color& c, float stroke = 1.0f) {
+    void draw_rect(float x, float y, float w, float h, const Color& c, float stroke = 1.35f) {
         set_color(c);
         render_target_->DrawRectangle(D2D1::RectF(x, y, x + w, y + h), brush_.Get(), stroke);
     }
@@ -574,7 +574,7 @@ struct MainWindow::Impl {
         render_target_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), radius, radius), brush_.Get());
     }
 
-    void draw_rounded_rect(float x, float y, float w, float h, float radius, const Color& c, float stroke = 1.0f) {
+    void draw_rounded_rect(float x, float y, float w, float h, float radius, const Color& c, float stroke = 1.35f) {
         if (radius <= 0.0f) { draw_rect(x, y, w, h, c, stroke); return; }
         set_color(c);
         render_target_->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), radius, radius), brush_.Get(), stroke);
@@ -1462,6 +1462,7 @@ struct MainWindow::Impl {
         RECT rc;
         GetClientRect(hwnd_, &rc);
         float w = static_cast<float>(rc.right - rc.left);
+        float h = static_cast<float>(rc.bottom - rc.top);
 
         float cap_w = scale_f(46.0f, cur_dpi);
         float cap_h = scale_f(30.0f, cur_dpi);
@@ -1490,8 +1491,12 @@ struct MainWindow::Impl {
             // Copy SOCKS5 button in Details Card
             float card_x = (float)scale(ds.metrics.padding_x, cur_dpi);
             float card_w = w - scale_f((float)(ds.metrics.padding_x * 2), cur_dpi);
-            float card_y = (float)scale(480, cur_dpi);
             float row_h = (float)scale(46, cur_dpi);
+            float card_h = row_h * 3.0f;
+            float foot_pad_b = scale_f(24.0f, cur_dpi);
+            float foot_gap = scale_f(18.0f, cur_dpi);
+            float foot_h = scale_f(14.0f, cur_dpi);
+            float card_y = h - foot_pad_b - foot_h - foot_gap - card_h;
             float copy_x = card_x + card_w - (float)scale(ds.metrics.row_padding_x, cur_dpi) - (float)scale(44, cur_dpi);
             float copy_y = card_y + row_h * 2.0f + (row_h - (float)scale(44, cur_dpi)) / 2.0f;
             if (x >= copy_x && x <= copy_x + scale_f(44, cur_dpi) && y >= copy_y && y <= copy_y + scale_f(44, cur_dpi)) return true;
@@ -1814,10 +1819,13 @@ struct MainWindow::Impl {
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
         // ── 5. Details Card (Transparent card background, 46px row height matching reference) ──
-        float card_y = static_cast<float>(scale(480, cur_dpi));
         float row_h = static_cast<float>(scale(46, cur_dpi));
         float card_h = row_h * 3.0f;
         float card_r = static_cast<float>(scale(ds.metrics.radius_card, cur_dpi));
+        float foot_pad_b = scale_f(24.0f, cur_dpi);
+        float foot_gap = scale_f(18.0f, cur_dpi);
+        float foot_h = scale_f(14.0f, cur_dpi);
+        float card_y = h - foot_pad_b - foot_h - foot_gap - card_h;
 
         render_animated_block(anim_delay::Tertiary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             // Row hover highlights (Transparent when idle, filled with hover_bg only on row hover)
@@ -1828,11 +1836,11 @@ struct MainWindow::Impl {
                 fill_card_row_hover(card_x, card_y + row_h, card_w, row_h, card_r, 1, 3, ds.colors.hover_bg);
             }
 
-            draw_rounded_rect(card_x, card_y, card_w, card_h, card_r, ds.colors.card_border, 1.0f);
+            draw_rounded_rect(card_x, card_y, card_w, card_h, card_r, ds.colors.card_border);
 
             // Row Dividers
-            draw_line(card_x, card_y + row_h, card_x + card_w, card_y + row_h, ds.colors.card_border, 1.0f);
-            draw_line(card_x, card_y + row_h * 2.0f, card_x + card_w, card_y + row_h * 2.0f, ds.colors.card_border, 1.0f);
+            draw_line(card_x, card_y + row_h, card_x + card_w, card_y + row_h, ds.colors.card_border, 1.2f);
+            draw_line(card_x, card_y + row_h * 2.0f, card_x + card_w, card_y + row_h * 2.0f, ds.colors.card_border, 1.2f);
 
             float label_pad_x = static_cast<float>(scale(ds.metrics.row_padding_x, cur_dpi));
             float label_pad_y = (row_h - static_cast<float>(scale(14, cur_dpi))) / 2.0f;
@@ -1900,7 +1908,7 @@ struct MainWindow::Impl {
 
         // ── 6. Footer ──
         render_animated_block(anim_delay::Quaternary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
-            draw_text_center(L"Free and open source", fmt_footnote_.Get(), hero_cx, card_y + card_h + scale_f(20, cur_dpi), ds.colors.text_dim);
+            draw_text_center(L"Free and open source", fmt_footnote_.Get(), hero_cx, card_y + card_h + foot_gap, ds.colors.text_dim);
         });
     }
 
@@ -3733,6 +3741,7 @@ struct MainWindow::Impl {
                 RECT rc;
                 GetClientRect(hwnd, &rc);
                 float w = static_cast<float>(rc.right - rc.left);
+                float h = static_cast<float>(rc.bottom - rc.top);
 
                 float cap_btn_w = scale_f(46.0f, cur_dpi);
                 float cap_btn_h = scale_f(30.0f, cur_dpi);
@@ -3806,8 +3815,12 @@ struct MainWindow::Impl {
 
                     float card_x = (float)scale(ds.metrics.padding_x, cur_dpi);
                     float card_w = w - (float)scale(ds.metrics.padding_x * 2, cur_dpi);
-                    float card_y = (float)scale(480, cur_dpi);
                     float row_h = (float)scale(46, cur_dpi);
+                    float card_h = row_h * 3.0f;
+                    float foot_pad_b = scale_f(24.0f, cur_dpi);
+                    float foot_gap = scale_f(18.0f, cur_dpi);
+                    float foot_h = scale_f(14.0f, cur_dpi);
+                    float card_y = h - foot_pad_b - foot_h - foot_gap - card_h;
                     float copy_x = card_x + card_w - (float)scale(ds.metrics.row_padding_x, cur_dpi) - scale_f(44, cur_dpi);
                     float copy_y = card_y + row_h * 2.0f + (row_h - scale_f(44, cur_dpi)) / 2.0f;
                     impl->copy_btn_hovered_ = (x >= copy_x && x <= copy_x + scale_f(44, cur_dpi) && y >= copy_y && y <= copy_y + scale_f(44, cur_dpi));
@@ -4594,10 +4607,11 @@ int MainWindow::run_message_loop() {
         bool active_anim = (is_visible || tray_visible) && impl_->has_active_animations();
 
         const float target_frame_sec = 1.0f / static_cast<float>(refresh_rate);
+        const float frame_tolerance = 0.002f; // 2ms tolerance for Windows timer jitter
 
         if (active_anim) {
-            // Strictly cap frame rate to monitor refresh rate (prevents running at thousands of FPS)
-            if (dt >= target_frame_sec) {
+            // Cap frame rate to monitor refresh rate with timer tolerance
+            if (dt >= (target_frame_sec - frame_tolerance)) {
                 if (dt > 0.050f) dt = target_frame_sec;
                 impl_->last_frame_time_ = now;
 
@@ -4627,8 +4641,8 @@ int MainWindow::run_message_loop() {
         DWORD wait_ms = 40;
         if (active_anim) {
             float remain_sec = target_frame_sec - elapsed_since_last;
-            if (remain_sec > 0.001f) {
-                wait_ms = static_cast<DWORD>(std::clamp(static_cast<int>(remain_sec * 1000.0f), 1, 40));
+            if (remain_sec > 0.003f) {
+                wait_ms = static_cast<DWORD>(std::clamp(static_cast<int>(remain_sec * 1000.0f) - 1, 1, 40));
             } else {
                 wait_ms = 1;
             }
