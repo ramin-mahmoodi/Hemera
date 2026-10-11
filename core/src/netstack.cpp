@@ -1387,8 +1387,13 @@ bool NetStack::service_tcp(TimePoint now) {
         in.can_send = sock.can_send();
         in.can_recv = sock.can_recv();
         in.app_gone = !st.to_app.receiver_alive();
+        bool rx_alive = true;
+        if (st.connect_slot) {
+            std::lock_guard<std::mutex> lock(st.connect_slot->mtx);
+            rx_alive = st.connect_slot->rx_alive;
+        }
         in.connect_cancelled =
-            st.slot_answered || !st.connect_slot || !st.connect_slot->rx_alive;
+            st.slot_answered || !st.connect_slot || !rx_alive;
         in.connect_deadline = now >= st.connect_deadline;
         in.pending_len = st.pending.size();
         in.max_pending = netpacket::max_tcp_pending(config_.tcp_rx_buf);
@@ -1407,16 +1412,22 @@ bool NetStack::service_tcp(TimePoint now) {
                 // The oneshot answer: Ok(TcpConn{ id, from_stack, data_in }).
                 TcpConn conn(id, data_in_tx_, std::move(*st.from_stack_rx));
                 st.from_stack_rx.reset();
-                st.connect_slot->value = std::expected<TcpConn, std::string>(std::move(conn));
-                st.connect_slot->filled = true;
+                if (st.connect_slot) {
+                    std::lock_guard<std::mutex> lock(st.connect_slot->mtx);
+                    st.connect_slot->value = std::expected<TcpConn, std::string>(std::move(conn));
+                    st.connect_slot->filled = true;
+                }
                 st.slot_answered = true;
             }
         }
 
         if (act.report_refused) {
             if (!st.slot_answered) {
-                st.connect_slot->value = std::unexpected(std::string("connection refused"));
-                st.connect_slot->filled = true;
+                if (st.connect_slot) {
+                    std::lock_guard<std::mutex> lock(st.connect_slot->mtx);
+                    st.connect_slot->value = std::unexpected(std::string("connection refused"));
+                    st.connect_slot->filled = true;
+                }
                 st.slot_answered = true;
             }
             tcp_sockets_.erase(id);
@@ -1427,8 +1438,11 @@ bool NetStack::service_tcp(TimePoint now) {
         if (!st.established) {
             if (act.report_timeout) {
                 if (!st.slot_answered) {
-                    st.connect_slot->value = std::unexpected(std::string("connection timed out"));
-                    st.connect_slot->filled = true;
+                    if (st.connect_slot) {
+                        std::lock_guard<std::mutex> lock(st.connect_slot->mtx);
+                        st.connect_slot->value = std::unexpected(std::string("connection timed out"));
+                        st.connect_slot->filled = true;
+                    }
                     st.slot_answered = true;
                 }
                 tcp_sockets_.erase(id);

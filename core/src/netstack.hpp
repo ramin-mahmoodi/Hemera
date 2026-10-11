@@ -41,6 +41,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -123,6 +124,7 @@ namespace detail {
 
 template <class T>
 struct ChannelShared {
+    mutable std::mutex mtx;
     std::deque<T> queue;
     std::size_t capacity = 0;
     std::size_t reserved = 0;
@@ -151,8 +153,11 @@ public:
     // Consumes the reserved slot; the value lands in the queue.
     void commit(T value) {
         if (!shared_) return;
-        shared_->queue.push_back(std::move(value));
-        if (shared_->reserved > 0) --shared_->reserved;
+        {
+            std::lock_guard<std::mutex> lock(shared_->mtx);
+            shared_->queue.push_back(std::move(value));
+            if (shared_->reserved > 0) --shared_->reserved;
+        }
         shared_.reset();
     }
 
@@ -167,7 +172,10 @@ private:
 
     void release() {
         if (shared_) {
-            if (shared_->reserved > 0) --shared_->reserved;
+            {
+                std::lock_guard<std::mutex> lock(shared_->mtx);
+                if (shared_->reserved > 0) --shared_->reserved;
+            }
             shared_.reset();
         }
     }
@@ -200,11 +208,21 @@ public:
 
     [[nodiscard]] bool alive() const { return shared_ != nullptr; }
     // The Rust `resp.is_closed()` / TrySendError::Closed check: the receiving half is gone.
-    [[nodiscard]] bool receiver_alive() const { return shared_ && shared_->rx_alive; }
-    [[nodiscard]] std::size_t queued() const { return shared_ ? shared_->queue.size() : 0; }
+    [[nodiscard]] bool receiver_alive() const {
+        if (!shared_) return false;
+        std::lock_guard<std::mutex> lock(shared_->mtx);
+        return shared_->rx_alive;
+    }
+    [[nodiscard]] std::size_t queued() const {
+        if (!shared_) return 0;
+        std::lock_guard<std::mutex> lock(shared_->mtx);
+        return shared_->queue.size();
+    }
 
     [[nodiscard]] SendOutcome try_send(T value) const {
-        if (!shared_ || !shared_->rx_alive) return SendOutcome::Closed;
+        if (!shared_) return SendOutcome::Closed;
+        std::lock_guard<std::mutex> lock(shared_->mtx);
+        if (!shared_->rx_alive) return SendOutcome::Closed;
         if (shared_->queue.size() >= shared_->capacity) return SendOutcome::Full;
         shared_->queue.push_back(std::move(value));
         return SendOutcome::Ok;
@@ -215,7 +233,9 @@ public:
     // way a cloned Rust Sender is: the channel state lives behind the shared pointer, and the
     // app-side handles (TcpSender::send) hold their clone by const reference.
     [[nodiscard]] SendOutcome try_reserve(Permit<T>& out) const {
-        if (!shared_ || !shared_->rx_alive) return SendOutcome::Closed;
+        if (!shared_) return SendOutcome::Closed;
+        std::lock_guard<std::mutex> lock(shared_->mtx);
+        if (!shared_->rx_alive) return SendOutcome::Closed;
         if (shared_->queue.size() + shared_->reserved >= shared_->capacity) {
             return SendOutcome::Full;
         }
@@ -234,11 +254,19 @@ private:
     }
 
     void retain() {
-        if (shared_) ++shared_->senders;
+        if (shared_) {
+            std::lock_guard<std::mutex> lock(shared_->mtx);
+            ++shared_->senders;
+        }
     }
     void let_go() {
-        if (shared_ && shared_->senders > 0) --shared_->senders;
-        shared_.reset();
+        if (shared_) {
+            {
+                std::lock_guard<std::mutex> lock(shared_->mtx);
+                if (shared_->senders > 0) --shared_->senders;
+            }
+            shared_.reset();
+        }
     }
 
     std::shared_ptr<detail::ChannelShared<T>> shared_;
@@ -263,20 +291,31 @@ public:
     // Non-blocking recv(): the next value, or nothing while the queue is empty. Rust's None
     // (channel closed *and* drained) is at_end().
     [[nodiscard]] std::optional<T> recv() {
-        if (!shared_ || shared_->queue.empty()) return std::nullopt;
+        if (!shared_) return std::nullopt;
+        std::lock_guard<std::mutex> lock(shared_->mtx);
+        if (shared_->queue.empty()) return std::nullopt;
         T value = std::move(shared_->queue.front());
         shared_->queue.pop_front();
         return value;
     }
 
     void push_front(T value) {
-        if (shared_) shared_->queue.push_front(std::move(value));
+        if (shared_) {
+            std::lock_guard<std::mutex> lock(shared_->mtx);
+            shared_->queue.push_front(std::move(value));
+        }
     }
 
     [[nodiscard]] bool at_end() const {
-        return !shared_ || (shared_->queue.empty() && shared_->senders == 0);
+        if (!shared_) return true;
+        std::lock_guard<std::mutex> lock(shared_->mtx);
+        return shared_->queue.empty() && shared_->senders == 0;
     }
-    [[nodiscard]] std::size_t queued() const { return shared_ ? shared_->queue.size() : 0; }
+    [[nodiscard]] std::size_t queued() const {
+        if (!shared_) return 0;
+        std::lock_guard<std::mutex> lock(shared_->mtx);
+        return shared_->queue.size();
+    }
 
 private:
     template <class>
@@ -286,8 +325,13 @@ private:
         : shared_(std::move(shared)) {}
 
     void close() {
-        if (shared_) shared_->rx_alive = false;
-        shared_.reset();
+        if (shared_) {
+            {
+                std::lock_guard<std::mutex> lock(shared_->mtx);
+                shared_->rx_alive = false;
+            }
+            shared_.reset();
+        }
     }
 
     std::shared_ptr<detail::ChannelShared<T>> shared_;
@@ -458,6 +502,7 @@ private:
 namespace detail {
 
 struct ConnectSlot {
+    mutable std::mutex mtx;
     bool rx_alive = true;  // the ticket still exists (the oneshot receiver)
     bool filled = false;   // an answer was sent
     std::optional<std::expected<TcpConn, std::string>> value;
@@ -484,13 +529,23 @@ public:
     ~ConnectTicket() { abandon(); }
 
     [[nodiscard]] bool valid() const { return slot_ != nullptr; }
-    [[nodiscard]] bool ready() const { return slot_ && slot_->filled; }
+    [[nodiscard]] bool ready() const {
+        if (!slot_) return false;
+        std::lock_guard<std::mutex> lock(slot_->mtx);
+        return slot_->filled;
+    }
     // The engine-side abandoned check, exposed for tests.
-    [[nodiscard]] bool abandoned() const { return !slot_ || !slot_->rx_alive; }
+    [[nodiscard]] bool abandoned() const {
+        if (!slot_) return true;
+        std::lock_guard<std::mutex> lock(slot_->mtx);
+        return !slot_->rx_alive;
+    }
 
     // The answered value, once; nothing before it is filled or after it was taken.
     [[nodiscard]] std::optional<std::expected<TcpConn, std::string>> take() {
-        if (!slot_ || !slot_->filled || !slot_->value) return std::nullopt;
+        if (!slot_) return std::nullopt;
+        std::lock_guard<std::mutex> lock(slot_->mtx);
+        if (!slot_->filled || !slot_->value) return std::nullopt;
         auto value = std::move(*slot_->value);
         slot_->value.reset();
         return value;
@@ -503,12 +558,15 @@ private:
 
     void abandon() {
         if (slot_) {
-            slot_->rx_alive = false;
-            // The Rust oneshot receiver's drop also drops a value the sender already put in:
-            // an answered-but-unclaimed TcpConn runs its Drop (TcpClose) here.
-            slot_->value.reset();
+            {
+                std::lock_guard<std::mutex> lock(slot_->mtx);
+                slot_->rx_alive = false;
+                // The Rust oneshot receiver's drop also drops a value the sender already put in:
+                // an answered-but-unclaimed TcpConn runs its Drop (TcpClose) here.
+                slot_->value.reset();
+            }
+            slot_.reset();
         }
-        slot_.reset();
     }
 
     std::shared_ptr<detail::ConnectSlot> slot_;
