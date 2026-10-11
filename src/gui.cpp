@@ -499,7 +499,7 @@ struct MainWindow::Impl {
         );
 
         D2D1_RENDER_TARGET_PROPERTIES rt_props = D2D1::RenderTargetProperties(
-            D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1_RENDER_TARGET_TYPE_SOFTWARE,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
             96.0f, 96.0f,
             D2D1_RENDER_TARGET_USAGE_NONE,
@@ -558,9 +558,11 @@ struct MainWindow::Impl {
         render_target_->FillRectangle(D2D1::RectF(x, y, x + w, y + h), brush_.Get());
     }
 
-    void draw_rect(float x, float y, float w, float h, const Color& c, float stroke = 1.35f) {
+    void draw_rect(float x, float y, float w, float h, const Color& c, float stroke = 1.0f) {
+        if (!render_target_) return;
         set_color(c);
-        render_target_->DrawRectangle(D2D1::RectF(x, y, x + w, y + h), brush_.Get(), stroke);
+        float half = stroke * 0.5f;
+        render_target_->DrawRectangle(D2D1::RectF(x + half, y + half, x + w - half, y + h - half), brush_.Get(), stroke);
     }
 
     void fill_rounded_rect(float x, float y, float w, float h, float radius, const Color& c) {
@@ -574,10 +576,12 @@ struct MainWindow::Impl {
         render_target_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), radius, radius), brush_.Get());
     }
 
-    void draw_rounded_rect(float x, float y, float w, float h, float radius, const Color& c, float stroke = 1.35f) {
+    void draw_rounded_rect(float x, float y, float w, float h, float radius, const Color& c, float stroke = 1.0f) {
+        if (!render_target_) return;
         if (radius <= 0.0f) { draw_rect(x, y, w, h, c, stroke); return; }
         set_color(c);
-        render_target_->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x, y, x + w, y + h), radius, radius), brush_.Get(), stroke);
+        float half = stroke * 0.5f;
+        render_target_->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x + half, y + half, x + w - half, y + h - half), radius, radius), brush_.Get(), stroke);
     }
 
     void fill_card_row_hover(float card_x, float row_y, float card_w, float row_h, float radius, int row_idx, int total_rows, const Color& c) {
@@ -602,8 +606,17 @@ struct MainWindow::Impl {
     }
 
     void draw_line(float x1, float y1, float x2, float y2, const Color& c, float stroke = 1.0f, bool round_caps = false) {
+        if (!render_target_) return;
         set_color(c);
-        render_target_->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), brush_.Get(), stroke, round_caps ? stroke_round_.Get() : nullptr);
+        if (std::abs(y1 - y2) < 0.001f) {
+            float y = std::floor(y1) + stroke * 0.5f;
+            render_target_->DrawLine(D2D1::Point2F(x1, y), D2D1::Point2F(x2, y), brush_.Get(), stroke, round_caps ? stroke_round_.Get() : nullptr);
+        } else if (std::abs(x1 - x2) < 0.001f) {
+            float x = std::floor(x1) + stroke * 0.5f;
+            render_target_->DrawLine(D2D1::Point2F(x, y1), D2D1::Point2F(x, y2), brush_.Get(), stroke, round_caps ? stroke_round_.Get() : nullptr);
+        } else {
+            render_target_->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), brush_.Get(), stroke, round_caps ? stroke_round_.Get() : nullptr);
+        }
     }
 
     void draw_lines(const D2D1_POINT_2F* pts, UINT32 count, const Color& c, float stroke = 1.0f, bool round_caps = true) {
@@ -1491,15 +1504,18 @@ struct MainWindow::Impl {
             // Copy SOCKS5 button in Details Card
             float card_x = (float)scale(ds.metrics.padding_x, cur_dpi);
             float card_w = w - scale_f((float)(ds.metrics.padding_x * 2), cur_dpi);
-            float row_h = (float)scale(46, cur_dpi);
-            float card_h = row_h * 3.0f;
+            float row1_h = (float)scale(50, cur_dpi);
+            float row2_h = (float)scale(51, cur_dpi);
+            float row3_h = (float)scale(58, cur_dpi);
+            float card_h = row1_h + row2_h + row3_h;
             float foot_pad_b = scale_f(24.0f, cur_dpi);
             float foot_gap = scale_f(18.0f, cur_dpi);
-            float foot_h = scale_f(14.0f, cur_dpi);
+            float foot_h = scale_f(16.0f, cur_dpi);
             float card_y = h - foot_pad_b - foot_h - foot_gap - card_h;
-            float copy_x = card_x + card_w - (float)scale(ds.metrics.row_padding_x, cur_dpi) - (float)scale(44, cur_dpi);
-            float copy_y = card_y + row_h * 2.0f + (row_h - (float)scale(44, cur_dpi)) / 2.0f;
-            if (x >= copy_x && x <= copy_x + scale_f(44, cur_dpi) && y >= copy_y && y <= copy_y + scale_f(44, cur_dpi)) return true;
+            float copy_sz = scale_f(44, cur_dpi);
+            float copy_x = card_x + card_w - scale_f(8, cur_dpi) - copy_sz;
+            float copy_y = card_y + row1_h + row2_h + (row3_h - copy_sz) / 2.0f;
+            if (x >= copy_x && x <= copy_x + copy_sz && y >= copy_y && y <= copy_y + copy_sz) return true;
             if (home_proto_hovered_ || home_route_hovered_) return true;
 
             return false;
@@ -1670,7 +1686,7 @@ struct MainWindow::Impl {
             render_target_->SetTransform(cur_mat);
         });
 
-        // ── 2. Hero Center Section (Power Button, Rings, Spinning Arc) ──
+        // ── 2. Hero Center Section (Power Button, Rings, Spinning Arc - fixed in place matching reference) ──
         float shake_dx = 0.0f;
         if (shake_timer_ > 0.0f) {
             float progress = 1.0f - (shake_timer_ / 0.45f);
@@ -1684,7 +1700,8 @@ struct MainWindow::Impl {
         float cur_hero_cx = hero_cx + shake_dx;
         float status_y = hero_cy + hero_r + scale_f(28, cur_dpi);
 
-        render_animated_block(anim_delay::Primary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        // Power button disc, rings, and status text stay fixed in place
+        {
             // Button scale with smooth breathing / pulsing
             float base_scale = hero_scale_;
             if (!is_connected && !is_connecting && !is_disconnecting && !is_error) {
@@ -1790,7 +1807,7 @@ struct MainWindow::Impl {
                 draw_text_center(L"Not connected", fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
                 draw_text_center(L"Tap the button to connect", fmt_body_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.text_muted);
             }
-        });
+        }
 
         // ── 4. Middle Section (Ping, Down Volume, Up Volume when connected) ──
         float middle_y = status_y + scale_f(64 + 18, cur_dpi);
@@ -1798,52 +1815,54 @@ struct MainWindow::Impl {
         float card_w = w - pad_x * 2.0f;
 
         if (is_connected) {
-            render_animated_block(anim_delay::Secondary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
-                float col_w = card_w / 3.0f;
-                auto draw_stat_col = [&](int idx, const std::wstring& tag, const std::wstring& val) {
-                    float cx = card_x + col_w * (idx + 0.5f);
-                    draw_text_center(tag, fmt_metric_tag_.Get(), cx, middle_y + scale_f(2, cur_dpi), ds.colors.text_submuted);
-                    draw_text_center(val, fmt_mono_.Get(), cx, middle_y + scale_f(18, cur_dpi), ds.colors.text_primary);
-                };
-                std::wstring ping_str = std::format(L"{} ms", live_ping_ms_);
-                draw_stat_col(0, L"PING", ping_str);
+            float col_w = card_w / 3.0f;
+            auto draw_stat_col = [&](int idx, const std::wstring& tag, const std::wstring& val) {
+                float cx = card_x + col_w * (idx + 0.5f);
+                draw_text_center(tag, fmt_metric_tag_.Get(), cx, middle_y + scale_f(2, cur_dpi), ds.colors.text_submuted);
+                draw_text_center(val, fmt_mono_.Get(), cx, middle_y + scale_f(18, cur_dpi), ds.colors.text_primary);
+            };
+            std::wstring ping_str = std::format(L"{} ms", live_ping_ms_);
+            draw_stat_col(0, L"PING", ping_str);
 
-                uint64_t real_down = (stats.down >= conn_start_down_bytes_) ? (stats.down - conn_start_down_bytes_) : stats.down;
-                uint64_t real_up = (stats.up >= conn_start_up_bytes_) ? (stats.up - conn_start_up_bytes_) : stats.up;
+            uint64_t real_down = (stats.down >= conn_start_down_bytes_) ? (stats.down - conn_start_down_bytes_) : stats.down;
+            uint64_t real_up = (stats.up >= conn_start_up_bytes_) ? (stats.up - conn_start_up_bytes_) : stats.up;
 
-                draw_stat_col(1, L"DOWN", format_volume(real_down));
-                draw_stat_col(2, L"UP", format_volume(real_up));
-            });
+            draw_stat_col(1, L"DOWN", format_volume(real_down));
+            draw_stat_col(2, L"UP", format_volume(real_up));
         }
 
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
-        // ── 5. Details Card (Transparent card background, 46px row height matching reference) ──
-        float row_h = static_cast<float>(scale(46, cur_dpi));
-        float card_h = row_h * 3.0f;
+        // ── 5. Details Card (50px / 51px / 58px rows matching reference 159px total height) ──
+        float row1_h = static_cast<float>(scale(50, cur_dpi));
+        float row2_h = static_cast<float>(scale(51, cur_dpi));
+        float row3_h = static_cast<float>(scale(58, cur_dpi));
+        float card_h = row1_h + row2_h + row3_h;
         float card_r = static_cast<float>(scale(ds.metrics.radius_card, cur_dpi));
         float foot_pad_b = scale_f(24.0f, cur_dpi);
         float foot_gap = scale_f(18.0f, cur_dpi);
-        float foot_h = scale_f(14.0f, cur_dpi);
+        float foot_h = scale_f(16.0f, cur_dpi);
         float card_y = h - foot_pad_b - foot_h - foot_gap - card_h;
 
-        render_animated_block(anim_delay::Tertiary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Secondary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             // Row hover highlights (Transparent when idle, filled with hover_bg only on row hover)
             if (home_proto_hovered_) {
-                fill_card_row_hover(card_x, card_y, card_w, row_h, card_r, 0, 3, ds.colors.hover_bg);
+                fill_card_row_hover(card_x, card_y, card_w, row1_h, card_r, 0, 3, ds.colors.hover_bg);
             }
             if (home_route_hovered_) {
-                fill_card_row_hover(card_x, card_y + row_h, card_w, row_h, card_r, 1, 3, ds.colors.hover_bg);
+                fill_card_row_hover(card_x, card_y + row1_h, card_w, row2_h, card_r, 1, 3, ds.colors.hover_bg);
             }
 
             draw_rounded_rect(card_x, card_y, card_w, card_h, card_r, ds.colors.card_border);
 
             // Row Dividers
-            draw_line(card_x, card_y + row_h, card_x + card_w, card_y + row_h, ds.colors.card_border, 1.2f);
-            draw_line(card_x, card_y + row_h * 2.0f, card_x + card_w, card_y + row_h * 2.0f, ds.colors.card_border, 1.2f);
+            draw_line(card_x, card_y + row1_h, card_x + card_w, card_y + row1_h, ds.colors.card_border);
+            draw_line(card_x, card_y + row1_h + row2_h, card_x + card_w, card_y + row1_h + row2_h, ds.colors.card_border);
 
             float label_pad_x = static_cast<float>(scale(ds.metrics.row_padding_x, cur_dpi));
-            float label_pad_y = (row_h - static_cast<float>(scale(14, cur_dpi))) / 2.0f;
+            float r1_pad_y = (row1_h - static_cast<float>(scale(14, cur_dpi))) / 2.0f;
+            float r2_pad_y = (row2_h - static_cast<float>(scale(14, cur_dpi))) / 2.0f;
+            float r3_pad_y = (row3_h - static_cast<float>(scale(14, cur_dpi))) / 2.0f;
 
             // Row 1: Protocol
             std::wstring proto_name = L"WARP-in-WARP / gool";
@@ -1856,8 +1875,8 @@ struct MainWindow::Impl {
                 case Protocol::Mim: proto_name = L"MiM"; break;
                 default: break;
             }
-            draw_text(L"Protocol", fmt_card_label_.Get(), card_x + label_pad_x, card_y + label_pad_y, ds.colors.text_muted);
-            draw_text_right(proto_name, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + label_pad_y, ds.colors.text_primary);
+            draw_text(L"Protocol", fmt_card_label_.Get(), card_x + label_pad_x, card_y + r1_pad_y, ds.colors.text_muted);
+            draw_text_right(proto_name, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + r1_pad_y, ds.colors.text_primary);
 
             // Row 2: Transport
             std::wstring transport_val = L"HTTP/2 · TLS mask";
@@ -1865,18 +1884,18 @@ struct MainWindow::Impl {
             else if (profile.protocol == Protocol::Mim) transport_val = L"TCP · TLS mask";
             else if (profile.protocol == Protocol::Masque && !profile.masque_http2) transport_val = L"QUIC / HTTP/3";
             else if (!profile.exit_loc.empty()) transport_val = std::wstring(profile.exit_loc.begin(), profile.exit_loc.end()) + L" · Balanced";
-            draw_text(L"Transport", fmt_card_label_.Get(), card_x + label_pad_x, card_y + row_h + label_pad_y, ds.colors.text_muted);
-            draw_text_right(transport_val, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + row_h + label_pad_y, ds.colors.text_primary);
+            draw_text(L"Transport", fmt_card_label_.Get(), card_x + label_pad_x, card_y + row1_h + r2_pad_y, ds.colors.text_muted);
+            draw_text_right(transport_val, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + row1_h + r2_pad_y, ds.colors.text_primary);
 
             // Row 3: SOCKS5 Address + Copy Button
             std::wstring socks_str = std::wstring(profile.bind_address.begin(), profile.bind_address.end());
-            draw_text(L"SOCKS5", fmt_card_label_.Get(), card_x + label_pad_x, card_y + row_h * 2.0f + label_pad_y, ds.colors.text_muted);
+            draw_text(L"SOCKS5", fmt_card_label_.Get(), card_x + label_pad_x, card_y + row1_h + row2_h + r3_pad_y, ds.colors.text_muted);
 
             float copy_btn_sz = static_cast<float>(scale(44, cur_dpi));
-            float copy_btn_x = card_x + card_w - label_pad_x - copy_btn_sz + scale_f(8, cur_dpi);
-            float copy_btn_y = card_y + row_h * 2.0f + (row_h - copy_btn_sz) / 2.0f;
+            float copy_btn_x = card_x + card_w - scale_f(8, cur_dpi) - copy_btn_sz;
+            float copy_btn_y = card_y + row1_h + row2_h + (row3_h - copy_btn_sz) / 2.0f;
 
-            draw_text_right(socks_str, fmt_mono_.Get(), copy_btn_x - scale_f(6, cur_dpi), card_y + row_h * 2.0f + label_pad_y, ds.colors.text_primary);
+            draw_text_right(socks_str, fmt_mono_.Get(), copy_btn_x - scale_f(4, cur_dpi), card_y + row1_h + row2_h + r3_pad_y, ds.colors.text_primary);
 
             if (copy_btn_hovered_) {
                 fill_rounded_rect(copy_btn_x, copy_btn_y, copy_btn_sz, copy_btn_sz, static_cast<float>(scale(12, cur_dpi)), ds.colors.hover_bg);
@@ -1927,10 +1946,10 @@ struct MainWindow::Impl {
         float back_btn_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
         float back_btn_size = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
 
-        render_animated_block(anim_delay::Header, cur_dpi, scroll_mat, [&]() {
-            draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
-            draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
-        });
+        // Header: Back Button + "Settings" Title (fixed in place matching reference)
+        render_target_->SetTransform(scroll_mat);
+        draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
+        draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
 
         float clip_top = back_btn_y + back_btn_size + scale_f(12, cur_dpi);
 
@@ -2452,7 +2471,8 @@ struct MainWindow::Impl {
         float clr_x = w - card_x - btn_sz;
         float cp_x = clr_x - btn_sz - scale_f(8, cur_dpi);
 
-        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        // Logs header stays fixed in place matching reference
+        {
             draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
             draw_text(L"Logs", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
 
@@ -2501,7 +2521,7 @@ struct MainWindow::Impl {
                 D2D1::Point2F(clrcx + scale_f(4.5f, cur_dpi), clrcy - scale_f(3, cur_dpi))
             };
             draw_lines(can_pts, 4, tr_col, 1.6f, true);
-        });
+        }
 
         // 2. Filter Chips Row
         float card_w = w - scale_f(static_cast<float>(ds.metrics.padding_x * 2), cur_dpi);
@@ -2702,10 +2722,11 @@ struct MainWindow::Impl {
         float back_btn_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
         float back_btn_size = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
 
-        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        // About header stays fixed in place matching reference
+        {
             draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
             draw_text(L"About", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
-        });
+        }
 
         // 2. Logo Icon & Hero
         float cx = w / 2.0f;
@@ -3815,17 +3836,20 @@ struct MainWindow::Impl {
 
                     float card_x = (float)scale(ds.metrics.padding_x, cur_dpi);
                     float card_w = w - (float)scale(ds.metrics.padding_x * 2, cur_dpi);
-                    float row_h = (float)scale(46, cur_dpi);
-                    float card_h = row_h * 3.0f;
+                    float row1_h = (float)scale(50, cur_dpi);
+                    float row2_h = (float)scale(51, cur_dpi);
+                    float row3_h = (float)scale(58, cur_dpi);
+                    float card_h = row1_h + row2_h + row3_h;
                     float foot_pad_b = scale_f(24.0f, cur_dpi);
                     float foot_gap = scale_f(18.0f, cur_dpi);
-                    float foot_h = scale_f(14.0f, cur_dpi);
+                    float foot_h = scale_f(16.0f, cur_dpi);
                     float card_y = h - foot_pad_b - foot_h - foot_gap - card_h;
-                    float copy_x = card_x + card_w - (float)scale(ds.metrics.row_padding_x, cur_dpi) - scale_f(44, cur_dpi);
-                    float copy_y = card_y + row_h * 2.0f + (row_h - scale_f(44, cur_dpi)) / 2.0f;
-                    impl->copy_btn_hovered_ = (x >= copy_x && x <= copy_x + scale_f(44, cur_dpi) && y >= copy_y && y <= copy_y + scale_f(44, cur_dpi));
-                    impl->home_proto_hovered_ = (x >= card_x && x <= card_x + card_w && y >= card_y && y <= card_y + row_h);
-                    impl->home_route_hovered_ = (x >= card_x && x <= card_x + card_w && y >= card_y + row_h && y <= card_y + row_h * 2.0f);
+                    float copy_btn_sz = scale_f(44, cur_dpi);
+                    float copy_x = card_x + card_w - scale_f(8, cur_dpi) - copy_btn_sz;
+                    float copy_y = card_y + row1_h + row2_h + (row3_h - copy_btn_sz) / 2.0f;
+                    impl->copy_btn_hovered_ = (x >= copy_x && x <= copy_x + copy_btn_sz && y >= copy_y && y <= copy_y + copy_btn_sz);
+                    impl->home_proto_hovered_ = (x >= card_x && x <= card_x + card_w && y >= card_y && y <= card_y + row1_h);
+                    impl->home_route_hovered_ = (x >= card_x && x <= card_x + card_w && y >= card_y + row1_h && y <= card_y + row1_h + row2_h);
 
 
                 } else if (impl->view_ == ActiveView::Settings) {

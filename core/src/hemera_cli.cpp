@@ -1746,7 +1746,6 @@ tr::Room LockedInbound::try_send(std::span<const std::uint8_t> ip_packet) {
             ::hemera::core::add_down(ip_packet.size());
             tun->write_packet(ip_packet);
         } else if (ns::NetStack* stack = hop_.stack(); stack != nullptr) {
-            ::hemera::core::add_down(ip_packet.size());
             stack->submit_inbound(std::vector<std::uint8_t>(ip_packet.begin(), ip_packet.end()));
         }
     }

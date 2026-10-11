@@ -139,12 +139,12 @@ inline ColorTokens get_dark_tokens() {
     t.chip_bg             = { 255,  23,  23,  27 }; // #17171B
     t.hover_bg            = { 255,  19,  19,  22 }; // #131316
 
-    t.card_border         = { 255,  34,  34,  40 }; // #222228
-    t.btn_border          = { 255,  31,  31,  36 }; // #1F1F24
-    t.btn_border_dim      = { 255,  38,  38,  44 }; // #26262C
-    t.border_hover        = { 255,  46,  46,  54 }; // #2E2E36
-    t.border_hover_bright = { 255,  56,  56,  64 }; // #383840
-    t.divider             = { 255,  32,  32,  38 };
+    t.card_border         = { 255,  27,  27,  32 }; // #1B1B20 strictly matching tokens.css --bd
+    t.btn_border          = { 255,  31,  31,  36 }; // #1F1F24 strictly matching tokens.css --bd2
+    t.btn_border_dim      = { 255,  38,  38,  44 }; // #26262C strictly matching tokens.css --bd3
+    t.border_hover        = { 255,  42,  42,  48 }; // #2A2A30 strictly matching tokens.css --bdh
+    t.border_hover_bright = { 255,  52,  52,  59 }; // #34343B strictly matching tokens.css --bdh2
+    t.divider             = { 255,  27,  27,  32 }; // #1B1B20 strictly matching tokens.css --bd
 
     t.text_primary        = { 255, 237, 237, 237 }; // #EDEDED
     t.text_secondary      = { 255, 201, 201, 207 }; // #C9C9CF
