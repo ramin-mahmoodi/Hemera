@@ -569,12 +569,6 @@ struct MainWindow::Impl {
             if (FAILED(hr) || !ambient_bg_rt_) return;
         }
 
-        cached_ambient_w_ = w;
-        cached_ambient_h_ = h;
-        cached_ambient_dpi_ = cur_dpi;
-        cached_ambient_state_kind_ = static_cast<int>(state_kind);
-        cached_ambient_theme_ = is_dark;
-
         ambient_bg_rt_->BeginDraw();
         ambient_bg_rt_->Clear(ds.colors.bg);
 
@@ -684,7 +678,13 @@ struct MainWindow::Impl {
         HRESULT end_hr = ambient_bg_rt_->EndDraw();
         if (SUCCEEDED(end_hr)) {
             ambient_bg_bitmap_.Reset();
-            ambient_bg_rt_->GetBitmap(&ambient_bg_bitmap_);
+            if (SUCCEEDED(ambient_bg_rt_->GetBitmap(&ambient_bg_bitmap_)) && ambient_bg_bitmap_) {
+                cached_ambient_w_ = w;
+                cached_ambient_h_ = h;
+                cached_ambient_dpi_ = cur_dpi;
+                cached_ambient_state_kind_ = static_cast<int>(state_kind);
+                cached_ambient_theme_ = is_dark;
+            }
         }
     }
 
@@ -1734,7 +1734,6 @@ struct MainWindow::Impl {
         float pad_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
 
         // ── 0. Ambient Background (Soft Radial Glow + 5 Concentic Rings cached into Direct2D Bitmap) ──
-        ensure_ambient_bg_bitmap(w, h, cur_dpi, state.kind);
         if (ambient_bg_bitmap_) {
             render_target_->DrawBitmap(ambient_bg_bitmap_.Get(), D2D1::RectF(0.0f, 0.0f, w, h));
         } else {
@@ -3026,6 +3025,10 @@ struct MainWindow::Impl {
 
         UINT cur_dpi = dpi();
         ensure_fonts(cur_dpi);
+
+        if (view_ == ActiveView::Home) {
+            ensure_ambient_bg_bitmap(win_w, win_h, cur_dpi, cached_engine_state_.kind);
+        }
 
         render_target_->BeginDraw();
 
