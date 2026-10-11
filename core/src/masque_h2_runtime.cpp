@@ -904,15 +904,12 @@ public:
 
         // h2_builder(): the two windows the machine's profile picks and the frame ceiling, which is
         // what the edge may send us at most per frame (masque_h2.rs:71-78). No server push, which
-        // the Rust's h2 client never accepts either. ENABLE_CONNECT_PROTOCOL (RFC 8441 §3) is
-        // the other half of sending :protocol: without it the edge reads an extended CONNECT
-        // as malformed and answers 400.
+        // the Rust's h2 client never accepts either. Standard RFC 7540 CONNECT is used.
         const FlowControl flow = h2_flow(settings);
-        const std::array<nghttp2_settings_entry, 4> entries{{
+        const std::array<nghttp2_settings_entry, 3> entries{{
             {NGHTTP2_SETTINGS_ENABLE_PUSH, 0},
             {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, flow.initial_stream_window},
             {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, flow.max_frame_size},
-            {NGHTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL, 1},
         }};
         if (nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE,
                                     const_cast<nghttp2_settings_entry*>(entries.data()),
@@ -951,6 +948,9 @@ public:
     [[nodiscard]] bool status_final() const { return status_final_; }
     [[nodiscard]] bool ended() const { return ended_; }
     [[nodiscard]] const std::optional<Stop>& failure() const { return failure_; }
+    [[nodiscard]] const std::vector<std::pair<std::string, std::string>>& resp_headers() const {
+        return resp_headers_;
+    }
 
     // connection.ping_pong() (masque_h2.rs:440-442, 555-579): h2's opaque ping is nghttp2's PING
     // frame with the same eight bytes, and its pong is the answer that carries the ACK flag. The
@@ -1088,6 +1088,8 @@ public:
     static int on_header(void* user_data, const std::uint8_t* name, std::size_t name_len,
                          const std::uint8_t* value, std::size_t value_len) {
         auto* drive = static_cast<H2Drive*>(user_data);
+        drive->resp_headers_.emplace_back(std::string(reinterpret_cast<const char*>(name), name_len),
+                                          std::string(reinterpret_cast<const char*>(value), value_len));
         if (name_len != 7 || std::memcmp(name, ":status", 7) != 0) return 0;
         std::uint32_t status = 0;
         for (std::size_t i = 0; i < value_len; ++i) {
@@ -1178,6 +1180,7 @@ private:
     std::optional<std::array<std::uint8_t, 8>> sent_ping_;
     bool pong_ = false;
     std::optional<Stop> failure_;
+    std::vector<std::pair<std::string, std::string>> resp_headers_;
 };
 
 // The C callbacks: nghttp2 takes function pointers, so they are free functions and the session's
@@ -1609,6 +1612,9 @@ std::expected<void, std::string> run_with(const H2TunnelConfig& cfg, const Setti
     }
     const std::uint16_t status = h2.status().value_or(0);
     note(observer, "[h2] connect-ip status: " + std::to_string(status));   // 470-473
+    for (const auto& [hk, hv] : h2.resp_headers()) {
+        note(observer, "[h2] hdr: " + hk + " = " + hv);
+    }
     if (const auto checked = check_status(status); !checked) {
         // The edge often says why in the body (a 400 with an empty body says nothing, which is
         // itself an answer). Pump until the stream ends or two seconds pass so the DATA behind

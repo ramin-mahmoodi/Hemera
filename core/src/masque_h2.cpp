@@ -120,16 +120,12 @@ ConnectRequest build_connect_request(const H2TunnelConfig& cfg) {
 }
 
 std::vector<std::pair<std::string, std::string>> connect_request_fields(const H2TunnelConfig& cfg) {
-    // The H3 field set carried onto H2, minus :scheme/:path (extended CONNECT omits them):
-    // without :protocol the edge reads a plain CONNECT and answers 400, and without
-    // capsule-protocol it will not carry capsules. The Rust H2 extras (cf-connect-proto,
-    // pq-enabled) are out: the edge answers 400 with them beside :protocol.
     return {
         {":method", "CONNECT"},
-        {":protocol", std::string(CF_CONNECT_PROTOCOL)},
         {":authority", connect_authority(cfg)},
+        {"cf-connect-proto", std::string(CF_CONNECT_PROTOCOL)},
+        {"pq-enabled", "false"},
         {"user-agent", ""},
-        {"capsule-protocol", "?1"},
     };
 }
 

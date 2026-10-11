@@ -785,7 +785,15 @@ struct CheckOutcome {
         if (delay > remaining) delay = remaining < std::chrono::milliseconds(0)
                                             ? std::chrono::milliseconds(0)
                                             : remaining;
-        interruptible_sleep_ms(delay, cancel);
+        HANDLE h = reinterpret_cast<HANDLE>((*io)->read_event());
+        if (h != nullptr && delay.count() > 0) {
+            const DWORD res = WaitForSingleObject(h, static_cast<DWORD>(delay.count()));
+            if (res == WAIT_OBJECT_0) {
+                (*io)->reset_read_event();
+            }
+        } else {
+            interruptible_sleep_ms(delay, cancel);
+        }
     }
 }
 
@@ -4805,13 +4813,13 @@ private:
             auto registered = hemera::core::account::provision_wg(
                 ::hemera::core::DEFAULT_MODEL, ::hemera::core::DEFAULT_LOCALE, std::nullopt,
                 live_env);
-            temp_stop.store(true);
-            if (temp.joinable()) temp.join();
-            for (std::thread& client : clients) {
-                if (client.joinable()) client.join();
-            }
-            closesocket(listener);
             if (!registered.has_value()) {
+                temp_stop.store(true);
+                if (temp.joinable()) temp.join();
+                for (std::thread& client : clients) {
+                    if (client.joinable()) client.join();
+                }
+                closesocket(listener);
                 reply = FlowReply{};
                 reply.ok = false;
                 reply.error = to_flow_error(registered.error());
@@ -4825,6 +4833,12 @@ private:
                 emit(Level::Warn, cf::gool_enable_warp_warn(
                                       to_flow_error(enabled.error()).display()));
             }
+            temp_stop.store(true);
+            if (temp.joinable()) temp.join();
+            for (std::thread& client : clients) {
+                if (client.joinable()) client.join();
+            }
+            closesocket(listener);
             if (auto saved = ::hemera::core::save_identity(std::string(inner_path), inner_identity);
                 !saved.has_value()) {
                 reply = FlowReply{};

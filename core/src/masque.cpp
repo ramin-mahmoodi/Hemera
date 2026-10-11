@@ -286,16 +286,13 @@ std::string h2_connect_uri(std::string_view authority) {
 }
 
 std::vector<HeaderField> h2_connect_request_fields(std::string_view authority) {
-    // The H3 field set's two load-bearing members for the H2 carrier, minus :scheme/:path
-    // (extended CONNECT omits them): without :protocol the edge reads a plain CONNECT and
-    // answers 400, and without capsule-protocol it will not carry capsules.
+    // Standard RFC 7540 CONNECT as Rust reference builds it (masque_h2.rs:196-207):
     return {
         HeaderField{":method", "CONNECT"},
-        HeaderField{":protocol", std::string(CF_CONNECT_PROTOCOL)},
         HeaderField{":authority", h2_connect_authority(authority)},
-        // Empty on purpose, as it is in the Rust: the edge reads an absent user agent differently.
+        HeaderField{"cf-connect-proto", std::string(CF_CONNECT_PROTOCOL)},
+        HeaderField{"pq-enabled", "false"},
         HeaderField{"user-agent", ""},
-        HeaderField{"capsule-protocol", "?1"},
     };
 }
 

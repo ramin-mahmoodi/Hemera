@@ -224,6 +224,11 @@ if(CONFIG_FILES)
     endforeach()
 endif()
 
+# CLI Executable
+add_executable(aether core/src/hemera_main.cpp)
+target_link_libraries(aether PRIVATE hemera_core ws2_32 mswsock shell32 ole32 advapi32 wininet)
+target_link_directories(aether PRIVATE ${VENDOR_LINK_DIRS})
+
 # Automated Test Suite (Console executable) - built only if tests exist
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runner.cpp")
     add_executable(test_runner

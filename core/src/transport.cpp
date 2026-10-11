@@ -648,14 +648,20 @@ struct SessionState {
                 if (nd >= 0) {
                     if (accepted) {
                         ++datagrams_sent;
+                        note("dgram sent: " + std::to_string(nd) + " bytes (accepted)");
                     } else {
                         ++datagrams_dropped; // a lost unreliable datagram
+                        note("dgram dropped by ngtcp2 (accepted=0, nd=" + std::to_string(nd) +
+                             ", dgram_len=" + std::to_string(dv.len) +
+                             ", txbuf=" + std::to_string(txbuf.size()) +
+                             ", max_tx=" + std::to_string(ngtcp2_conn_get_max_tx_udp_payload_size2(conn)) +
+                             ", path_max=" + std::to_string(ngtcp2_conn_get_path_max_tx_udp_payload_size2(conn)) + ")");
                     }
                 } else {
                     // quic.rs logs a datagram dgram_send turns down and lets it go; a write error is
                     // the same loss seen from this side, so it is counted and named, not swallowed.
                     ++datagrams_dropped;
-                    note("dgram_send: " + std::string(ngtcp2_strerror(static_cast<int>(nd))));
+                    note("dgram_send error: " + std::string(ngtcp2_strerror(static_cast<int>(nd))));
                 }
                 pending.erase(pending.begin());
                 continue;
@@ -706,7 +712,15 @@ struct SessionState {
         ngtcp2_pkt_info pi{};
         // Rust ignores a recv error with a trace!; a real terminal close surfaces through the ccerr.
         const int rv = ngtcp2_conn_read_pkt(conn, &ps.path, &pi, data.data(), data.size(), cur_ts);
-        if (rv < 0) note("recv error: " + std::string(ngtcp2_strerror(rv)));
+        if (rv < 0) {
+            note("recv error: " + std::string(ngtcp2_strerror(rv)));
+            unsigned long bssl_err = 0;
+            while ((bssl_err = ERR_get_error()) != 0) {
+                char err_buf[256];
+                ERR_error_string_n(bssl_err, err_buf, sizeof(err_buf));
+                note("BoringSSL err: " + std::string(err_buf));
+            }
+        }
         // TEMP-DIAG (QUIC silence chase): every inbound datagram once the request is out.
         else if (phase == Session::Phase::Request || phase == Session::Phase::Ready) {
             note("inbound pkt: " + std::to_string(data.size()) + " bytes");
@@ -758,6 +772,12 @@ struct SessionState {
         const bool real = cc->type != NGTCP2_CCERR_TYPE_TRANSPORT || cc->error_code != NGTCP2_NO_ERROR ||
                           cc->reason != nullptr;
         if (!real) return;
+        unsigned long bssl_err = 0;
+        while ((bssl_err = ERR_get_error()) != 0) {
+            char err_buf[256];
+            ERR_error_string_n(bssl_err, err_buf, sizeof(err_buf));
+            note("BoringSSL err: " + std::string(err_buf));
+        }
         CloseInfo ci;
         ci.from_peer = !local_close_initiated;
         ci.application_error = cc->type == NGTCP2_CCERR_TYPE_APPLICATION;
@@ -909,7 +929,11 @@ int cb_recv_datagram(ngtcp2_conn* conn, std::uint32_t flags, const std::uint8_t*
         s->note("decap: " + decoded.error());
         return 0;
     }
-    if (!*decoded) return 0; // a different stream / context id: not ours to read
+    if (!*decoded) {
+        s->note("inbound dgram ignored (different stream or context id)");
+        return 0;
+    }
+    s->note("inbound dgram: " + std::to_string(datalen) + " bytes");
     ++s->datagrams_received;
     s->datagram_delivered = true;
     if (s->inbound != nullptr) {
@@ -1053,6 +1077,7 @@ std::expected<void, std::string> SessionState::build_connection(TimePoint now) {
     qsettings.initial_ts = ts(now);
     qsettings.max_tx_udp_payload_size = conn_setup.max_tx_udp_payload;
     qsettings.no_pmtud = conn_setup.no_pmtud ? 1 : 0;
+    qsettings.no_tx_udp_payload_size_shaping = 1;
 
     ngtcp2_transport_params_default(&qparams);
     const quic::TransportParams& tp = conn_setup.params;
@@ -1406,7 +1431,8 @@ Session::Tick Session::tick(TimePoint now) {
             s->note("connect-ip status: " + std::to_string(*s->status));
             if (s->data_check) {
                 s->phase = Session::Phase::Validating;
-                s->last_probe = now;
+                // Allow the probe to be queued immediately on the first turn of Validating.
+                s->last_probe = now - s->timers.probe;
             } else {
                 s->phase = Session::Phase::Ready;
             }
@@ -1422,6 +1448,7 @@ Session::Tick Session::tick(TimePoint now) {
         if (s->req_stream >= 0 && now - s->last_probe >= s->timers.probe) {
             s->queue_datagram(std::span<const std::uint8_t>(s->probe_packet));
             s->last_probe = now;
+            s->note("[*] queued masque data-plane probe (" + std::to_string(s->probe_packet.size()) + " bytes)");
         }
         if (s->datagram_delivered) {
             ++s->validate_successes;
@@ -1461,10 +1488,16 @@ Session::Tick Session::tick(TimePoint now) {
         ngtcp2_tstamp exp = ngtcp2_conn_get_expiry2(s->conn);
         Millis d{0};
         if (exp > s->cur_ts) d = Millis((exp - s->cur_ts) / 1000000ull);
-        if (s->purpose == Purpose::Tunnel && s->phase == Session::Phase::Validating &&
-            s->validate_deadline) {
-            Millis left = std::chrono::duration_cast<Millis>(*s->validate_deadline - now);
-            if (left < d) d = left;
+        if (s->phase == Session::Phase::Validating) {
+            if (s->validate_deadline) {
+                Millis left = std::chrono::duration_cast<Millis>(*s->validate_deadline - now);
+                if (left < d) d = left;
+            }
+            Millis time_since_probe = std::chrono::duration_cast<Millis>(now - s->last_probe);
+            Millis next_probe_in = time_since_probe >= s->timers.probe
+                ? Millis(0)
+                : (s->timers.probe - time_since_probe);
+            if (next_probe_in < d) d = next_probe_in;
         }
         out.delay = d;
         // TEMP-DIAG (QUIC 35s chase): suspiciously long sleeps.
