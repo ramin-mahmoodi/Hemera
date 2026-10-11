@@ -10,6 +10,7 @@
 #include "autostart.hpp"
 #include "sysproxy.hpp"
 #include "resource.h"
+#include "window_shadow.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -168,6 +169,7 @@ struct MainWindow::Impl {
     HWND hwnd_ = nullptr;
     std::shared_ptr<HemeraEngine> engine_;
     bool start_minimized_ = false;
+    std::unique_ptr<hemera::gui::WindowShadow> shadow_;
 
     ActiveView view_ = ActiveView::Home;
     ActiveView prev_view_ = ActiveView::Home;
@@ -3369,6 +3371,40 @@ struct MainWindow::Impl {
                 return 0;
             }
 
+            case WM_WINDOWPOSCHANGED: {
+                if (impl && impl->shadow_) {
+                    auto* pos = reinterpret_cast<WINDOWPOS*>(lParam);
+                    impl->shadow_->update(pos);
+                }
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            }
+
+            case WM_MOVE: {
+                if (impl && impl->shadow_) {
+                    impl->shadow_->update();
+                }
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            }
+
+            case WM_SHOWWINDOW: {
+                if (impl && impl->shadow_) {
+                    if (wParam) {
+                        impl->shadow_->update();
+                        impl->shadow_->show();
+                    } else {
+                        impl->shadow_->hide();
+                    }
+                }
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            }
+
+            case WM_ACTIVATE: {
+                if (impl && impl->shadow_) {
+                    impl->shadow_->sync_z_order();
+                }
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            }
+
             case WM_NCCALCSIZE: {
                 if (wParam == TRUE) {
                     return 0; // Cover entire window without OS non-client frame
@@ -3431,6 +3467,7 @@ struct MainWindow::Impl {
                 KillTimer(hwnd, TIMER_ANIMATION);
                 impl->is_moving_window_ = false;
                 impl->last_frame_time_ = std::chrono::steady_clock::now();
+                if (impl->shadow_) impl->shadow_->update();
                 InvalidateRect(hwnd, nullptr, FALSE);
                 UpdateWindow(hwnd);
                 return 0;
@@ -3477,6 +3514,13 @@ struct MainWindow::Impl {
             }
 
             case WM_SIZE: {
+                if (impl && impl->shadow_) {
+                    if (wParam == SIZE_MINIMIZED) {
+                        impl->shadow_->hide();
+                    } else {
+                        impl->shadow_->update();
+                    }
+                }
                 if (wParam == SIZE_MINIMIZED) {
                     SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
                     return 0;
@@ -4226,6 +4270,10 @@ struct MainWindow::Impl {
                     ShowWindow(hwnd, SW_SHOW);
                     ShowWindow(hwnd, SW_RESTORE);
                     SetForegroundWindow(hwnd);
+                    if (impl->shadow_) {
+                        impl->shadow_->update();
+                        impl->shadow_->show();
+                    }
                 } else if (lParam == WM_RBUTTONUP) {
                     // Right-click: Open custom Direct2D tray flyout menu
                     POINT pt;
@@ -4238,6 +4286,7 @@ struct MainWindow::Impl {
             case WM_CLOSE: {
                 auto s = impl->engine_->load_settings();
                 if (s.close_to_tray) {
+                    if (impl->shadow_) impl->shadow_->hide();
                     ShowWindow(hwnd, SW_HIDE);
                     SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
                     return 0;
@@ -4247,6 +4296,7 @@ struct MainWindow::Impl {
             }
 
             case WM_DESTROY: {
+                if (impl->shadow_) impl->shadow_->hide();
                 impl->remove_tray_icon();
                 KillTimer(hwnd, TIMER_ANIMATION);
                 PostQuitMessage(0);
@@ -4328,9 +4378,14 @@ bool MainWindow::create() {
     // This completely eliminates any blank/white startup delay!
     impl_->ensure_device_resources();
     impl_->render();
+
+    impl_->shadow_ = std::make_unique<hemera::gui::WindowShadow>(impl_->hwnd_);
+    impl_->shadow_->update();
+
     if (!impl_->start_minimized_) {
         ShowWindow(impl_->hwnd_, SW_SHOWNORMAL);
         UpdateWindow(impl_->hwnd_);
+        impl_->shadow_->show();
     }
 
     return true;
