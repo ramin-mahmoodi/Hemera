@@ -174,13 +174,10 @@ struct MainWindow::Impl {
     ActiveView prev_view_ = ActiveView::Home;
     float view_transition_t_ = 1.0f; // 1.0f = fully transitioned, 0.0f = just started .rise
     PageAnimationController page_anim_{};
-    float active_block_opacity_ = 1.0f;
 
     uint64_t conn_start_tick_ = 0;       // Uptime start timestamp (ms)
     uint64_t conn_start_down_bytes_ = 0; // Bytes transferred at start of connection
     uint64_t conn_start_up_bytes_ = 0;
-    uint64_t sim_down_volume_bytes_ = 0; // Dynamic active traffic volume (bytes)
-    uint64_t sim_up_volume_bytes_ = 0;
     float live_ticker_ = 0.0f;           // 1s ticker for live stats and ping
 
     std::wstring format_volume(uint64_t bytes) const {
@@ -198,25 +195,36 @@ struct MainWindow::Impl {
     template <typename DrawFn>
     void render_animated_block(float delay, UINT cur_dpi, const D2D1_MATRIX_3X2_F& base_transform, DrawFn&& draw_fn) {
         auto anim = page_anim_.compute(delay, cur_dpi);
-        if (!anim.visible) {
+        if (anim.opacity <= 0.005f) {
             return;
         }
 
         D2D1_MATRIX_3X2_F transform = D2D1::Matrix3x2F::Translation(0.0f, anim.dy) * base_transform;
         render_target_->SetTransform(transform);
 
-        float old_opacity = active_block_opacity_;
-        active_block_opacity_ = old_opacity * anim.opacity;
-
-        D2D1_TEXT_ANTIALIAS_MODE old_text_mode = render_target_->GetTextAntialiasMode();
-        if (active_block_opacity_ < 0.999f) {
+        if (anim.opacity < 0.999f && anim_layer_) {
+            D2D1_TEXT_ANTIALIAS_MODE prev_text_mode = render_target_->GetTextAntialiasMode();
             render_target_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+
+            render_target_->PushLayer(
+                D2D1::LayerParameters(
+                    D2D1::InfiniteRect(),
+                    nullptr,
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    D2D1::IdentityMatrix(),
+                    anim.opacity
+                ),
+                anim_layer_.Get()
+            );
+
+            draw_fn();
+
+            render_target_->PopLayer();
+            render_target_->SetTextAntialiasMode(prev_text_mode);
+        } else {
+            draw_fn();
         }
 
-        draw_fn();
-
-        render_target_->SetTextAntialiasMode(old_text_mode);
-        active_block_opacity_ = old_opacity;
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
     }
 
@@ -359,6 +367,7 @@ struct MainWindow::Impl {
     Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> render_target_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
     Microsoft::WRL::ComPtr<ID2D1StrokeStyle> stroke_round_;
+    Microsoft::WRL::ComPtr<ID2D1Layer> anim_layer_;
 
     // High-performance GPU brush caching for radial glows (0 allocation / 0 recompilation per frame)
     struct CachedGlowBrush {
@@ -513,12 +522,15 @@ struct MainWindow::Impl {
         hr = render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush_);
         if (FAILED(hr)) return hr;
 
+        render_target_->CreateLayer(nullptr, &anim_layer_);
+
         create_logo_d2d_bitmap();
         return S_OK;
     }
 
     void discard_device_resources() {
         cached_glow_brushes_.clear();
+        anim_layer_.Reset();
         logo_d2d_bitmap_.Reset();
         brush_.Reset();
         render_target_.Reset();
@@ -527,24 +539,16 @@ struct MainWindow::Impl {
     // Direct2D High-Performance Drawing Helpers
     void set_color(const Color& c) {
         if (brush_) {
-            if (active_block_opacity_ < 0.999f) {
-                brush_->SetColor(ds::to_d2d_alpha(c, active_block_opacity_));
-            } else {
-                brush_->SetColor(c);
-            }
+            brush_->SetColor(c);
         }
     }
     void set_color(const Color& c, float alpha_mult) {
         if (brush_) {
-            float total_alpha = alpha_mult * active_block_opacity_;
-            brush_->SetColor(ds::to_d2d_alpha(c, total_alpha));
+            brush_->SetColor(ds::to_d2d_alpha(c, alpha_mult));
         }
     }
     void set_color(D2D1_COLOR_F c) {
         if (brush_) {
-            if (active_block_opacity_ < 0.999f) {
-                c.a *= active_block_opacity_;
-            }
             brush_->SetColor(c);
         }
     }
@@ -698,7 +702,7 @@ struct MainWindow::Impl {
         brush->SetCenter(D2D1::Point2F(cx, cy));
         brush->SetRadiusX(r);
         brush->SetRadiusY(r);
-        brush->SetOpacity(active_block_opacity_);
+        brush->SetOpacity(1.0f);
         render_target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), brush);
     }
 
@@ -1147,8 +1151,6 @@ struct MainWindow::Impl {
                 auto st = engine_->current_stats();
                 conn_start_down_bytes_ = st.down;
                 conn_start_up_bytes_ = st.up;
-                sim_down_volume_bytes_ = 142 * 1024; // Initial active handshake bytes
-                sim_up_volume_bytes_ = 18 * 1024;
             }
             live_ticker_ += dt;
             if (live_ticker_ >= 1.0f) {
@@ -1158,18 +1160,12 @@ struct MainWindow::Impl {
                 static int ping_seed = 0;
                 ping_seed = (ping_seed + 7) % 13;
                 live_ping_ms_ = 38 + (ping_seed * 3) % 25; // 38 to 63 ms
-
-                // Increment dynamic active volume so it climbs smoothly and never shows 0 B
-                sim_down_volume_bytes_ += static_cast<uint64_t>((40 + (ping_seed * 11) % 140) * 1024);
-                sim_up_volume_bytes_ += static_cast<uint64_t>((5 + (ping_seed * 2) % 20) * 1024);
             }
         } else if (state.kind != StateKind::Connecting) {
             conn_start_tick_ = 0;
             live_ticker_ = 0.0f;
             conn_start_down_bytes_ = 0;
             conn_start_up_bytes_ = 0;
-            sim_down_volume_bytes_ = 0;
-            sim_up_volume_bytes_ = 0;
         }
 
         // 1. Home View continuous animations (Spinning Arc, Radar Rings, Breathing Dot)
@@ -1566,7 +1562,7 @@ struct MainWindow::Impl {
         float pad_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
 
         // ── 0. Ambient Background (Soft Radial Glow + 5 Concentric Rings) ──
-        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        {
             Color glow_color = is_connected ? ds.colors.gl_on :
                                (is_connecting ? ds.colors.gl_conn :
                                (is_error ? ds.colors.gl_err : ds.colors.gl_idle));
@@ -1581,7 +1577,7 @@ struct MainWindow::Impl {
                 float r_dip = scale_f(ring_radii[i], cur_dpi);
                 draw_ellipse(hero_cx, hero_cy, r_dip, ring_col, 1.0f, ring_opacities[i]);
             }
-        });
+        }
 
         // ── 1. Header (Brand title + breathing status dot + Logs & Settings buttons) ──
         render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
@@ -1807,13 +1803,11 @@ struct MainWindow::Impl {
                 std::wstring ping_str = std::format(L"{} ms", live_ping_ms_);
                 draw_stat_col(0, L"PING", ping_str);
 
-                uint64_t real_down_delta = (stats.down >= conn_start_down_bytes_) ? (stats.down - conn_start_down_bytes_) : 0;
-                uint64_t real_up_delta = (stats.up >= conn_start_up_bytes_) ? (stats.up - conn_start_up_bytes_) : 0;
-                uint64_t total_down = real_down_delta + sim_down_volume_bytes_;
-                uint64_t total_up = real_up_delta + sim_up_volume_bytes_;
+                uint64_t real_down = (stats.down >= conn_start_down_bytes_) ? (stats.down - conn_start_down_bytes_) : stats.down;
+                uint64_t real_up = (stats.up >= conn_start_up_bytes_) ? (stats.up - conn_start_up_bytes_) : stats.up;
 
-                draw_stat_col(1, L"DOWN", format_volume(total_down));
-                draw_stat_col(2, L"UP", format_volume(total_up));
+                draw_stat_col(1, L"DOWN", format_volume(real_down));
+                draw_stat_col(2, L"UP", format_volume(real_up));
             });
         }
 
@@ -2720,7 +2714,7 @@ struct MainWindow::Impl {
                 if (sz.height > 0.0f) {
                     draw_w = draw_h * (sz.width / sz.height);
                 }
-                render_target_->DrawBitmap(logo_d2d_bitmap_.Get(), D2D1::RectF(cx - draw_w / 2.0f, logo_y, cx + draw_w / 2.0f, logo_y + draw_h), active_block_opacity_);
+                render_target_->DrawBitmap(logo_d2d_bitmap_.Get(), D2D1::RectF(cx - draw_w / 2.0f, logo_y, cx + draw_w / 2.0f, logo_y + draw_h), 1.0f);
             } else {
                 float dot_sz = scale_f(24, cur_dpi);
                 fill_ellipse(cx, logo_y + draw_h / 2.0f, dot_sz / 2.0f, ds.colors.accent);

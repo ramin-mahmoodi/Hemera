@@ -39,7 +39,7 @@ public:
     }
 
     /// True if animations are actively progressing
-    bool is_active(float max_duration = 0.95f) const noexcept {
+    bool is_active(float max_duration = 1.05f) const noexcept {
         return elapsed_ < max_duration;
     }
 
@@ -48,25 +48,22 @@ public:
     }
 
     /// Compute animation state for a component given its cascade delay
-    ItemAnim compute(float delay_sec, UINT cur_dpi, float distance_px = 14.0f, float duration_sec = 0.60f) const noexcept {
-        if (elapsed_ < delay_sec) {
-            return { 0.0f, 0.0f, false };
-        }
-
-        float t = (elapsed_ - delay_sec) / duration_sec;
-        if (t >= 1.0f) {
+    ItemAnim compute(float delay_sec, UINT cur_dpi, float distance_px = 14.0f, float duration_sec = 0.55f) const noexcept {
+        if (elapsed_ >= delay_sec + duration_sec) {
             return { 0.0f, 1.0f, true };
         }
+        if (elapsed_ < delay_sec) {
+            float dpi_scale = static_cast<float>(cur_dpi) / 96.0f;
+            return { distance_px * dpi_scale, 0.0f, false };
+        }
 
-        // Cubic Bézier with P0=(0,0), P1=(0.2, 0.7), P2=(0.2, 1.0), P3=(1,1)
-        // Analytical ease-out approximation:
-        float u = 1.0f - t;
-        float progress = 3.0f * u * u * t * 0.70f + 3.0f * u * t * t * 1.00f + t * t * t;
-        progress = std::clamp(progress, 0.0f, 1.0f);
-
+        float t = std::clamp((elapsed_ - delay_sec) / duration_sec, 0.0f, 1.0f);
+        // Silky cubic-bezier(0.2, 0.7, 0.2, 1.0) ease-out curve matching CSS .rise
+        float inv = 1.0f - t;
+        float progress = 1.0f - inv * inv * inv * (1.0f + 0.35f * t);
         float dpi_scale = static_cast<float>(cur_dpi) / 96.0f;
         float dy = distance_px * dpi_scale * (1.0f - progress);
-        float opacity = progress;
+        float opacity = std::clamp(progress, 0.0f, 1.0f);
 
         return { dy, opacity, opacity > 0.005f };
     }
@@ -75,15 +72,15 @@ private:
     float elapsed_ = 0.0f;
 };
 
-/// Semantic cascading delay constants for consistent UI timing
+/// Semantic cascading delay constants for consistent UI timing (distinct 60ms waterfall wave)
 namespace anim_delay {
-    constexpr float Header   = 0.00f; ///< Pinned or top header controls
-    constexpr float Primary  = 0.05f; ///< Primary hero block / top cards
-    constexpr float Secondary= 0.10f; ///< Main interactive card / terminal
-    constexpr float Tertiary = 0.15f; ///< Secondary card / resources / details
-    constexpr float Quaternary=0.20f; ///< Network / links / extra controls
-    constexpr float Quinary  = 0.25f; ///< About row / secondary options
-    constexpr float Footer   = 0.30f; ///< Footers & captions
+    constexpr float Header    = 0.00f; ///< Pinned or top header controls
+    constexpr float Primary   = 0.06f; ///< Primary hero block / top cards
+    constexpr float Secondary = 0.12f; ///< Main interactive card / terminal
+    constexpr float Tertiary  = 0.18f; ///< Secondary card / resources / details
+    constexpr float Quaternary= 0.24f; ///< Network / links / extra controls
+    constexpr float Quinary   = 0.30f; ///< About row / secondary options
+    constexpr float Footer    = 0.36f; ///< Footers & captions
 }
 
 } // namespace hemera::gui
