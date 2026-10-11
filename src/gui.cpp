@@ -397,6 +397,13 @@ struct MainWindow::Impl {
 
     // Direct2D Bitmaps
     Microsoft::WRL::ComPtr<ID2D1Bitmap> logo_d2d_bitmap_;
+    Microsoft::WRL::ComPtr<ID2D1BitmapRenderTarget> ambient_bg_rt_;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> ambient_bg_bitmap_;
+    int cached_ambient_state_kind_ = -1;
+    UINT cached_ambient_dpi_ = 0;
+    bool cached_ambient_theme_ = false;
+    float cached_ambient_w_ = 0.0f;
+    float cached_ambient_h_ = 0.0f;
 
     bool custom_loop_active_ = false;
     int cached_bmp_w_ = 0;
@@ -530,10 +537,155 @@ struct MainWindow::Impl {
 
     void discard_device_resources() {
         cached_glow_brushes_.clear();
+        ambient_bg_bitmap_.Reset();
+        ambient_bg_rt_.Reset();
+        cached_ambient_state_kind_ = -1;
         anim_layer_.Reset();
         logo_d2d_bitmap_.Reset();
         brush_.Reset();
         render_target_.Reset();
+    }
+
+    void ensure_ambient_bg_bitmap(float w, float h, UINT cur_dpi, StateKind state_kind) {
+        if (!render_target_) return;
+
+        const auto& ds = ds::DesignSystem::get();
+        bool is_dark = ds::is_effective_dark(ds.active_theme);
+
+        if (ambient_bg_bitmap_ &&
+            cached_ambient_w_ == w &&
+            cached_ambient_h_ == h &&
+            cached_ambient_dpi_ == cur_dpi &&
+            cached_ambient_state_kind_ == static_cast<int>(state_kind) &&
+            cached_ambient_theme_ == is_dark) {
+            return;
+        }
+
+        D2D1_SIZE_F desired_size = D2D1::SizeF(w, h);
+        if (!ambient_bg_rt_ || cached_ambient_w_ != w || cached_ambient_h_ != h) {
+            ambient_bg_rt_.Reset();
+            ambient_bg_bitmap_.Reset();
+            HRESULT hr = render_target_->CreateCompatibleRenderTarget(desired_size, &ambient_bg_rt_);
+            if (FAILED(hr) || !ambient_bg_rt_) return;
+        }
+
+        cached_ambient_w_ = w;
+        cached_ambient_h_ = h;
+        cached_ambient_dpi_ = cur_dpi;
+        cached_ambient_state_kind_ = static_cast<int>(state_kind);
+        cached_ambient_theme_ = is_dark;
+
+        ambient_bg_rt_->BeginDraw();
+        ambient_bg_rt_->Clear(ds.colors.bg);
+
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> local_brush;
+        if (FAILED(ambient_bg_rt_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &local_brush))) {
+            ambient_bg_rt_->EndDraw();
+            return;
+        }
+
+        bool is_connected = (state_kind == StateKind::Connected);
+        bool is_connecting = (state_kind == StateKind::Connecting);
+        bool is_disconnecting = (state_kind == StateKind::Disconnecting);
+        bool is_error = (state_kind == StateKind::Error);
+
+        float hero_cx = w / 2.0f;
+        float hero_cy = static_cast<float>(scale(210, cur_dpi));
+        float hero_base_diam = static_cast<float>(scale(ds.metrics.hero_diameter, cur_dpi));
+        float hero_r = hero_base_diam / 2.0f;
+
+        // 1. Soft Ambient Radial Glow
+        Color glow_color = is_connected ? ds.colors.gl_on :
+                           (is_connecting ? ds.colors.gl_conn :
+                           (is_error ? ds.colors.gl_err : ds.colors.gl_idle));
+        float max_glow_r = static_cast<float>(scale(is_connected ? 340 : 300, cur_dpi));
+
+        {
+            D2D1_GRADIENT_STOP stops[2];
+            stops[0].color = glow_color;
+            stops[0].position = 0.0f;
+            stops[1].color = D2D1::ColorF(glow_color.r, glow_color.g, glow_color.b, 0.0f);
+            stops[1].position = 1.0f;
+
+            Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stop_coll;
+            if (SUCCEEDED(ambient_bg_rt_->CreateGradientStopCollection(stops, 2, &stop_coll))) {
+                D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES radial_props = D2D1::RadialGradientBrushProperties(
+                    D2D1::Point2F(hero_cx, hero_cy),
+                    D2D1::Point2F(0.0f, 0.0f),
+                    max_glow_r, max_glow_r
+                );
+                Microsoft::WRL::ComPtr<ID2D1RadialGradientBrush> radial_brush;
+                if (SUCCEEDED(ambient_bg_rt_->CreateRadialGradientBrush(radial_props, stop_coll.Get(), &radial_brush))) {
+                    ambient_bg_rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(hero_cx, hero_cy), max_glow_r, max_glow_r), radial_brush.Get());
+                }
+            }
+        }
+
+        // 2. 5 Concentric Rings
+        Color ring_col = is_dark ? Color{ 255, 45, 45, 54 } : Color{ 255, 215, 215, 222 };
+        const float ring_radii[] = { 125.0f, 180.0f, 245.0f, 320.0f, 405.0f };
+        const float ring_opacities[] = { 0.70f, 0.50f, 0.35f, 0.22f, 0.12f };
+        for (int i = 0; i < 5; ++i) {
+            float r_dip = scale_f(ring_radii[i], cur_dpi);
+            local_brush->SetColor(ds::to_d2d_alpha(ring_col, ring_opacities[i]));
+            ambient_bg_rt_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(hero_cx, hero_cy), r_dip, r_dip), local_brush.Get(), 1.0f);
+        }
+
+        // 3. Static Hero Button Glow & Halo
+        if (is_connected) {
+            float glow_r = hero_r + scale_f(55.0f, cur_dpi);
+            Color btn_glow_col(55, 94, 234, 212);
+            D2D1_GRADIENT_STOP stops[2];
+            stops[0].color = btn_glow_col;
+            stops[0].position = 0.0f;
+            stops[1].color = D2D1::ColorF(btn_glow_col.r, btn_glow_col.g, btn_glow_col.b, 0.0f);
+            stops[1].position = 1.0f;
+            Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stop_coll;
+            if (SUCCEEDED(ambient_bg_rt_->CreateGradientStopCollection(stops, 2, &stop_coll))) {
+                D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES radial_props = D2D1::RadialGradientBrushProperties(
+                    D2D1::Point2F(hero_cx, hero_cy),
+                    D2D1::Point2F(0.0f, 0.0f),
+                    glow_r, glow_r
+                );
+                Microsoft::WRL::ComPtr<ID2D1RadialGradientBrush> radial_brush;
+                if (SUCCEEDED(ambient_bg_rt_->CreateRadialGradientBrush(radial_props, stop_coll.Get(), &radial_brush))) {
+                    ambient_bg_rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(hero_cx, hero_cy), glow_r, glow_r), radial_brush.Get());
+                }
+            }
+            local_brush->SetColor(Color(25, 94, 234, 212));
+            ambient_bg_rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(hero_cx, hero_cy), hero_r + scale_f(8.0f, cur_dpi), hero_r + scale_f(8.0f, cur_dpi)), local_brush.Get());
+        } else if (is_error) {
+            float glow_r = hero_r + scale_f(45.0f, cur_dpi);
+            Color err_glow_col(45, 248, 113, 113);
+            D2D1_GRADIENT_STOP stops[2];
+            stops[0].color = err_glow_col;
+            stops[0].position = 0.0f;
+            stops[1].color = D2D1::ColorF(err_glow_col.r, err_glow_col.g, err_glow_col.b, 0.0f);
+            stops[1].position = 1.0f;
+            Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stop_coll;
+            if (SUCCEEDED(ambient_bg_rt_->CreateGradientStopCollection(stops, 2, &stop_coll))) {
+                D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES radial_props = D2D1::RadialGradientBrushProperties(
+                    D2D1::Point2F(hero_cx, hero_cy),
+                    D2D1::Point2F(0.0f, 0.0f),
+                    glow_r, glow_r
+                );
+                Microsoft::WRL::ComPtr<ID2D1RadialGradientBrush> radial_brush;
+                if (SUCCEEDED(ambient_bg_rt_->CreateRadialGradientBrush(radial_props, stop_coll.Get(), &radial_brush))) {
+                    ambient_bg_rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(hero_cx, hero_cy), glow_r, glow_r), radial_brush.Get());
+                }
+            }
+            local_brush->SetColor(Color(20, 248, 113, 113));
+            ambient_bg_rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(hero_cx, hero_cy), hero_r + scale_f(8.0f, cur_dpi), hero_r + scale_f(8.0f, cur_dpi)), local_brush.Get());
+        } else if (!is_connecting && !is_disconnecting) {
+            local_brush->SetColor(Color(6, 255, 255, 255));
+            ambient_bg_rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(hero_cx, hero_cy), hero_r + scale_f(8.0f, cur_dpi), hero_r + scale_f(8.0f, cur_dpi)), local_brush.Get());
+        }
+
+        HRESULT end_hr = ambient_bg_rt_->EndDraw();
+        if (SUCCEEDED(end_hr)) {
+            ambient_bg_bitmap_.Reset();
+            ambient_bg_rt_->GetBitmap(&ambient_bg_bitmap_);
+        }
     }
 
     // Direct2D High-Performance Drawing Helpers
@@ -1581,8 +1733,11 @@ struct MainWindow::Impl {
         float hero_r = hero_base_diam / 2.0f;
         float pad_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
 
-        // ── 0. Ambient Background (Soft Radial Glow + 5 Concentric Rings) ──
-        {
+        // ── 0. Ambient Background (Soft Radial Glow + 5 Concentic Rings cached into Direct2D Bitmap) ──
+        ensure_ambient_bg_bitmap(w, h, cur_dpi, state.kind);
+        if (ambient_bg_bitmap_) {
+            render_target_->DrawBitmap(ambient_bg_bitmap_.Get(), D2D1::RectF(0.0f, 0.0f, w, h));
+        } else {
             Color glow_color = is_connected ? ds.colors.gl_on :
                                (is_connecting ? ds.colors.gl_conn :
                                (is_error ? ds.colors.gl_err : ds.colors.gl_idle));
@@ -1723,8 +1878,10 @@ struct MainWindow::Impl {
                         draw_ellipse(cur_hero_cx, hero_cy, pulse_r, ds.colors.accent, scale_f(1.5f, cur_dpi), alpha);
                     }
                 }
-                fill_radial_glow(cur_hero_cx, hero_cy, scaled_r + scale_f(55.0f, cur_dpi), Color(55, 94, 234, 212));
-                fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(25, 94, 234, 212));
+                if (!ambient_bg_bitmap_ || shake_timer_ > 0.0f) {
+                    fill_radial_glow(cur_hero_cx, hero_cy, scaled_r + scale_f(55.0f, cur_dpi), Color(55, 94, 234, 212));
+                    fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(25, 94, 234, 212));
+                }
             } else if (is_connecting || is_disconnecting) {
                 float orbit_r = scaled_r + scale_f(10.0f, cur_dpi);
                 draw_ellipse(cur_hero_cx, hero_cy, orbit_r, ds.colors.accent, scale_f(1.5f, cur_dpi), 0.12f);
@@ -1732,10 +1889,14 @@ struct MainWindow::Impl {
                 draw_arc(cur_hero_cx, hero_cy, orbit_r, spin_deg, 78.0f, ds.colors.accent, scale_f(2.0f, cur_dpi));
                 fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(15, 94, 234, 212));
             } else if (is_error) {
-                fill_radial_glow(cur_hero_cx, hero_cy, scaled_r + scale_f(45.0f, cur_dpi), Color(45, 248, 113, 113));
-                fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(20, 248, 113, 113));
+                if (!ambient_bg_bitmap_ || shake_timer_ > 0.0f) {
+                    fill_radial_glow(cur_hero_cx, hero_cy, scaled_r + scale_f(45.0f, cur_dpi), Color(45, 248, 113, 113));
+                    fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(20, 248, 113, 113));
+                }
             } else {
-                fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(6, 255, 255, 255));
+                if (!ambient_bg_bitmap_ || shake_timer_ > 0.0f) {
+                    fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(6, 255, 255, 255));
+                }
             }
 
             // 2B. Button Disc
@@ -4637,7 +4798,7 @@ int MainWindow::run_message_loop() {
         bool active_anim = (is_visible || tray_visible) && impl_->has_active_animations();
 
         const float target_frame_sec = 1.0f / static_cast<float>(refresh_rate);
-        const float frame_tolerance = 0.002f; // 2ms tolerance for Windows timer jitter
+        const float frame_tolerance = 0.0010f; // 1ms tolerance for Windows timer jitter
 
         if (active_anim) {
             // Cap frame rate to monitor refresh rate with timer tolerance
@@ -4677,8 +4838,8 @@ int MainWindow::run_message_loop() {
         DWORD wait_ms = 40;
         if (active_anim) {
             float remain_sec = target_frame_sec - elapsed_since_last;
-            if (remain_sec > 0.003f) {
-                wait_ms = static_cast<DWORD>(std::clamp(static_cast<int>(remain_sec * 1000.0f) - 1, 1, 40));
+            if (remain_sec > 0.0015f) {
+                wait_ms = static_cast<DWORD>(std::clamp(static_cast<int>(remain_sec * 1000.0f), 1, 40));
             } else {
                 wait_ms = 1;
             }
