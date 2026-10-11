@@ -4636,8 +4636,7 @@ int MainWindow::run_message_loop() {
         bool tray_visible = impl_->tray_hwnd_ && IsWindow(impl_->tray_hwnd_) && IsWindowVisible(impl_->tray_hwnd_);
         bool active_anim = (is_visible || tray_visible) && impl_->has_active_animations();
 
-        const int anim_fps = std::clamp(refresh_rate, 30, 60);
-        const float target_frame_sec = 1.0f / static_cast<float>(anim_fps);
+        const float target_frame_sec = 1.0f / static_cast<float>(refresh_rate);
         const float frame_tolerance = 0.002f; // 2ms tolerance for Windows timer jitter
 
         if (active_anim) {
