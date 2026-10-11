@@ -1831,12 +1831,13 @@ struct MainWindow::Impl {
             render_target_->SetTransform(D2D1::Matrix3x2F::Rotation(gear_rotation_, D2D1::Point2F(scx, scy)) * cur_mat);
 
             Color slider_col = settings_btn_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
+            Color knob_bg = settings_btn_hovered_ ? ds.colors.hover_bg : ds.colors.bg;
             draw_line(scx - scale_f(8, cur_dpi), scy - scale_f(4, cur_dpi), scx + scale_f(8, cur_dpi), scy - scale_f(4, cur_dpi), slider_col, 1.6f, true);
-            fill_ellipse(scx - scale_f(2.8f, cur_dpi), scy - scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), ds.colors.bg);
+            fill_ellipse(scx - scale_f(2.8f, cur_dpi), scy - scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), knob_bg);
             draw_ellipse(scx - scale_f(2.8f, cur_dpi), scy - scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), slider_col, 1.6f);
 
             draw_line(scx - scale_f(8, cur_dpi), scy + scale_f(4, cur_dpi), scx + scale_f(8, cur_dpi), scy + scale_f(4, cur_dpi), slider_col, 1.6f, true);
-            fill_ellipse(scx + scale_f(2.7f, cur_dpi), scy + scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), ds.colors.bg);
+            fill_ellipse(scx + scale_f(2.7f, cur_dpi), scy + scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), knob_bg);
             draw_ellipse(scx + scale_f(2.7f, cur_dpi), scy + scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), slider_col, 1.6f);
             render_target_->SetTransform(cur_mat);
         });
