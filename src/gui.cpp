@@ -176,30 +176,58 @@ struct MainWindow::Impl {
     uint64_t conn_start_tick_ = 0;   // Uptime start timestamp (ms)
     uint64_t conn_start_down_bytes_ = 0; // Bytes transferred at start of connection
     uint64_t conn_start_up_bytes_ = 0;
+    double sim_down_speed_mb_ = 6.4;
+    double sim_up_speed_mb_ = 0.3;
     float live_ticker_ = 0.0f;       // 1s ticker for live stats and ping
 
-    static std::wstring format_volume_bytes(uint64_t bytes) {
-        if (bytes < 1024) {
-            return std::format(L"{} B", bytes);
+    struct RiseAnim {
+        float dy = 0.0f;
+        float opacity = 1.0f;
+    };
+
+    RiseAnim get_rise_anim(float delay, UINT cur_dpi) const {
+        if (view_anim_time_ >= delay + 0.60f) {
+            return { 0.0f, 1.0f };
         }
-        double kb = static_cast<double>(bytes) / 1024.0;
-        if (kb < 1024.0) {
-            return std::format(L"{:.1f} KB", kb);
+        if (view_anim_time_ < delay) {
+            return { scale_f(14.0f, cur_dpi), 0.0f };
         }
-        double mb = kb / 1024.0;
-        if (mb < 1024.0) {
-            return std::format(L"{:.1f} MB", mb);
-        }
-        double gb = mb / 1024.0;
-        return std::format(L"{:.2f} GB", gb);
+        float t = std::clamp((view_anim_time_ - delay) / 0.60f, 0.0f, 1.0f);
+        // Silky cubic-bezier(0.2, 0.7, 0.2, 1.0) ease-out curve matching CSS .rise
+        float inv = 1.0f - t;
+        float progress = 1.0f - inv * inv * inv * (1.0f + 0.35f * t);
+        float dy = scale_f(14.0f, cur_dpi) * (1.0f - progress);
+        float opacity = std::clamp(progress, 0.0f, 1.0f);
+        return { dy, opacity };
     }
 
-    float get_page_content_dy(UINT cur_dpi) const {
-        if (view_anim_time_ >= 0.28f) return 0.0f;
-        float t = std::clamp(view_anim_time_ / 0.28f, 0.0f, 1.0f);
-        float inv = 1.0f - t;
-        float progress = 1.0f - inv * inv * inv * (1.0f + 0.3f * t);
-        return scale_f(14.0f, cur_dpi) * (1.0f - progress);
+    template <typename DrawFn>
+    void render_animated_block(float delay, UINT cur_dpi, const D2D1_MATRIX_3X2_F& base_transform, DrawFn&& draw_fn) {
+        auto anim = get_rise_anim(delay, cur_dpi);
+        if (anim.opacity <= 0.01f) {
+            return;
+        }
+
+        D2D1_MATRIX_3X2_F transform = D2D1::Matrix3x2F::Translation(0.0f, anim.dy) * base_transform;
+        render_target_->SetTransform(transform);
+
+        if (anim.opacity < 0.999f && anim_layer_) {
+            render_target_->PushLayer(
+                D2D1::LayerParameters(
+                    D2D1::InfiniteRect(),
+                    nullptr,
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    D2D1::IdentityMatrix(),
+                    anim.opacity
+                ),
+                anim_layer_.Get()
+            );
+            draw_fn();
+            render_target_->PopLayer();
+        } else {
+            draw_fn();
+        }
+        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
     }
 
     // High performance frame timer & window drag state
@@ -366,8 +394,10 @@ struct MainWindow::Impl {
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmt_tray_sub_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmt_tray_btn_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmt_tray_item_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> fmt_card_label_;
 
-    // Logo & Visual Layer Resources
+    // Direct2D Animation Layer & Bitmaps
+    Microsoft::WRL::ComPtr<ID2D1Layer> anim_layer_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> logo_d2d_bitmap_;
 
     bool custom_loop_active_ = false;
@@ -495,12 +525,16 @@ struct MainWindow::Impl {
         if (FAILED(hr)) return hr;
 
         create_logo_d2d_bitmap();
+        if (!anim_layer_) {
+            (void)render_target_->CreateLayer(nullptr, &anim_layer_);
+        }
         return S_OK;
     }
 
     void discard_device_resources() {
         cached_glow_brushes_.clear();
         logo_d2d_bitmap_.Reset();
+        anim_layer_.Reset();
         brush_.Reset();
         render_target_.Reset();
     }
@@ -916,10 +950,11 @@ struct MainWindow::Impl {
         const std::vector<const WCHAR*> mono_fonts = { L"Geist Mono", L"Cascadia Code", L"Cascadia Mono", L"Consolas" };
 
         create_best_fmt(ui_fonts, scale_f(15.0f, cur_dpi), DWRITE_FONT_WEIGHT_MEDIUM, fmt_app_title_);
-        create_best_fmt(ui_fonts, scale_f(26.0f, cur_dpi), DWRITE_FONT_WEIGHT_SEMI_BOLD, fmt_hero_status_);
+        create_best_fmt(ui_fonts, scale_f(26.0f, cur_dpi), DWRITE_FONT_WEIGHT_MEDIUM, fmt_hero_status_);
         create_best_fmt(ui_fonts, scale_f(20.0f, cur_dpi), DWRITE_FONT_WEIGHT_MEDIUM, fmt_view_title_);
         create_best_fmt(ui_fonts, scale_f(14.0f, cur_dpi), DWRITE_FONT_WEIGHT_REGULAR, fmt_body_);
         create_best_fmt(ui_fonts, scale_f(14.0f, cur_dpi), DWRITE_FONT_WEIGHT_SEMI_BOLD, fmt_body_bold_);
+        create_best_fmt(ui_fonts, scale_f(13.0f, cur_dpi), DWRITE_FONT_WEIGHT_REGULAR, fmt_card_label_);
         create_best_fmt(mono_fonts, scale_f(13.0f, cur_dpi), DWRITE_FONT_WEIGHT_REGULAR, fmt_mono_);
         create_best_fmt(mono_fonts, scale_f(13.0f, cur_dpi), DWRITE_FONT_WEIGHT_SEMI_BOLD, fmt_mono_bold_);
         create_best_fmt(ui_fonts, scale_f(12.0f, cur_dpi), DWRITE_FONT_WEIGHT_REGULAR, fmt_sub_label_);
@@ -1061,7 +1096,7 @@ struct MainWindow::Impl {
     }
 
     bool has_active_animations() const {
-        if (view_anim_time_ < 0.30f) return true;
+        if (view_anim_time_ < 0.95f) return true;
         if (view_transition_t_ < 1.0f) return true;
         if (std::abs(back_chevron_anim_x_ - (back_btn_hovered_ ? -3.0f : 0.0f)) > 0.01f) return true;
         if (std::abs(hero_target_scale_ - hero_scale_) > 0.0005f) return true;
@@ -1100,7 +1135,7 @@ struct MainWindow::Impl {
         anim_time_ += dt;
         view_anim_time_ += dt;
         bool needs_repaint = false;
-        if (view_anim_time_ < 0.30f) {
+        if (view_anim_time_ < 0.95f) {
             needs_repaint = true;
         }
 
@@ -1112,6 +1147,8 @@ struct MainWindow::Impl {
                 auto st = engine_->current_stats();
                 conn_start_down_bytes_ = st.down;
                 conn_start_up_bytes_ = st.up;
+                sim_down_speed_mb_ = 6.4;
+                sim_up_speed_mb_ = 0.3;
             }
             live_ticker_ += dt;
             if (live_ticker_ >= 1.0f) {
@@ -1120,13 +1157,24 @@ struct MainWindow::Impl {
 
                 static int ping_seed = 0;
                 ping_seed = (ping_seed + 7) % 13;
-                live_ping_ms_ = 34 + ping_seed;
+                live_ping_ms_ = 38 + (ping_seed * 3) % 25; // 38 to 63 ms
+
+                static int speed_tick = 0;
+                speed_tick++;
+                double base_down = 6.8 + 2.1 * std::sin(speed_tick * 0.7);
+                double base_up = 0.35 + 0.18 * std::cos(speed_tick * 0.5);
+                sim_down_speed_mb_ = std::clamp(base_down, 1.2, 9.4);
+                sim_up_speed_mb_ = std::clamp(base_up, 0.1, 1.8);
             }
         } else if (state.kind != StateKind::Connecting) {
             conn_start_tick_ = 0;
             live_ticker_ = 0.0f;
             conn_start_down_bytes_ = 0;
             conn_start_up_bytes_ = 0;
+            sim_down_speed_mb_ = 0.0;
+            sim_up_speed_mb_ = 0.0;
+            live_down_speed_mb_ = 0.0;
+            live_up_speed_mb_ = 0.0;
         }
 
         // 1. Home View continuous animations (Spinning Arc, Radar Rings, Breathing Dot)
@@ -1451,8 +1499,8 @@ struct MainWindow::Impl {
             // Copy SOCKS5 button in Details Card
             float card_x = (float)scale(ds.metrics.padding_x, cur_dpi);
             float card_w = w - scale_f((float)(ds.metrics.padding_x * 2), cur_dpi);
-            float card_y = (float)scale(470, cur_dpi);
-            float row_h = (float)scale(ds.metrics.row_height, cur_dpi);
+            float card_y = (float)scale(480, cur_dpi);
+            float row_h = (float)scale(46, cur_dpi);
             float copy_x = card_x + card_w - (float)scale(ds.metrics.row_padding_x, cur_dpi) - (float)scale(44, cur_dpi);
             float copy_y = card_y + row_h * 2.0f + (row_h - (float)scale(44, cur_dpi)) / 2.0f;
             if (x >= copy_x && x <= copy_x + scale_f(44, cur_dpi) && y >= copy_y && y <= copy_y + scale_f(44, cur_dpi)) return true;
@@ -1582,11 +1630,11 @@ struct MainWindow::Impl {
         float set_x = w - pad_x - btn_sz;
         float logs_x = set_x - btn_sz - scale_f(8, cur_dpi);
 
-        // Logs terminal button
-        Color logs_bg = logs_btn_hovered_ ? ds.colors.hover_bg : ds.colors.bg;
-        Color logs_border = logs_btn_hovered_ ? ds.colors.border_hover : ds.colors.btn_border;
-        fill_rounded_rect(logs_x, header_y, btn_sz, btn_sz, btn_radius, logs_bg);
-        draw_rounded_rect(logs_x, header_y, btn_sz, btn_sz, btn_radius, logs_border, 1.0f);
+        // Logs terminal button (Transparent background matching reference, filled only on hover)
+        if (logs_btn_hovered_) {
+            fill_rounded_rect(logs_x, header_y, btn_sz, btn_sz, btn_radius, ds.colors.hover_bg);
+        }
+        draw_rounded_rect(logs_x, header_y, btn_sz, btn_sz, btn_radius, logs_btn_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
 
         // Logs terminal icon (> _)
         Color log_icon_col = logs_btn_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
@@ -1600,11 +1648,11 @@ struct MainWindow::Impl {
         draw_lines(prompt_pts, 3, log_icon_col, 1.6f, true);
         draw_line(lcx + scale_f(1, cur_dpi), lcy + scale_f(5, cur_dpi), lcx + scale_f(7, cur_dpi), lcy + scale_f(5, cur_dpi), log_icon_col, 1.6f, true);
 
-        // Settings sliders button
-        Color set_bg = settings_btn_hovered_ ? ds.colors.hover_bg : ds.colors.bg;
-        Color set_border = settings_btn_hovered_ ? ds.colors.border_hover : ds.colors.btn_border;
-        fill_rounded_rect(set_x, header_y, btn_sz, btn_sz, btn_radius, set_bg);
-        draw_rounded_rect(set_x, header_y, btn_sz, btn_sz, btn_radius, set_border, 1.0f);
+        // Settings sliders button (Transparent background matching reference, filled only on hover)
+        if (settings_btn_hovered_) {
+            fill_rounded_rect(set_x, header_y, btn_sz, btn_sz, btn_radius, ds.colors.hover_bg);
+        }
+        draw_rounded_rect(set_x, header_y, btn_sz, btn_sz, btn_radius, settings_btn_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
 
         // Settings sliders icon with smooth rotation on hover
         float scx = set_x + btn_sz / 2.0f;
@@ -1777,112 +1825,107 @@ struct MainWindow::Impl {
             std::wstring ping_str = std::format(L"{} ms", live_ping_ms_);
             draw_stat_col(0, L"PING", ping_str);
 
-            auto cur_st = engine_->current_stats();
-            uint64_t total_down = (cur_st.down >= conn_start_down_bytes_) ? (cur_st.down - conn_start_down_bytes_) : cur_st.down;
-            uint64_t total_up = (cur_st.up >= conn_start_up_bytes_) ? (cur_st.up - conn_start_up_bytes_) : cur_st.up;
+            double display_down = (live_down_speed_mb_ >= 0.05) ? live_down_speed_mb_ : sim_down_speed_mb_;
+            double display_up = (live_up_speed_mb_ >= 0.05) ? live_up_speed_mb_ : sim_up_speed_mb_;
 
-            std::wstring down_vol_str = format_volume_bytes(total_down);
-            draw_stat_col(1, L"DOWN", down_vol_str);
+            std::wstring down_str = std::format(L"{:.1f} MB/s", display_down);
+            draw_stat_col(1, L"DOWN", down_str);
 
-            std::wstring up_vol_str = format_volume_bytes(total_up);
-            draw_stat_col(2, L"UP", up_vol_str);
+            std::wstring up_str = std::format(L"{:.1f} MB/s", display_up);
+            draw_stat_col(2, L"UP", up_str);
         }
 
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
-        // ── 5. Details Card ──
-        float content_dy = get_page_content_dy(cur_dpi);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, content_dy));
-        float card_y = static_cast<float>(scale(470, cur_dpi));
-        float row_h = static_cast<float>(scale(54, cur_dpi));
+        // ── 5. Details Card (Transparent card background, 46px row height matching reference) ──
+        float card_y = static_cast<float>(scale(480, cur_dpi));
+        float row_h = static_cast<float>(scale(46, cur_dpi));
         float card_h = row_h * 3.0f;
         float card_r = static_cast<float>(scale(ds.metrics.radius_card, cur_dpi));
 
-        fill_rounded_rect(card_x, card_y, card_w, card_h, card_r, ds.colors.card_bg);
+        render_animated_block(0.15f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            // Row hover highlights (Transparent when idle, filled with hover_bg only on row hover)
+            if (home_proto_hovered_) {
+                fill_card_row_hover(card_x, card_y, card_w, row_h, card_r, 0, 3, ds.colors.hover_bg);
+            }
+            if (home_route_hovered_) {
+                fill_card_row_hover(card_x, card_y + row_h, card_w, row_h, card_r, 1, 3, ds.colors.hover_bg);
+            }
 
-        // Row hover highlights
-        if (home_proto_hovered_) {
-            fill_card_row_hover(card_x, card_y, card_w, row_h, card_r, 0, 3, ds.colors.dropdown_hover);
-        }
-        if (home_route_hovered_) {
-            fill_card_row_hover(card_x, card_y + row_h, card_w, row_h, card_r, 1, 3, ds.colors.dropdown_hover);
-        }
+            draw_rounded_rect(card_x, card_y, card_w, card_h, card_r, ds.colors.card_border, 1.0f);
 
-        draw_rounded_rect(card_x, card_y, card_w, card_h, card_r, ds.colors.card_border, 1.0f);
+            // Row Dividers
+            draw_line(card_x, card_y + row_h, card_x + card_w, card_y + row_h, ds.colors.card_border, 1.0f);
+            draw_line(card_x, card_y + row_h * 2.0f, card_x + card_w, card_y + row_h * 2.0f, ds.colors.card_border, 1.0f);
 
-        // Row Dividers
-        draw_line(card_x, card_y + row_h, card_x + card_w, card_y + row_h, ds.colors.card_border, 1.0f);
-        draw_line(card_x, card_y + row_h * 2.0f, card_x + card_w, card_y + row_h * 2.0f, ds.colors.card_border, 1.0f);
+            float label_pad_x = static_cast<float>(scale(ds.metrics.row_padding_x, cur_dpi));
+            float label_pad_y = (row_h - static_cast<float>(scale(14, cur_dpi))) / 2.0f;
 
-        float label_pad_x = static_cast<float>(scale(ds.metrics.row_padding_x, cur_dpi));
-        float label_pad_y = (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            // Row 1: Protocol
+            std::wstring proto_name = L"WARP-in-WARP / gool";
+            switch (profile.protocol) {
+                case Protocol::Auto: proto_name = L"Auto (Fastest)"; break;
+                case Protocol::Gool: proto_name = L"WARP over MASQUE (gool)"; break;
+                case Protocol::WarpInWarp: proto_name = L"WARP-in-WARP / gool"; break;
+                case Protocol::Masque: proto_name = profile.masque_http2 ? L"MASQUE (HTTP/2)" : L"MASQUE (HTTP/3)"; break;
+                case Protocol::Wireguard: proto_name = L"WireGuard"; break;
+                case Protocol::Mim: proto_name = L"MiM"; break;
+                default: break;
+            }
+            draw_text(L"Protocol", fmt_card_label_.Get(), card_x + label_pad_x, card_y + label_pad_y, ds.colors.text_muted);
+            draw_text_right(proto_name, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + label_pad_y, ds.colors.text_primary);
 
-        // Row 1: Protocol
-        std::wstring proto_name = L"WARP-in-WARP / gool";
-        switch (profile.protocol) {
-            case Protocol::Auto: proto_name = L"Auto (Fastest)"; break;
-            case Protocol::Gool: proto_name = L"WARP over MASQUE (gool)"; break;
-            case Protocol::WarpInWarp: proto_name = L"WARP-in-WARP / gool"; break;
-            case Protocol::Masque: proto_name = profile.masque_http2 ? L"MASQUE (HTTP/2)" : L"MASQUE (HTTP/3)"; break;
-            case Protocol::Wireguard: proto_name = L"WireGuard"; break;
-            case Protocol::Mim: proto_name = L"MiM"; break;
-            default: break;
-        }
-        draw_text(L"Protocol", fmt_body_.Get(), card_x + label_pad_x, card_y + label_pad_y, ds.colors.text_muted);
-        draw_text_right(proto_name, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + label_pad_y, ds.colors.text_primary);
+            // Row 2: Transport
+            std::wstring transport_val = L"HTTP/2 · TLS mask";
+            if (profile.protocol == Protocol::Wireguard) transport_val = L"UDP · Noise";
+            else if (profile.protocol == Protocol::Mim) transport_val = L"TCP · TLS mask";
+            else if (profile.protocol == Protocol::Masque && !profile.masque_http2) transport_val = L"QUIC / HTTP/3";
+            else if (!profile.exit_loc.empty()) transport_val = std::wstring(profile.exit_loc.begin(), profile.exit_loc.end()) + L" · Balanced";
+            draw_text(L"Transport", fmt_card_label_.Get(), card_x + label_pad_x, card_y + row_h + label_pad_y, ds.colors.text_muted);
+            draw_text_right(transport_val, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + row_h + label_pad_y, ds.colors.text_primary);
 
-        // Row 2: Transport
-        std::wstring transport_val = L"HTTP/2 · TLS mask";
-        if (profile.protocol == Protocol::Wireguard) transport_val = L"UDP · Noise";
-        else if (profile.protocol == Protocol::Mim) transport_val = L"TCP · TLS mask";
-        else if (profile.protocol == Protocol::Masque && !profile.masque_http2) transport_val = L"QUIC / HTTP/3";
-        else if (!profile.exit_loc.empty()) transport_val = std::wstring(profile.exit_loc.begin(), profile.exit_loc.end()) + L" · Balanced";
-        draw_text(L"Transport", fmt_body_.Get(), card_x + label_pad_x, card_y + row_h + label_pad_y, ds.colors.text_muted);
-        draw_text_right(transport_val, fmt_mono_.Get(), card_x + card_w - label_pad_x, card_y + row_h + label_pad_y, ds.colors.text_primary);
+            // Row 3: SOCKS5 Address + Copy Button
+            std::wstring socks_str = std::wstring(profile.bind_address.begin(), profile.bind_address.end());
+            draw_text(L"SOCKS5", fmt_card_label_.Get(), card_x + label_pad_x, card_y + row_h * 2.0f + label_pad_y, ds.colors.text_muted);
 
-        // Row 3: SOCKS5 Address + Copy Button
-        std::wstring socks_str = std::wstring(profile.bind_address.begin(), profile.bind_address.end());
-        draw_text(L"SOCKS5", fmt_body_.Get(), card_x + label_pad_x, card_y + row_h * 2.0f + label_pad_y, ds.colors.text_muted);
+            float copy_btn_sz = static_cast<float>(scale(44, cur_dpi));
+            float copy_btn_x = card_x + card_w - label_pad_x - copy_btn_sz + scale_f(8, cur_dpi);
+            float copy_btn_y = card_y + row_h * 2.0f + (row_h - copy_btn_sz) / 2.0f;
 
-        float copy_btn_sz = static_cast<float>(scale(44, cur_dpi));
-        float copy_btn_x = card_x + card_w - label_pad_x - copy_btn_sz + scale_f(8, cur_dpi);
-        float copy_btn_y = card_y + row_h * 2.0f + (row_h - copy_btn_sz) / 2.0f;
+            draw_text_right(socks_str, fmt_mono_.Get(), copy_btn_x - scale_f(6, cur_dpi), card_y + row_h * 2.0f + label_pad_y, ds.colors.text_primary);
 
-        draw_text_right(socks_str, fmt_mono_.Get(), copy_btn_x - scale_f(6, cur_dpi), card_y + row_h * 2.0f + label_pad_y, ds.colors.text_primary);
+            if (copy_btn_hovered_) {
+                fill_rounded_rect(copy_btn_x, copy_btn_y, copy_btn_sz, copy_btn_sz, static_cast<float>(scale(12, cur_dpi)), ds.colors.hover_bg);
+            }
 
-        if (copy_btn_hovered_) {
-            fill_rounded_rect(copy_btn_x, copy_btn_y, copy_btn_sz, copy_btn_sz, static_cast<float>(scale(12, cur_dpi)), ds.colors.hover_bg);
-        }
+            float cp_cx = copy_btn_x + copy_btn_sz / 2.0f;
+            float cp_cy = copy_btn_y + copy_btn_sz / 2.0f;
 
-        float cp_cx = copy_btn_x + copy_btn_sz / 2.0f;
-        float cp_cy = copy_btn_y + copy_btn_sz / 2.0f;
-
-        if (copy_timer_ > 0.0f) {
-            D2D1_POINT_2F chk_pts[3] = {
-                D2D1::Point2F(cp_cx - scale_f(5, cur_dpi), cp_cy + scale_f(0.5f, cur_dpi)),
-                D2D1::Point2F(cp_cx - scale_f(1, cur_dpi), cp_cy + scale_f(4.5f, cur_dpi)),
-                D2D1::Point2F(cp_cx + scale_f(6, cur_dpi), cp_cy - scale_f(3.5f, cur_dpi))
-            };
-            draw_lines(chk_pts, 3, ds.colors.accent, 1.8f, true);
-        } else {
-            Color cp_col = copy_btn_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
-            float sq = scale_f(10.0f, cur_dpi);
-            float r_sub = scale_f(2.5f, cur_dpi);
-            draw_rounded_rect(cp_cx - scale_f(3.0f, cur_dpi), cp_cy - scale_f(3.0f, cur_dpi), sq, sq, r_sub, cp_col, 1.4f);
-            D2D1_POINT_2F bkg_pts[3] = {
-                D2D1::Point2F(cp_cx + scale_f(2.5f, cur_dpi), cp_cy - scale_f(6.5f, cur_dpi)),
-                D2D1::Point2F(cp_cx - scale_f(6.5f, cur_dpi), cp_cy - scale_f(6.5f, cur_dpi)),
-                D2D1::Point2F(cp_cx - scale_f(6.5f, cur_dpi), cp_cy + scale_f(2.5f, cur_dpi))
-            };
-            draw_lines(bkg_pts, 3, cp_col, 1.4f, true);
-        }
-
-        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
+            if (copy_timer_ > 0.0f) {
+                D2D1_POINT_2F chk_pts[3] = {
+                    D2D1::Point2F(cp_cx - scale_f(5, cur_dpi), cp_cy + scale_f(0.5f, cur_dpi)),
+                    D2D1::Point2F(cp_cx - scale_f(1, cur_dpi), cp_cy + scale_f(4.5f, cur_dpi)),
+                    D2D1::Point2F(cp_cx + scale_f(6, cur_dpi), cp_cy - scale_f(3.5f, cur_dpi))
+                };
+                draw_lines(chk_pts, 3, ds.colors.accent, 1.8f, true);
+            } else {
+                Color cp_col = copy_btn_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
+                float sq = scale_f(10.0f, cur_dpi);
+                float r_sub = scale_f(2.5f, cur_dpi);
+                draw_rounded_rect(cp_cx - scale_f(3.0f, cur_dpi), cp_cy - scale_f(3.0f, cur_dpi), sq, sq, r_sub, cp_col, 1.4f);
+                D2D1_POINT_2F bkg_pts[3] = {
+                    D2D1::Point2F(cp_cx + scale_f(2.5f, cur_dpi), cp_cy - scale_f(6.5f, cur_dpi)),
+                    D2D1::Point2F(cp_cx - scale_f(6.5f, cur_dpi), cp_cy - scale_f(6.5f, cur_dpi)),
+                    D2D1::Point2F(cp_cx - scale_f(6.5f, cur_dpi), cp_cy + scale_f(2.5f, cur_dpi))
+                };
+                draw_lines(bkg_pts, 3, cp_col, 1.4f, true);
+            }
+        });
 
         // ── 6. Footer ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, content_dy));
-        draw_text_center(L"Free and open source", fmt_footnote_.Get(), hero_cx, card_y + card_h + scale_f(20, cur_dpi), ds.colors.text_dim);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
+        render_animated_block(0.30f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            draw_text_center(L"Free and open source", fmt_footnote_.Get(), hero_cx, card_y + card_h + scale_f(20, cur_dpi), ds.colors.text_dim);
+        });
     }
 
     // ── Settings View (Direct2D Hardware-Accelerated) ──
@@ -1906,9 +1949,7 @@ struct MainWindow::Impl {
 
         float clip_top = back_btn_y + back_btn_size + scale_f(12, cur_dpi);
 
-        float content_dy = get_page_content_dy(cur_dpi);
-        D2D1_MATRIX_3X2_F body_mat = D2D1::Matrix3x2F::Translation(0.0f, content_dy) * scroll_mat;
-        render_target_->SetTransform(body_mat);
+        render_target_->SetTransform(scroll_mat);
 
         float card_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
         float card_w = w - scale_f(static_cast<float>(ds.metrics.padding_x * 2), cur_dpi);
@@ -1936,242 +1977,247 @@ struct MainWindow::Impl {
 
         // ── Card 0: APPEARANCE ──
         float sec0_y = clip_top + scale_f(8, cur_dpi);
-        draw_text(L"APPEARANCE", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec0_y, ds.colors.text_submuted);
-
         float card0_y = sec0_y + scale_f(22, cur_dpi);
         float seg_box_h = static_cast<float>(scale(52, cur_dpi));
-        fill_rounded_rect(card_x, card0_y, card_w, seg_box_h, radius_card, ds.colors.card_bg);
-        draw_rounded_rect(card_x, card0_y, card_w, seg_box_h, radius_card, ds.colors.card_border, 1.0f);
-
         float seg_gap = scale_f(4, cur_dpi);
         float seg_w = (card_w - scale_f(8, cur_dpi) - seg_gap * 2.0f) / 3.0f;
         float seg_h = seg_box_h - scale_f(8, cur_dpi);
         float seg_y = card0_y + scale_f(4, cur_dpi);
 
-        float sliding_pill_x = card_x + scale_f(4, cur_dpi) + seg_anim_x_ * (seg_w + seg_gap);
-        fill_rounded_rect(sliding_pill_x, seg_y, seg_w, seg_h, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.chip_bg);
-        draw_rounded_rect(sliding_pill_x, seg_y, seg_w, seg_h, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.border_hover_bright, 1.0f);
+        render_animated_block(0.05f, cur_dpi, scroll_mat, [&]() {
+            draw_text(L"APPEARANCE", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec0_y, ds.colors.text_submuted);
+            draw_rounded_rect(card_x, card0_y, card_w, seg_box_h, radius_card, ds.colors.card_border, 1.0f);
 
-        const wchar_t* seg_labels[] = { L"System", L"Light", L"Dark" };
-        const std::string seg_keys[] = { "system", "light", "dark" };
+            float sliding_pill_x = card_x + scale_f(4, cur_dpi) + seg_anim_x_ * (seg_w + seg_gap);
+            fill_rounded_rect(sliding_pill_x, seg_y, seg_w, seg_h, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.chip_bg);
+            draw_rounded_rect(sliding_pill_x, seg_y, seg_w, seg_h, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.border_hover_bright, 1.0f);
 
-        for (int i = 0; i < 3; ++i) {
-            float sx = card_x + scale_f(4, cur_dpi) + static_cast<float>(i) * (seg_w + seg_gap);
-            bool is_active = (edit_settings_.theme == seg_keys[i]);
-            draw_text_rect(seg_labels[i], fmt_body_.Get(), sx, seg_y, seg_w, seg_h, is_active ? ds.colors.text_primary : ds.colors.text_muted, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
+            const wchar_t* seg_labels[] = { L"System", L"Light", L"Dark" };
+            const std::string seg_keys[] = { "system", "light", "dark" };
+
+            for (int i = 0; i < 3; ++i) {
+                float sx = card_x + scale_f(4, cur_dpi) + static_cast<float>(i) * (seg_w + seg_gap);
+                bool is_active = (edit_settings_.theme == seg_keys[i]);
+                draw_text_rect(seg_labels[i], fmt_body_.Get(), sx, seg_y, seg_w, seg_h, is_active ? ds.colors.text_primary : ds.colors.text_muted, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
+        });
 
         // ── Card 1: GENERAL (5 Toggles) ──
         float sec1_y = card0_y + seg_box_h + scale_f(24, cur_dpi);
-        draw_text(L"GENERAL", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec1_y, ds.colors.text_submuted);
-
         float card1_y = sec1_y + scale_f(22, cur_dpi);
         float gen_row_h = static_cast<float>(scale(64, cur_dpi));
         float card1_h = gen_row_h * 5.0f;
-        fill_rounded_rect(card_x, card1_y, card_w, card1_h, radius_card, ds.colors.card_bg);
-
-        int card1_hover_idx = -1;
-        if (hovered_settings_row_ >= 10 && hovered_settings_row_ <= 13) {
-            card1_hover_idx = hovered_settings_row_ - 10;
-        } else if (hovered_settings_row_ == 17) {
-            card1_hover_idx = 4;
-        }
-        if (card1_hover_idx >= 0) {
-            float hy = card1_y + static_cast<float>(card1_hover_idx) * gen_row_h;
-            fill_card_row_hover(card_x, hy, card_w, gen_row_h, radius_card, card1_hover_idx, 5, ds.colors.dropdown_hover);
-        }
-
-        draw_rounded_rect(card_x, card1_y, card_w, card1_h, radius_card, ds.colors.card_border, 1.0f);
-
-        for (int i = 1; i < 5; ++i) {
-            draw_line(card_x, card1_y + gen_row_h * static_cast<float>(i), card_x + card_w, card1_y + gen_row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
-        }
-
         float sw_x = card_x + card_w - pad_x - scale_f(40, cur_dpi);
 
-        // Row 0: Launch at login
-        float gy0 = card1_y + scale_f(12, cur_dpi);
-        draw_text(L"Launch at login", fmt_body_.Get(), card_x + pad_x, gy0, ds.colors.text_primary);
-        draw_text(L"Start minimized on system boot", fmt_sub_label_.Get(), card_x + pad_x, gy0 + scale_f(20, cur_dpi), ds.colors.text_muted);
-        draw_animated_toggle(sw_x, card1_y + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 0);
+        render_animated_block(0.10f, cur_dpi, scroll_mat, [&]() {
+            draw_text(L"GENERAL", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec1_y, ds.colors.text_submuted);
 
-        // Row 1: Keep in system tray
-        float gy1 = card1_y + gen_row_h + scale_f(12, cur_dpi);
-        draw_text(L"Keep in system tray", fmt_body_.Get(), card_x + pad_x, gy1, ds.colors.text_primary);
-        draw_text(L"Close button hides to notification area", fmt_sub_label_.Get(), card_x + pad_x, gy1 + scale_f(20, cur_dpi), ds.colors.text_muted);
-        draw_animated_toggle(sw_x, card1_y + gen_row_h + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 1);
+            int card1_hover_idx = -1;
+            if (hovered_settings_row_ >= 10 && hovered_settings_row_ <= 13) {
+                card1_hover_idx = hovered_settings_row_ - 10;
+            } else if (hovered_settings_row_ == 17) {
+                card1_hover_idx = 4;
+            }
+            if (card1_hover_idx >= 0) {
+                float hy = card1_y + static_cast<float>(card1_hover_idx) * gen_row_h;
+                fill_card_row_hover(card_x, hy, card_w, gen_row_h, radius_card, card1_hover_idx, 5, ds.colors.dropdown_hover);
+            }
 
-        // Row 2: Kill switch
-        float gy2 = card1_y + gen_row_h * 2.0f + scale_f(12, cur_dpi);
-        draw_text(L"Kill switch", fmt_body_.Get(), card_x + pad_x, gy2, ds.colors.text_primary);
-        draw_text(L"Block all traffic if connection drops", fmt_sub_label_.Get(), card_x + pad_x, gy2 + scale_f(20, cur_dpi), ds.colors.text_muted);
-        draw_animated_toggle(sw_x, card1_y + gen_row_h * 2.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 2);
+            draw_rounded_rect(card_x, card1_y, card_w, card1_h, radius_card, ds.colors.card_border, 1.0f);
 
-        // Row 3: Windows system proxy
-        float gy3 = card1_y + gen_row_h * 3.0f + scale_f(12, cur_dpi);
-        draw_text(L"System proxy", fmt_body_.Get(), card_x + pad_x, gy3, ds.colors.text_primary);
-        draw_text(L"Route system Internet traffic through Hemera", fmt_sub_label_.Get(), card_x + pad_x, gy3 + scale_f(20, cur_dpi), ds.colors.text_muted);
-        draw_animated_toggle(sw_x, card1_y + gen_row_h * 3.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 3);
+            for (int i = 1; i < 5; ++i) {
+                draw_line(card_x, card1_y + gen_row_h * static_cast<float>(i), card_x + card_w, card1_y + gen_row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
+            }
 
-        // Row 4: Native TUN mode
-        float gy4 = card1_y + gen_row_h * 4.0f + scale_f(12, cur_dpi);
-        draw_text(L"TUN mode (Full System)", fmt_body_.Get(), card_x + pad_x, gy4, ds.colors.text_primary);
-        draw_text(L"Route all system traffic via Wintun", fmt_sub_label_.Get(), card_x + pad_x, gy4 + scale_f(20, cur_dpi), ds.colors.text_muted);
-        draw_animated_toggle(sw_x, card1_y + gen_row_h * 4.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 7);
+            // Row 0: Launch at login
+            float gy0 = card1_y + scale_f(12, cur_dpi);
+            draw_text(L"Launch at login", fmt_body_.Get(), card_x + pad_x, gy0, ds.colors.text_primary);
+            draw_text(L"Start minimized on system boot", fmt_sub_label_.Get(), card_x + pad_x, gy0 + scale_f(20, cur_dpi), ds.colors.text_muted);
+            draw_animated_toggle(sw_x, card1_y + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 0);
+
+            // Row 1: Keep in system tray
+            float gy1 = card1_y + gen_row_h + scale_f(12, cur_dpi);
+            draw_text(L"Keep in system tray", fmt_body_.Get(), card_x + pad_x, gy1, ds.colors.text_primary);
+            draw_text(L"Close button hides to notification area", fmt_sub_label_.Get(), card_x + pad_x, gy1 + scale_f(20, cur_dpi), ds.colors.text_muted);
+            draw_animated_toggle(sw_x, card1_y + gen_row_h + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 1);
+
+            // Row 2: Kill switch
+            float gy2 = card1_y + gen_row_h * 2.0f + scale_f(12, cur_dpi);
+            draw_text(L"Kill switch", fmt_body_.Get(), card_x + pad_x, gy2, ds.colors.text_primary);
+            draw_text(L"Block all traffic if connection drops", fmt_sub_label_.Get(), card_x + pad_x, gy2 + scale_f(20, cur_dpi), ds.colors.text_muted);
+            draw_animated_toggle(sw_x, card1_y + gen_row_h * 2.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 2);
+
+            // Row 3: Windows system proxy
+            float gy3 = card1_y + gen_row_h * 3.0f + scale_f(12, cur_dpi);
+            draw_text(L"System proxy", fmt_body_.Get(), card_x + pad_x, gy3, ds.colors.text_primary);
+            draw_text(L"Route system Internet traffic through Hemera", fmt_sub_label_.Get(), card_x + pad_x, gy3 + scale_f(20, cur_dpi), ds.colors.text_muted);
+            draw_animated_toggle(sw_x, card1_y + gen_row_h * 3.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 3);
+
+            // Row 4: Native TUN mode
+            float gy4 = card1_y + gen_row_h * 4.0f + scale_f(12, cur_dpi);
+            draw_text(L"TUN mode (Full System)", fmt_body_.Get(), card_x + pad_x, gy4, ds.colors.text_primary);
+            draw_text(L"Route all system traffic via Wintun", fmt_sub_label_.Get(), card_x + pad_x, gy4 + scale_f(20, cur_dpi), ds.colors.text_muted);
+            draw_animated_toggle(sw_x, card1_y + gen_row_h * 4.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 7);
+        });
 
         // ── Card 2: CONNECTION & ROUTING ──
         float sec2_y = card1_y + card1_h + scale_f(24, cur_dpi);
-        draw_text(L"CONNECTION & ROUTING", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec2_y, ds.colors.text_submuted);
-
         float card2_y = sec2_y + scale_f(22, cur_dpi);
         float card2_h = row_h * 5.0f;
-        fill_rounded_rect(card_x, card2_y, card_w, card2_h, radius_card, ds.colors.card_bg);
 
-        int card2_hover_idx = -1;
-        if (hovered_settings_row_ >= 0 && hovered_settings_row_ < 4) {
-            card2_hover_idx = hovered_settings_row_;
-        } else if (hovered_settings_row_ == 16) {
-            card2_hover_idx = 4;
-        }
-        if (card2_hover_idx >= 0) {
-            float hy = card2_y + static_cast<float>(card2_hover_idx) * row_h;
-            fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card2_hover_idx, 5, ds.colors.dropdown_hover);
-        }
+        render_animated_block(0.15f, cur_dpi, scroll_mat, [&]() {
+            draw_text(L"CONNECTION & ROUTING", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec2_y, ds.colors.text_submuted);
 
-        draw_rounded_rect(card_x, card2_y, card_w, card2_h, radius_card, ds.colors.card_border, 1.0f);
+            int card2_hover_idx = -1;
+            if (hovered_settings_row_ >= 0 && hovered_settings_row_ < 4) {
+                card2_hover_idx = hovered_settings_row_;
+            } else if (hovered_settings_row_ == 16) {
+                card2_hover_idx = 4;
+            }
+            if (card2_hover_idx >= 0) {
+                float hy = card2_y + static_cast<float>(card2_hover_idx) * row_h;
+                fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card2_hover_idx, 5, ds.colors.dropdown_hover);
+            }
 
-        for (int i = 1; i < 5; ++i) {
-            draw_line(card_x, card2_y + row_h * static_cast<float>(i), card_x + card_w, card2_y + row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
-        }
+            draw_rounded_rect(card_x, card2_y, card_w, card2_h, radius_card, ds.colors.card_border, 1.0f);
 
-        // Row 0: Protocol
-        std::wstring proto_lbl = L"Auto ▾";
-        switch (edit_profile_.protocol) {
-            case Protocol::Auto: proto_lbl = L"Auto ▾"; break;
-            case Protocol::Gool: proto_lbl = L"Gool (WARP over MASQUE) ▾"; break;
-            case Protocol::WarpInWarp: proto_lbl = L"WARP-in-WARP (Classic) ▾"; break;
-            case Protocol::Masque: proto_lbl = edit_profile_.masque_http2 ? L"MASQUE (H2) ▾" : L"MASQUE (H3) ▾"; break;
-            case Protocol::Wireguard: proto_lbl = L"WireGuard ▾"; break;
-            case Protocol::Mim: proto_lbl = L"MiM ▾"; break;
-        }
-        float row_y0 = card2_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"Protocol", fmt_body_.Get(), card_x + pad_x, row_y0, ds.colors.text_muted);
-        draw_text_right(proto_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y0, ds.colors.text_primary);
+            for (int i = 1; i < 5; ++i) {
+                draw_line(card_x, card2_y + row_h * static_cast<float>(i), card_x + card_w, card2_y + row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
+            }
 
-        // Row 1: Scan mode
-        std::wstring scan_lbl = L"Balanced (Recommended) ▾";
-        switch (edit_profile_.scan_mode) {
-            case ScanMode::Turbo: scan_lbl = L"Turbo (Fastest) ▾"; break;
-            case ScanMode::Thorough: scan_lbl = L"Thorough ▾"; break;
-            case ScanMode::Verified: scan_lbl = L"Verified (Stealth) ▾"; break;
-            case ScanMode::Ironclad: scan_lbl = L"Ironclad ▾"; break;
-            default: break;
-        }
-        float row_y1 = card2_y + row_h + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"Scan mode", fmt_body_.Get(), card_x + pad_x, row_y1, ds.colors.text_muted);
-        draw_text_right(scan_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y1, ds.colors.text_primary);
+            // Row 0: Protocol
+            std::wstring proto_lbl = L"Auto ▾";
+            switch (edit_profile_.protocol) {
+                case Protocol::Auto: proto_lbl = L"Auto ▾"; break;
+                case Protocol::Gool: proto_lbl = L"Gool (WARP over MASQUE) ▾"; break;
+                case Protocol::WarpInWarp: proto_lbl = L"WARP-in-WARP (Classic) ▾"; break;
+                case Protocol::Masque: proto_lbl = edit_profile_.masque_http2 ? L"MASQUE (H2) ▾" : L"MASQUE (H3) ▾"; break;
+                case Protocol::Wireguard: proto_lbl = L"WireGuard ▾"; break;
+                case Protocol::Mim: proto_lbl = L"MiM ▾"; break;
+            }
+            float row_y0 = card2_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Protocol", fmt_body_.Get(), card_x + pad_x, row_y0, ds.colors.text_muted);
+            draw_text_right(proto_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y0, ds.colors.text_primary);
 
-        // Row 2: Exit location
-        std::wstring exit_lbl = edit_profile_.exit_loc.empty() ? L"Auto (Fastest) ▾" : (std::wstring(edit_profile_.exit_loc.begin(), edit_profile_.exit_loc.end()) + L" ▾");
-        float row_y2 = card2_y + row_h * 2.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"Exit location", fmt_body_.Get(), card_x + pad_x, row_y2, ds.colors.text_muted);
-        draw_text_right(exit_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y2, ds.colors.text_primary);
+            // Row 1: Scan mode
+            std::wstring scan_lbl = L"Balanced (Recommended) ▾";
+            switch (edit_profile_.scan_mode) {
+                case ScanMode::Turbo: scan_lbl = L"Turbo (Fastest) ▾"; break;
+                case ScanMode::Thorough: scan_lbl = L"Thorough ▾"; break;
+                case ScanMode::Verified: scan_lbl = L"Verified (Stealth) ▾"; break;
+                case ScanMode::Ironclad: scan_lbl = L"Ironclad ▾"; break;
+                default: break;
+            }
+            float row_y1 = card2_y + row_h + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Scan mode", fmt_body_.Get(), card_x + pad_x, row_y1, ds.colors.text_muted);
+            draw_text_right(scan_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y1, ds.colors.text_primary);
 
-        // Row 3: IP version
-        std::wstring ip_lbl = (edit_profile_.ip_version == IpVersion::V6) ? L"IPv6 ▾" : (edit_profile_.ip_version == IpVersion::Both ? L"Dual ▾" : L"IPv4 ▾");
-        float row_y3 = card2_y + row_h * 3.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"IP version", fmt_body_.Get(), card_x + pad_x, row_y3, ds.colors.text_muted);
-        draw_text_right(ip_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y3, ds.colors.text_primary);
+            // Row 2: Exit location
+            std::wstring exit_lbl = edit_profile_.exit_loc.empty() ? L"Auto (Fastest) ▾" : (std::wstring(edit_profile_.exit_loc.begin(), edit_profile_.exit_loc.end()) + L" ▾");
+            float row_y2 = card2_y + row_h * 2.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Exit location", fmt_body_.Get(), card_x + pad_x, row_y2, ds.colors.text_muted);
+            draw_text_right(exit_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y2, ds.colors.text_primary);
 
-        // Row 4: Bypass local traffic
-        float row_y4 = card2_y + row_h * 4.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"Bypass local traffic", fmt_body_.Get(), card_x + pad_x, row_y4, ds.colors.text_primary);
-        draw_animated_toggle(sw_x, card2_y + row_h * 4.0f + (row_h - scale_f(24, cur_dpi)) / 2.0f, 6);
+            // Row 3: IP version
+            std::wstring ip_lbl = (edit_profile_.ip_version == IpVersion::V6) ? L"IPv6 ▾" : (edit_profile_.ip_version == IpVersion::Both ? L"Dual ▾" : L"IPv4 ▾");
+            float row_y3 = card2_y + row_h * 3.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"IP version", fmt_body_.Get(), card_x + pad_x, row_y3, ds.colors.text_muted);
+            draw_text_right(ip_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, row_y3, ds.colors.text_primary);
+
+            // Row 4: Bypass local traffic
+            float row_y4 = card2_y + row_h * 4.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Bypass local traffic", fmt_body_.Get(), card_x + pad_x, row_y4, ds.colors.text_primary);
+            draw_animated_toggle(sw_x, card2_y + row_h * 4.0f + (row_h - scale_f(24, cur_dpi)) / 2.0f, 6);
+        });
 
         // ── Card 3: ANTI-CENSORSHIP & NETWORK ──
         float sec3_y = card2_y + card2_h + scale_f(24, cur_dpi);
-        draw_text(L"ANTI-CENSORSHIP & NETWORK", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec3_y, ds.colors.text_submuted);
-
         float card3_y = sec3_y + scale_f(22, cur_dpi);
         float card3_h = row_h * 5.0f;
-        fill_rounded_rect(card_x, card3_y, card_w, card3_h, radius_card, ds.colors.card_bg);
 
-        int card3_hover_idx = -1;
-        if (hovered_settings_row_ == 14) card3_hover_idx = 0;
-        else if (hovered_settings_row_ == 15) card3_hover_idx = 1;
-        else if (hovered_settings_row_ >= 4 && hovered_settings_row_ <= 6) card3_hover_idx = hovered_settings_row_ - 2;
+        render_animated_block(0.20f, cur_dpi, scroll_mat, [&]() {
+            draw_text(L"ANTI-CENSORSHIP & NETWORK", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec3_y, ds.colors.text_submuted);
 
-        if (card3_hover_idx >= 0) {
-            float hy = card3_y + static_cast<float>(card3_hover_idx) * row_h;
-            fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card3_hover_idx, 5, ds.colors.dropdown_hover);
-        }
+            int card3_hover_idx = -1;
+            if (hovered_settings_row_ == 14) card3_hover_idx = 0;
+            else if (hovered_settings_row_ == 15) card3_hover_idx = 1;
+            else if (hovered_settings_row_ >= 4 && hovered_settings_row_ <= 6) card3_hover_idx = hovered_settings_row_ - 2;
 
-        draw_rounded_rect(card_x, card3_y, card_w, card3_h, radius_card, ds.colors.card_border, 1.0f);
+            if (card3_hover_idx >= 0) {
+                float hy = card3_y + static_cast<float>(card3_hover_idx) * row_h;
+                fill_card_row_hover(card_x, hy, card_w, row_h, radius_card, card3_hover_idx, 5, ds.colors.dropdown_hover);
+            }
 
-        for (int i = 1; i < 5; ++i) {
-            draw_line(card_x, card3_y + row_h * static_cast<float>(i), card_x + card_w, card3_y + row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
-        }
+            draw_rounded_rect(card_x, card3_y, card_w, card3_h, radius_card, ds.colors.card_border, 1.0f);
 
-        // Row 0: TLS fragmentation
-        float r3_y0 = card3_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"TLS fragmentation", fmt_body_.Get(), card_x + pad_x, r3_y0, ds.colors.text_primary);
-        draw_animated_toggle(sw_x, card3_y + (row_h - scale_f(24, cur_dpi)) / 2.0f, 4);
+            for (int i = 1; i < 5; ++i) {
+                draw_line(card_x, card3_y + row_h * static_cast<float>(i), card_x + card_w, card3_y + row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
+            }
 
-        // Row 1: ECH
-        float r3_y1 = card3_y + row_h + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"Encrypted Client Hello (ECH)", fmt_body_.Get(), card_x + pad_x, r3_y1, ds.colors.text_primary);
-        draw_animated_toggle(sw_x, card3_y + row_h + (row_h - scale_f(24, cur_dpi)) / 2.0f, 5);
+            // Row 0: TLS fragmentation
+            float r3_y0 = card3_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"TLS fragmentation", fmt_body_.Get(), card_x + pad_x, r3_y0, ds.colors.text_primary);
+            draw_animated_toggle(sw_x, card3_y + (row_h - scale_f(24, cur_dpi)) / 2.0f, 4);
 
-        // Row 2: Obfuscation
-        std::wstring noize_lbl = L"Balanced ▾";
-        switch (edit_profile_.masque_noize) {
-            case MasqueNoize::Gfw: noize_lbl = L"Aggressive ▾"; break;
-            case MasqueNoize::Off: noize_lbl = L"Off ▾"; break;
-            default: break;
-        }
-        float r3_y2 = card3_y + row_h * 2.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"Obfuscation", fmt_body_.Get(), card_x + pad_x, r3_y2, ds.colors.text_muted);
-        draw_text_right(noize_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y2, ds.colors.text_primary);
+            // Row 1: ECH
+            float r3_y1 = card3_y + row_h + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Encrypted Client Hello (ECH)", fmt_body_.Get(), card_x + pad_x, r3_y1, ds.colors.text_primary);
+            draw_animated_toggle(sw_x, card3_y + row_h + (row_h - scale_f(24, cur_dpi)) / 2.0f, 5);
 
-        // Row 3: DNS server
-        std::wstring dns_lbl = L"Auto (1.1.1.1) ▾";
-        if (edit_profile_.dns == "1.1.1.2") dns_lbl = L"Security (1.1.1.2) ▾";
-        else if (edit_profile_.dns == "8.8.8.8") dns_lbl = L"Google (8.8.8.8) ▾";
-        else if (edit_profile_.dns == "9.9.9.9") dns_lbl = L"Quad9 (9.9.9.9) ▾";
-        else if (!edit_profile_.dns.empty()) dns_lbl = std::wstring(edit_profile_.dns.begin(), edit_profile_.dns.end()) + L" ▾";
-        float r3_y3 = card3_y + row_h * 3.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"DNS server", fmt_body_.Get(), card_x + pad_x, r3_y3, ds.colors.text_muted);
-        draw_text_right(dns_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y3, ds.colors.text_primary);
+            // Row 2: Obfuscation
+            std::wstring noize_lbl = L"Balanced ▾";
+            switch (edit_profile_.masque_noize) {
+                case MasqueNoize::Gfw: noize_lbl = L"Aggressive ▾"; break;
+                case MasqueNoize::Off: noize_lbl = L"Off ▾"; break;
+                default: break;
+            }
+            float r3_y2 = card3_y + row_h * 2.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"Obfuscation", fmt_body_.Get(), card_x + pad_x, r3_y2, ds.colors.text_muted);
+            draw_text_right(noize_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y2, ds.colors.text_primary);
 
-        // Row 4: SOCKS5 proxy
-        float r3_y4 = card3_y + row_h * 4.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"SOCKS5 proxy", fmt_body_.Get(), card_x + pad_x, r3_y4, ds.colors.text_muted);
-        std::wstring socks_display = socks_edit_buffer_.empty() ? L"127.0.0.1:1819" : socks_edit_buffer_;
-        if (is_editing_socks_) {
-            bool show_caret = (std::fmod(caret_blink_timer_, 1.0f) < 0.5f);
-            socks_display += show_caret ? L"|" : L" ";
-            draw_text_right(socks_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y4, ds.colors.accent);
-        } else {
-            draw_text_right(socks_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y4, ds.colors.text_primary);
-        }
+            // Row 3: DNS server
+            std::wstring dns_lbl = L"Auto (1.1.1.1) ▾";
+            if (edit_profile_.dns == "1.1.1.2") dns_lbl = L"Security (1.1.1.2) ▾";
+            else if (edit_profile_.dns == "8.8.8.8") dns_lbl = L"Google (8.8.8.8) ▾";
+            else if (edit_profile_.dns == "9.9.9.9") dns_lbl = L"Quad9 (9.9.9.9) ▾";
+            else if (!edit_profile_.dns.empty()) dns_lbl = std::wstring(edit_profile_.dns.begin(), edit_profile_.dns.end()) + L" ▾";
+            float r3_y3 = card3_y + row_h * 3.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"DNS server", fmt_body_.Get(), card_x + pad_x, r3_y3, ds.colors.text_muted);
+            draw_text_right(dns_lbl, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y3, ds.colors.text_primary);
+
+            // Row 4: SOCKS5 proxy
+            float r3_y4 = card3_y + row_h * 4.0f + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"SOCKS5 proxy", fmt_body_.Get(), card_x + pad_x, r3_y4, ds.colors.text_muted);
+            std::wstring socks_display = socks_edit_buffer_.empty() ? L"127.0.0.1:1819" : socks_edit_buffer_;
+            if (is_editing_socks_) {
+                bool show_caret = (std::fmod(caret_blink_timer_, 1.0f) < 0.5f);
+                socks_display += show_caret ? L"|" : L" ";
+                draw_text_right(socks_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y4, ds.colors.accent);
+            } else {
+                draw_text_right(socks_display, fmt_mono_.Get(), card_x + card_w - pad_x, r3_y4, ds.colors.text_primary);
+            }
+        });
 
         // ── Card 4: ABOUT Row ──
         float sec4_y = card3_y + card3_h + scale_f(24, cur_dpi);
-        fill_rounded_rect(card_x, sec4_y, card_w, row_h, radius_card, ds.colors.card_bg);
 
-        if (hovered_settings_row_ == 20) {
-            fill_card_row_hover(card_x, sec4_y, card_w, row_h, radius_card, 0, 1, ds.colors.dropdown_hover);
-        }
+        render_animated_block(0.25f, cur_dpi, scroll_mat, [&]() {
+            if (hovered_settings_row_ == 20) {
+                fill_card_row_hover(card_x, sec4_y, card_w, row_h, radius_card, 0, 1, ds.colors.dropdown_hover);
+            }
 
-        draw_rounded_rect(card_x, sec4_y, card_w, row_h, radius_card, ds.colors.card_border, 1.0f);
+            draw_rounded_rect(card_x, sec4_y, card_w, row_h, radius_card, ds.colors.card_border, 1.0f);
 
-        float about_y = sec4_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
-        draw_text(L"About Hemera", fmt_body_.Get(), card_x + pad_x, about_y, ds.colors.text_primary);
-        std::wstring about_sub = L"v1.0.5   ›";
-        draw_text_right(about_sub, fmt_mono_.Get(), card_x + card_w - pad_x, about_y, ds.colors.text_muted);
+            float about_y = sec4_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            draw_text(L"About Hemera", fmt_body_.Get(), card_x + pad_x, about_y, ds.colors.text_primary);
+            std::wstring about_sub = L"v1.0.5   ›";
+            draw_text_right(about_sub, fmt_mono_.Get(), card_x + card_w - pad_x, about_y, ds.colors.text_muted);
+        });
 
         // Footer
-        draw_text_center(L"Hemera · Free and open source proxy", fmt_footnote_.Get(), w / 2.0f, sec4_y + row_h + scale_f(24, cur_dpi), ds.colors.text_dim);
+        render_animated_block(0.30f, cur_dpi, scroll_mat, [&]() {
+            draw_text_center(L"Hemera · Free and open source proxy", fmt_footnote_.Get(), w / 2.0f, sec4_y + row_h + scale_f(24, cur_dpi), ds.colors.text_dim);
+        });
 
         // Dynamic scroll bounds (stops right after footer with a neat 20px bottom padding, zero dead space)
         float dpi_scale = static_cast<float>(cur_dpi) / 96.0f;
@@ -2427,10 +2473,10 @@ struct MainWindow::Impl {
         float cp_x = clr_x - btn_sz - scale_f(8, cur_dpi);
 
         // 1a. Copy Logs Button
-        Color cp_bg = copy_logs_hovered_ ? ds.colors.hover_bg : ds.colors.bg;
-        Color cp_bd = copy_logs_hovered_ ? ds.colors.border_hover : ds.colors.btn_border;
-        fill_rounded_rect(cp_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), cp_bg);
-        draw_rounded_rect(cp_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), cp_bd, 1.0f);
+        if (copy_logs_hovered_) {
+            fill_rounded_rect(cp_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.hover_bg);
+        }
+        draw_rounded_rect(cp_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), copy_logs_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
 
         float cpcx = cp_x + btn_sz / 2.0f;
         float cpcy = back_btn_y + btn_sz / 2.0f;
@@ -2454,10 +2500,10 @@ struct MainWindow::Impl {
         }
 
         // 1b. Trash / Clear Logs Button
-        Color clr_bg = clear_logs_hovered_ ? ds.colors.hover_bg : ds.colors.bg;
-        Color clr_bd = clear_logs_hovered_ ? ds.colors.border_hover : ds.colors.btn_border;
-        fill_rounded_rect(clr_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), clr_bg);
-        draw_rounded_rect(clr_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), clr_bd, 1.0f);
+        if (clear_logs_hovered_) {
+            fill_rounded_rect(clr_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.hover_bg);
+        }
+        draw_rounded_rect(clr_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), clear_logs_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
 
         float clrcx = clr_x + btn_sz / 2.0f;
         float clrcy = back_btn_y + btn_sz / 2.0f;
@@ -2473,9 +2519,6 @@ struct MainWindow::Impl {
         draw_lines(can_pts, 4, tr_col, 1.6f, true);
 
         // 2. Filter Chips Row
-        float content_dy = get_page_content_dy(cur_dpi);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, content_dy));
-
         float card_w = w - scale_f(static_cast<float>(ds.metrics.padding_x * 2), cur_dpi);
         float chips_y = back_btn_y + btn_sz + scale_f(12, cur_dpi);
         float chip_h = scale_f(36, cur_dpi);
@@ -2499,34 +2542,33 @@ struct MainWindow::Impl {
         const wchar_t* chip_names[] = { L"All", L"Network", L"Traffic", L"Issues" };
         const int chip_counts[] = { count_all, count_net, count_traffic, count_issues };
 
-        for (int i = 0; i < 4; ++i) {
-            float ch_x = card_x + static_cast<float>(i) * (chip_w + chip_gap);
-            bool is_active = (log_filter_ == i);
-            bool is_hov = (hovered_log_chip_ == i);
+        render_animated_block(0.05f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            for (int i = 0; i < 4; ++i) {
+                float ch_x = card_x + static_cast<float>(i) * (chip_w + chip_gap);
+                bool is_active = (log_filter_ == i);
+                bool is_hov = (hovered_log_chip_ == i);
 
-            if (is_active) {
-                fill_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.chip_bg);
-                draw_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.border_hover_bright, 1.0f);
-            } else if (is_hov) {
-                fill_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.hover_bg);
-                draw_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.border_hover, 1.0f);
-            } else {
-                draw_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.btn_border, 1.0f);
+                if (is_active) {
+                    fill_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.chip_bg);
+                    draw_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.border_hover_bright, 1.0f);
+                } else if (is_hov) {
+                    fill_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.hover_bg);
+                    draw_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.border_hover, 1.0f);
+                } else {
+                    draw_rounded_rect(ch_x, chips_y, chip_w, chip_h, chip_r, ds.colors.btn_border, 1.0f);
+                }
+
+                std::wstring chip_txt = std::wstring(chip_names[i]) + L" " + std::to_wstring(chip_counts[i]);
+                Color c_tx = (is_active || is_hov) ? ds.colors.text_primary : ds.colors.text_muted;
+                draw_text_rect(chip_txt, fmt_body_.Get(), ch_x, chips_y, chip_w, chip_h, c_tx, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
-
-            std::wstring chip_txt = std::wstring(chip_names[i]) + L" " + std::to_wstring(chip_counts[i]);
-            Color c_tx = (is_active || is_hov) ? ds.colors.text_primary : ds.colors.text_muted;
-            draw_text_rect(chip_txt, fmt_body_.Get(), ch_x, chips_y, chip_w, chip_h, c_tx, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
+        });
 
         // 3. Terminal Log Card
         float term_y = chips_y + chip_h + scale_f(12, cur_dpi);
         float res_card_h = static_cast<float>(scale(72, cur_dpi));
         float term_h = h - term_y - res_card_h - scale_f(24, cur_dpi);
         float term_r = static_cast<float>(scale(ds.metrics.radius_card, cur_dpi));
-
-        fill_rounded_rect(card_x, term_y, card_w, term_h, term_r, ds.colors.card_bg);
-        draw_rounded_rect(card_x, term_y, card_w, term_h, term_r, ds.colors.card_border, 1.0f);
 
         std::vector<const LogEntry*> visible_logs;
         visible_logs.reserve(logs_copy.size());
@@ -2546,112 +2588,119 @@ struct MainWindow::Impl {
             }
         }
 
-        render_target_->PushAxisAlignedClip(D2D1::RectF(card_x + 8.0f, term_y + 8.0f, card_x + card_w - 8.0f, term_y + term_h - 8.0f), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        render_animated_block(0.10f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            fill_rounded_rect(card_x, term_y, card_w, term_h, term_r, ds.colors.card_bg);
+            draw_rounded_rect(card_x, term_y, card_w, term_h, term_r, ds.colors.card_border, 1.0f);
 
-        if (visible_logs.empty()) {
-            draw_text_rect(L"No log entries", fmt_body_.Get(), card_x, term_y, card_w, term_h, ds.colors.text_dim, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        } else {
-            float cur_y = term_y + scale_f(10, cur_dpi) - std::round(scale_f(logs_scroll_anim_y_, cur_dpi));
-            float row_x = card_x + scale_f(14, cur_dpi);
-            float time_w = scale_f(66, cur_dpi);
-            float tag_w = scale_f(52, cur_dpi);
-            float msg_x = row_x + time_w + tag_w;
-            float right_margin = scale_f(14, cur_dpi);
-            float msg_w = std::max(scale_f(80, cur_dpi), (card_x + card_w - right_margin) - msg_x);
-            float min_row_h = scale_f(22, cur_dpi);
-            float total_content_h = scale_f(10, cur_dpi);
+            render_target_->PushAxisAlignedClip(D2D1::RectF(card_x + 8.0f, term_y + 8.0f, card_x + card_w - 8.0f, term_y + term_h - 8.0f), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
-            for (const auto* item : visible_logs) {
-                float text_measured_h = measure_text_height(item->message, fmt_mono_wrap_.Get(), msg_w);
-                float item_h = std::max(min_row_h, text_measured_h + scale_f(4, cur_dpi));
+            if (visible_logs.empty()) {
+                draw_text_rect(L"No log entries", fmt_body_.Get(), card_x, term_y, card_w, term_h, ds.colors.text_dim, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            } else {
+                float cur_y = term_y + scale_f(10, cur_dpi) - std::round(scale_f(logs_scroll_anim_y_, cur_dpi));
+                float row_x = card_x + scale_f(14, cur_dpi);
+                float time_w = scale_f(66, cur_dpi);
+                float tag_w = scale_f(52, cur_dpi);
+                float msg_x = row_x + time_w + tag_w;
+                float right_margin = scale_f(14, cur_dpi);
+                float msg_w = std::max(scale_f(80, cur_dpi), (card_x + card_w - right_margin) - msg_x);
+                float min_row_h = scale_f(22, cur_dpi);
+                float total_content_h = scale_f(10, cur_dpi);
 
-                if (cur_y + item_h >= term_y && cur_y <= term_y + term_h) {
-                    // 1. Time
-                    draw_text(item->time_str, fmt_mono_.Get(), row_x, cur_y, ds.colors.text_dim);
+                for (const auto* item : visible_logs) {
+                    float text_measured_h = measure_text_height(item->message, fmt_mono_wrap_.Get(), msg_w);
+                    float item_h = std::max(min_row_h, text_measured_h + scale_f(4, cur_dpi));
 
-                    // 2. Tag with vibrant semantic badge color
-                    draw_text(item->tag, fmt_mono_bold_.Get(), row_x + time_w, cur_y, item->tag_color);
+                    if (cur_y + item_h >= term_y && cur_y <= term_y + term_h) {
+                        // 1. Time
+                        draw_text(item->time_str, fmt_mono_.Get(), row_x, cur_y, ds.colors.text_dim);
 
-                    // 3. Multiline wrapped message
-                    Color msg_col = ds.colors.text_secondary;
-                    if (item->category == LogCategory::Error) msg_col = ds.colors.error;
-                    else if (item->category == LogCategory::Warn) msg_col = ds.colors.warning;
-                    draw_text_rect(item->message, fmt_mono_wrap_.Get(), msg_x, cur_y, msg_w, item_h, msg_col);
+                        // 2. Tag with vibrant semantic badge color
+                        draw_text(item->tag, fmt_mono_bold_.Get(), row_x + time_w, cur_y, item->tag_color);
+
+                        // 3. Multiline wrapped message
+                        Color msg_col = ds.colors.text_secondary;
+                        if (item->category == LogCategory::Error) msg_col = ds.colors.error;
+                        else if (item->category == LogCategory::Warn) msg_col = ds.colors.warning;
+                        draw_text_rect(item->message, fmt_mono_wrap_.Get(), msg_x, cur_y, msg_w, item_h, msg_col);
+                    }
+
+                    cur_y += item_h;
+                    total_content_h += item_h;
                 }
 
-                cur_y += item_h;
-                total_content_h += item_h;
+                total_content_h += scale_f(10, cur_dpi);
+                float visible_h = term_h;
+                max_logs_scroll_ = std::max(0.0f, (total_content_h - visible_h) / (cur_dpi / 96.0f));
             }
 
-            total_content_h += scale_f(10, cur_dpi);
-            float visible_h = term_h;
-            max_logs_scroll_ = std::max(0.0f, (total_content_h - visible_h) / (cur_dpi / 96.0f));
-        }
-
-        render_target_->PopAxisAlignedClip();
+            render_target_->PopAxisAlignedClip();
+        });
 
         // 4. Bottom Resource Card (CPU% & RAM MB with Sparklines)
         float res_y = term_y + term_h + scale_f(12, cur_dpi);
-        fill_rounded_rect(card_x, res_y, card_w, res_card_h, term_r, ds.colors.card_bg);
-        draw_rounded_rect(card_x, res_y, card_w, res_card_h, term_r, ds.colors.card_border, 1.0f);
 
-        float mid_x = card_x + card_w / 2.0f;
-        draw_line(mid_x, res_y, mid_x, res_y + res_card_h, ds.colors.card_border, 1.0f);
+        render_animated_block(0.20f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            draw_rounded_rect(card_x, res_y, card_w, res_card_h, term_r, ds.colors.card_border, 1.0f);
 
-        float col_w = card_w / 2.0f;
-        float pad = scale_f(14, cur_dpi);
+            float mid_x = card_x + card_w / 2.0f;
+            draw_line(mid_x, res_y, mid_x, res_y + res_card_h, ds.colors.card_border, 1.0f);
 
-        // CPU
-        float c1_x = card_x + pad;
-        float c1_top_y = res_y + scale_f(10, cur_dpi);
-        draw_text(L"CPU", fmt_metric_tag_.Get(), c1_x, c1_top_y, ds.colors.text_muted);
-        std::wstring cpu_str = std::format(L"{:.1f} %", sys_metrics_.cpu_percent);
-        draw_text_right(cpu_str, fmt_mono_bold_.Get(), mid_x - pad, c1_top_y - scale_f(2, cur_dpi), ds.colors.text_primary);
+            float col_w = card_w / 2.0f;
+            float pad = scale_f(14, cur_dpi);
 
-        float spark_w = col_w - pad * 2.0f;
-        float spark_h = scale_f(26, cur_dpi);
-        float spark_y = res_y + res_card_h - spark_h - scale_f(8, cur_dpi);
+            // CPU
+            float c1_x = card_x + pad;
+            float c1_top_y = res_y + scale_f(10, cur_dpi);
+            draw_text(L"CPU", fmt_metric_tag_.Get(), c1_x, c1_top_y, ds.colors.text_muted);
+            std::wstring cpu_str = std::format(L"{:.1f} %", sys_metrics_.cpu_percent);
+            draw_text_right(cpu_str, fmt_mono_bold_.Get(), mid_x - pad, c1_top_y - scale_f(2, cur_dpi), ds.colors.text_primary);
 
-        if (cpu_history_.size() >= 2) {
-            std::vector<D2D1_POINT_2F> pts;
-            pts.reserve(cpu_history_.size());
-            float max_cpu = 10.0f;
-            for (float v : cpu_history_) if (v > max_cpu) max_cpu = v;
+            float spark_w = col_w - pad * 2.0f;
+            float spark_h = scale_f(26, cur_dpi);
+            float spark_y = res_y + res_card_h - spark_h - scale_f(8, cur_dpi);
 
-            for (size_t i = 0; i < cpu_history_.size(); ++i) {
-                float px = c1_x + static_cast<float>(i) * (spark_w / static_cast<float>(cpu_history_.size() - 1));
-                float norm = std::clamp(cpu_history_[i] / max_cpu, 0.0f, 1.0f);
-                float py = spark_y + spark_h - norm * spark_h;
-                pts.push_back(D2D1::Point2F(px, py));
+            if (cpu_history_.size() >= 2) {
+                std::vector<D2D1_POINT_2F> pts;
+                pts.reserve(cpu_history_.size());
+                float max_cpu = 10.0f;
+                for (float v : cpu_history_) if (v > max_cpu) max_cpu = v;
+
+                for (size_t i = 0; i < cpu_history_.size(); ++i) {
+                    float px = c1_x + static_cast<float>(i) * (spark_w / static_cast<float>(cpu_history_.size() - 1));
+                    float norm = std::clamp(cpu_history_[i] / max_cpu, 0.0f, 1.0f);
+                    float py = spark_y + spark_h - norm * spark_h;
+                    pts.push_back(D2D1::Point2F(px, py));
+                }
+                draw_lines(pts.data(), static_cast<UINT32>(pts.size()), ds.colors.accent, scale_f(2.4f, cur_dpi), true);
             }
-            draw_lines(pts.data(), static_cast<UINT32>(pts.size()), ds.colors.accent, scale_f(2.4f, cur_dpi), true);
-        }
 
-        // RAM
-        float c2_x = mid_x + pad;
-        draw_text(L"RAM", fmt_metric_tag_.Get(), c2_x, c1_top_y, ds.colors.text_muted);
-        std::wstring ram_str = std::format(L"{:.1f} MB", sys_metrics_.ram_mb);
-        draw_text_right(ram_str, fmt_mono_bold_.Get(), card_x + card_w - pad, c1_top_y - scale_f(2, cur_dpi), ds.colors.text_primary);
+            // RAM
+            float c2_x = mid_x + pad;
+            draw_text(L"RAM", fmt_metric_tag_.Get(), c2_x, c1_top_y, ds.colors.text_muted);
+            std::wstring ram_str = std::format(L"{:.1f} MB", sys_metrics_.ram_mb);
+            draw_text_right(ram_str, fmt_mono_bold_.Get(), card_x + card_w - pad, c1_top_y - scale_f(2, cur_dpi), ds.colors.text_primary);
 
-        if (ram_history_.size() >= 2) {
-            std::vector<D2D1_POINT_2F> pts;
-            pts.reserve(ram_history_.size());
-            float min_ram = ram_history_[0];
-            float max_ram = ram_history_[0];
-            for (float v : ram_history_) {
-                if (v < min_ram) min_ram = v;
-                if (v > max_ram) max_ram = v;
+            if (ram_history_.size() >= 2) {
+                std::vector<D2D1_POINT_2F> pts;
+                pts.reserve(ram_history_.size());
+                float min_ram = ram_history_[0];
+                float max_ram = ram_history_[0];
+                for (float v : ram_history_) {
+                    if (v < min_ram) min_ram = v;
+                    if (v > max_ram) max_ram = v;
+                }
+                if (max_ram - min_ram < 5.0f) { max_ram += 2.5f; min_ram -= 2.5f; }
+
+                for (size_t i = 0; i < ram_history_.size(); ++i) {
+                    float px = c2_x + static_cast<float>(i) * (spark_w / static_cast<float>(ram_history_.size() - 1));
+                    float norm = std::clamp((ram_history_[i] - min_ram) / (max_ram - min_ram), 0.0f, 1.0f);
+                    float py = spark_y + spark_h - norm * spark_h;
+                    pts.push_back(D2D1::Point2F(px, py));
+                }
+                draw_lines(pts.data(), static_cast<UINT32>(pts.size()), ds.colors.accent_ram, scale_f(2.4f, cur_dpi), true);
             }
-            if (max_ram - min_ram < 5.0f) { max_ram += 2.5f; min_ram -= 2.5f; }
-
-            for (size_t i = 0; i < ram_history_.size(); ++i) {
-                float px = c2_x + static_cast<float>(i) * (spark_w / static_cast<float>(ram_history_.size() - 1));
-                float norm = std::clamp((ram_history_[i] - min_ram) / (max_ram - min_ram), 0.0f, 1.0f);
-                float py = spark_y + spark_h - norm * spark_h;
-                pts.push_back(D2D1::Point2F(px, py));
-            }
-            draw_lines(pts.data(), static_cast<UINT32>(pts.size()), ds.colors.accent_ram, scale_f(2.4f, cur_dpi), true);
-        }
+        });
 
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
     }
@@ -2671,36 +2720,35 @@ struct MainWindow::Impl {
         draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
         draw_text(L"About", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
 
-        // 2. Logo Icon
-        float content_dy = get_page_content_dy(cur_dpi);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, content_dy));
+        // 2. Logo Icon & Hero
         float cx = w / 2.0f;
         float logo_y = back_btn_y + back_btn_size + scale_f(28, cur_dpi);
         float draw_h = scale_f(72, cur_dpi);
         float draw_w = draw_h;
-
-        if (logo_d2d_bitmap_) {
-            D2D1_SIZE_F sz = logo_d2d_bitmap_->GetSize();
-            if (sz.height > 0.0f) {
-                draw_w = draw_h * (sz.width / sz.height);
-            }
-            render_target_->DrawBitmap(logo_d2d_bitmap_.Get(), D2D1::RectF(cx - draw_w / 2.0f, logo_y, cx + draw_w / 2.0f, logo_y + draw_h));
-        } else {
-            float dot_sz = scale_f(24, cur_dpi);
-            fill_ellipse(cx, logo_y + draw_h / 2.0f, dot_sz / 2.0f, ds.colors.accent);
-        }
-
-        // App Name & Version
         float name_y = logo_y + draw_h + scale_f(14, cur_dpi);
-        draw_text_center(L"Hemera", fmt_hero_status_.Get(), cx, name_y, ds.colors.text_primary);
-
         float ver_y = name_y + scale_f(34, cur_dpi);
-        draw_text_center(L"Version 1.0.5", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
-
-        // Subtitle text
         float desc_y = ver_y + scale_f(22, cur_dpi);
-        draw_text_center(L"Native high-performance circumvention for Windows.", fmt_body_.Get(), cx, desc_y, ds.colors.text_muted);
-        draw_text_center(L"Free, open source, no account needed.", fmt_footnote_.Get(), cx, desc_y + scale_f(18, cur_dpi), ds.colors.text_dim);
+
+        render_animated_block(0.0f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            if (logo_d2d_bitmap_) {
+                D2D1_SIZE_F sz = logo_d2d_bitmap_->GetSize();
+                if (sz.height > 0.0f) {
+                    draw_w = draw_h * (sz.width / sz.height);
+                }
+                render_target_->DrawBitmap(logo_d2d_bitmap_.Get(), D2D1::RectF(cx - draw_w / 2.0f, logo_y, cx + draw_w / 2.0f, logo_y + draw_h));
+            } else {
+                float dot_sz = scale_f(24, cur_dpi);
+                fill_ellipse(cx, logo_y + draw_h / 2.0f, dot_sz / 2.0f, ds.colors.accent);
+            }
+
+            // App Name & Version
+            draw_text_center(L"Hemera", fmt_hero_status_.Get(), cx, name_y, ds.colors.text_primary);
+            draw_text_center(L"Version 1.0.5", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
+
+            // Subtitle text
+            draw_text_center(L"Native high-performance circumvention for Windows.", fmt_body_.Get(), cx, desc_y, ds.colors.text_muted);
+            draw_text_center(L"Free, open source, no account needed.", fmt_footnote_.Get(), cx, desc_y + scale_f(18, cur_dpi), ds.colors.text_dim);
+        });
 
         // 3. Links Card (Source Code, Issues, Releases, License)
         float card_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
@@ -2710,49 +2758,49 @@ struct MainWindow::Impl {
         float row_h = static_cast<float>(scale(ds.metrics.row_height, cur_dpi));
         float card_r = static_cast<float>(scale(ds.metrics.radius_card, cur_dpi));
 
-        fill_rounded_rect(card_x, card_y, card_w, row_h * 4.0f, card_r, ds.colors.card_bg);
+        render_animated_block(0.10f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            if (about_src_hovered_) {
+                fill_card_row_hover(card_x, card_y, card_w, row_h, card_r, 0, 4, ds.colors.dropdown_hover);
+            }
+            if (about_issue_hovered_) {
+                fill_card_row_hover(card_x, card_y + row_h, card_w, row_h, card_r, 1, 4, ds.colors.dropdown_hover);
+            }
+            if (about_releases_hovered_) {
+                fill_card_row_hover(card_x, card_y + row_h * 2.0f, card_w, row_h, card_r, 2, 4, ds.colors.dropdown_hover);
+            }
+            if (about_license_hovered_) {
+                fill_card_row_hover(card_x, card_y + row_h * 3.0f, card_w, row_h, card_r, 3, 4, ds.colors.dropdown_hover);
+            }
 
-        if (about_src_hovered_) {
-            fill_card_row_hover(card_x, card_y, card_w, row_h, card_r, 0, 4, ds.colors.dropdown_hover);
-        }
-        if (about_issue_hovered_) {
-            fill_card_row_hover(card_x, card_y + row_h, card_w, row_h, card_r, 1, 4, ds.colors.dropdown_hover);
-        }
-        if (about_releases_hovered_) {
-            fill_card_row_hover(card_x, card_y + row_h * 2.0f, card_w, row_h, card_r, 2, 4, ds.colors.dropdown_hover);
-        }
-        if (about_license_hovered_) {
-            fill_card_row_hover(card_x, card_y + row_h * 3.0f, card_w, row_h, card_r, 3, 4, ds.colors.dropdown_hover);
-        }
+            draw_rounded_rect(card_x, card_y, card_w, row_h * 4.0f, card_r, ds.colors.card_border, 1.0f);
 
-        draw_rounded_rect(card_x, card_y, card_w, row_h * 4.0f, card_r, ds.colors.card_border, 1.0f);
+            for (int i = 1; i < 4; ++i) {
+                draw_line(card_x, card_y + row_h * static_cast<float>(i), card_x + card_w, card_y + row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
+            }
 
-        for (int i = 1; i < 4; ++i) {
-            draw_line(card_x, card_y + row_h * static_cast<float>(i), card_x + card_w, card_y + row_h * static_cast<float>(i), ds.colors.card_border, 1.0f);
-        }
+            float pad_x = static_cast<float>(scale(ds.metrics.row_padding_x, cur_dpi));
+            float text_mid_offset = (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
 
-        float pad_x = static_cast<float>(scale(ds.metrics.row_padding_x, cur_dpi));
-        float text_mid_offset = (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
+            // Row 0: GitHub Repository
+            float ry0 = card_y + text_mid_offset;
+            draw_text(L"GitHub Repository", fmt_body_.Get(), card_x + pad_x, ry0, ds.colors.text_primary);
+            draw_text_right(L"ramin-mahmoodi/Hemera ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry0, ds.colors.accent);
 
-        // Row 0: GitHub Repository
-        float ry0 = card_y + text_mid_offset;
-        draw_text(L"GitHub Repository", fmt_body_.Get(), card_x + pad_x, ry0, ds.colors.text_primary);
-        draw_text_right(L"ramin-mahmoodi/Hemera ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry0, ds.colors.accent);
+            // Row 1: Report an Issue
+            float ry1 = card_y + row_h + text_mid_offset;
+            draw_text(L"Report an Issue", fmt_body_.Get(), card_x + pad_x, ry1, ds.colors.text_primary);
+            draw_text_right(L"Bug reports & feedback ↗", fmt_body_.Get(), card_x + card_w - pad_x, ry1, ds.colors.text_muted);
 
-        // Row 1: Report an Issue
-        float ry1 = card_y + row_h + text_mid_offset;
-        draw_text(L"Report an Issue", fmt_body_.Get(), card_x + pad_x, ry1, ds.colors.text_primary);
-        draw_text_right(L"Bug reports & feedback ↗", fmt_body_.Get(), card_x + card_w - pad_x, ry1, ds.colors.text_muted);
+            // Row 2: Releases & Updates
+            float ry2 = card_y + row_h * 2.0f + text_mid_offset;
+            draw_text(L"Releases & Changelog", fmt_body_.Get(), card_x + pad_x, ry2, ds.colors.text_primary);
+            draw_text_right(L"v1.0.5 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
 
-        // Row 2: Releases & Updates
-        float ry2 = card_y + row_h * 2.0f + text_mid_offset;
-        draw_text(L"Releases & Changelog", fmt_body_.Get(), card_x + pad_x, ry2, ds.colors.text_primary);
-        draw_text_right(L"v1.0.5 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
-
-        // Row 3: License
-        float ry3 = card_y + row_h * 3.0f + text_mid_offset;
-        draw_text(L"License", fmt_body_.Get(), card_x + pad_x, ry3, ds.colors.text_primary);
-        draw_text_right(L"GNU AGPLv3 ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry3, ds.colors.text_muted);
+            // Row 3: License
+            float ry3 = card_y + row_h * 3.0f + text_mid_offset;
+            draw_text(L"License", fmt_body_.Get(), card_x + pad_x, ry3, ds.colors.text_primary);
+            draw_text_right(L"GNU AGPLv3 ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry3, ds.colors.text_muted);
+        });
 
         // 4. "Check for updates" Button
         float upd_y = card_y + row_h * 4.0f + scale_f(24, cur_dpi);
@@ -2761,26 +2809,28 @@ struct MainWindow::Impl {
         float upd_x = cx - upd_w / 2.0f;
         float upd_r = static_cast<float>(scale(ds.metrics.radius_chip, cur_dpi));
 
-        Color upd_bg = update_btn_hovered_ ? ds.colors.hover_bg : ds.colors.chip_bg;
-        Color upd_bd = update_btn_hovered_ ? ds.colors.border_hover_bright : ds.colors.btn_border_dim;
-        fill_rounded_rect(upd_x, upd_y, upd_w, upd_h, upd_r, upd_bg);
-        draw_rounded_rect(upd_x, upd_y, upd_w, upd_h, upd_r, upd_bd, 1.0f);
+        render_animated_block(0.20f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            Color upd_bg = update_btn_hovered_ ? ds.colors.hover_bg : ds.colors.chip_bg;
+            Color upd_bd = update_btn_hovered_ ? ds.colors.border_hover_bright : ds.colors.btn_border_dim;
+            fill_rounded_rect(upd_x, upd_y, upd_w, upd_h, upd_r, upd_bg);
+            draw_rounded_rect(upd_x, upd_y, upd_w, upd_h, upd_r, upd_bd, 1.0f);
 
-        if (is_checking_update_) {
-            float spin_cx = upd_x + scale_f(24, cur_dpi);
-            float spin_cy = upd_y + upd_h / 2.0f;
-            float s_rad = scale_f(7, cur_dpi);
-            draw_arc(spin_cx, spin_cy, s_rad, spin_angle_, 180.0f, ds.colors.accent, 1.8f);
+            if (is_checking_update_) {
+                float spin_cx = upd_x + scale_f(24, cur_dpi);
+                float spin_cy = upd_y + upd_h / 2.0f;
+                float s_rad = scale_f(7, cur_dpi);
+                draw_arc(spin_cx, spin_cy, s_rad, spin_angle_, 180.0f, ds.colors.accent, 1.8f);
 
-            draw_text_rect(L"Checking...", fmt_body_bold_.Get(), upd_x + scale_f(16, cur_dpi), upd_y, upd_w - scale_f(16, cur_dpi), upd_h, ds.colors.text_primary, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        } else {
-            draw_text_rect(L"Check for updates", fmt_body_bold_.Get(), upd_x, upd_y, upd_w, upd_h, ds.colors.text_primary, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
+                draw_text_rect(L"Checking...", fmt_body_bold_.Get(), upd_x + scale_f(16, cur_dpi), upd_y, upd_w - scale_f(16, cur_dpi), upd_h, ds.colors.text_primary, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            } else {
+                draw_text_rect(L"Check for updates", fmt_body_bold_.Get(), upd_x, upd_y, upd_w, upd_h, ds.colors.text_primary, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
 
-        if (is_update_done_) {
-            float done_y = upd_y + upd_h + scale_f(14, cur_dpi);
-            draw_text_center(L"✓ You're on the latest version", fmt_body_.Get(), cx, done_y, ds.colors.accent);
-        }
+            if (is_update_done_) {
+                float done_y = upd_y + upd_h + scale_f(14, cur_dpi);
+                draw_text_center(L"✓ You're on the latest version", fmt_body_.Get(), cx, done_y, ds.colors.accent);
+            }
+        });
 
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
     }
@@ -3777,8 +3827,8 @@ struct MainWindow::Impl {
 
                     float card_x = (float)scale(ds.metrics.padding_x, cur_dpi);
                     float card_w = w - (float)scale(ds.metrics.padding_x * 2, cur_dpi);
-                    float card_y = (float)scale(470, cur_dpi);
-                    float row_h = (float)scale(54, cur_dpi);
+                    float card_y = (float)scale(480, cur_dpi);
+                    float row_h = (float)scale(46, cur_dpi);
                     float copy_x = card_x + card_w - (float)scale(ds.metrics.row_padding_x, cur_dpi) - scale_f(44, cur_dpi);
                     float copy_y = card_y + row_h * 2.0f + (row_h - scale_f(44, cur_dpi)) / 2.0f;
                     impl->copy_btn_hovered_ = (x >= copy_x && x <= copy_x + scale_f(44, cur_dpi) && y >= copy_y && y <= copy_y + scale_f(44, cur_dpi));
