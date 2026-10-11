@@ -290,7 +290,18 @@ std::expected<std::optional<Arrived>, std::string> WinUdp::receive() {
         if (code == WSAEWOULDBLOCK) {
             if (impl_->event != WSA_INVALID_EVENT && impl_->fd != INVALID_SOCKET) {
                 WSANETWORKEVENTS ev{};
-                WSAEnumNetworkEvents(impl_->fd, impl_->event, &ev);
+                if (WSAEnumNetworkEvents(impl_->fd, impl_->event, &ev) == 0 && (ev.lNetworkEvents & FD_READ)) {
+                    // An FD_READ was latched in the event object before reset.
+                    // Retry recvfrom once to ensure no datagram is left stranded.
+                    len = static_cast<int>(sizeof storage);
+                    const int retry_got = ::recvfrom(impl_->fd, reinterpret_cast<char*>(buf.data()),
+                                                     static_cast<int>(buf.size()), 0,
+                                                     reinterpret_cast<sockaddr*>(&storage), &len);
+                    if (retry_got > 0) {
+                        buf.resize(static_cast<std::size_t>(retry_got));
+                        return std::optional<Arrived>{Arrived{from_sockaddr(storage, len), std::move(buf)}};
+                    }
+                }
             }
             return std::optional<Arrived>{};
         }
@@ -635,6 +646,8 @@ struct SessionState {
                 const std::size_t max_dgram_size = ngtcp2_conn_get_max_tx_udp_payload_size2(conn);
                 if (max_dgram_size > 0 && d.size() > max_dgram_size) {
                     ++datagrams_dropped;
+                    note("quic: datagram dropped (size " + std::to_string(d.size()) +
+                         " > max datagram payload " + std::to_string(max_dgram_size) + ")");
                     pending.erase(pending.begin());
                     continue;
                 }
@@ -650,6 +663,7 @@ struct SessionState {
                 if (nd > 0) send_out(txbuf.data(), static_cast<std::size_t>(nd));
                 if (nd < 0) {
                     ++datagrams_dropped;
+                    note("quic: writev_datagram failed: " + std::string(ngtcp2_strerror(static_cast<int>(nd))));
                     pending.erase(pending.begin());
                     break;
                 }

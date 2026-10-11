@@ -1142,8 +1142,6 @@ struct MainWindow::Impl {
         if (view_ == ActiveView::Home) {
             auto state = engine_->current_state();
             if (state.kind == StateKind::Connecting || state.kind == StateKind::Disconnecting) return true;
-            if (state.kind == StateKind::Connected) return true;
-            if (state.kind == StateKind::Idle && GetForegroundWindow() == hwnd_) return true;
         }
         return false;
     }
@@ -4658,10 +4656,16 @@ int MainWindow::run_message_loop() {
                 }
             }
         } else {
-            // Background metrics advance at ~20 Hz
+            // Background metrics advance and periodic telemetry refresh at ~4 Hz
             if (dt >= 0.050f) {
                 impl_->last_frame_time_ = now;
                 impl_->step_animations(dt);
+
+                static auto last_telemetry_paint = std::chrono::steady_clock::now();
+                if (is_visible && (now - last_telemetry_paint) >= std::chrono::milliseconds(250)) {
+                    last_telemetry_paint = now;
+                    InvalidateRect(impl_->hwnd_, nullptr, FALSE);
+                }
             }
         }
 

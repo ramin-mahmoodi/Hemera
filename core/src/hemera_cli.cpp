@@ -1895,16 +1895,20 @@ void run_quic_hop(Hop& hop, quic::TunnelConfig tunnel, const Settings& settings,
         }
 
         // quic.rs's outbound_rx: drain queued IP packets from the netstack to the QUIC session
-        if (session.ready() && !closing) {
-            while (auto pkt = hop.queue().pull()) {
-                const auto room = session.send_ip_packet(*pkt);
-                if (room == tr::Room::Full) {
-                    hop.queue().push_front(std::move(*pkt));
-                    break;
+        const auto drain_outbound = [&]() {
+            if (session.ready() && !closing) {
+                while (auto pkt = hop.queue().pull()) {
+                    const auto room = session.send_ip_packet(*pkt);
+                    if (room == tr::Room::Full) {
+                        hop.queue().push_front(std::move(*pkt));
+                        break;
+                    }
+                    if (room == tr::Room::Closed) break;
                 }
-                if (room == tr::Room::Closed) break;
             }
-        }
+        };
+
+        drain_outbound();
 
         const auto tick = session.tick(now);
         if (tick.error.has_value()) {
@@ -1917,16 +1921,26 @@ void run_quic_hop(Hop& hop, quic::TunnelConfig tunnel, const Settings& settings,
         }
         if (session.ready() && !hop.ready()) hop.set_ready();
 
+        // Give hop.queue() a chance to drain packets freed up by tick's flush before entering wait
+        drain_outbound();
+
         const auto delay = tick.delay.value_or(std::chrono::milliseconds(20));
         if (delay.count() > 0 && !closing) {
-            HANDLE handles[2] = {
-                reinterpret_cast<HANDLE>((*io)->read_event()),
-                hop.queue().event()
-            };
-            const DWORD count = handles[0] ? 2 : 1;
-            const DWORD res = WaitForMultipleObjects(count, handles, FALSE, static_cast<DWORD>(delay.count()));
-            if (res == WAIT_OBJECT_0) {
-                (*io)->reset_read_event();
+            HANDLE handles[2];
+            DWORD count = 0;
+            int sock_idx = -1;
+            if (auto* sh = reinterpret_cast<HANDLE>((*io)->read_event())) {
+                sock_idx = static_cast<int>(count);
+                handles[count++] = sh;
+            }
+            if (auto* qh = hop.queue().event()) {
+                handles[count++] = qh;
+            }
+            if (count > 0) {
+                const DWORD res = WaitForMultipleObjects(count, handles, FALSE, static_cast<DWORD>(delay.count()));
+                if (sock_idx >= 0 && res == (WAIT_OBJECT_0 + sock_idx)) {
+                    (*io)->reset_read_event();
+                }
             }
         }
         if (closing) break; // one turn after the close went out is all the flush needs
@@ -3378,11 +3392,14 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
             // Drain all available packets from Wintun receive ring buffer
             const size_t drained = dev->drain_read_packets(256, [&hop, &dropped_count, &cancel](std::span<const uint8_t> pkt) -> bool {
                 if (cancel.is_cancelled() || hop.stop().asked()) return false;
-                ::hemera::core::add_up(pkt.size());
-                const auto outcome = hop.queue().push_wait(pkt, std::chrono::milliseconds(5), [&] {
+                // If queue is already full and dropping in this batch, avoid stalling for 5ms on every packet
+                const auto wait_budget = std::chrono::milliseconds(dropped_count > 0 ? 0 : 2);
+                const auto outcome = hop.queue().push_wait(pkt, wait_budget, [&] {
                     return cancel.is_cancelled() || hop.stop().asked();
                 });
-                if (outcome == ns::SendOutcome::Full) {
+                if (outcome == ns::SendOutcome::Ok) {
+                    ::hemera::core::add_up(pkt.size());
+                } else if (outcome == ns::SendOutcome::Full) {
                     ++dropped_count;
                 } else if (outcome == ns::SendOutcome::Closed) {
                     return false;
