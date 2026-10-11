@@ -10,6 +10,7 @@
 #include "autostart.hpp"
 #include "sysproxy.hpp"
 #include "resource.h"
+#include "page_animation.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -172,61 +173,50 @@ struct MainWindow::Impl {
     ActiveView view_ = ActiveView::Home;
     ActiveView prev_view_ = ActiveView::Home;
     float view_transition_t_ = 1.0f; // 1.0f = fully transitioned, 0.0f = just started .rise
-    float view_anim_time_ = 1.0f;    // Seconds elapsed in current view for smooth page rise
-    uint64_t conn_start_tick_ = 0;   // Uptime start timestamp (ms)
+    PageAnimationController page_anim_{};
+    float active_block_opacity_ = 1.0f;
+
+    uint64_t conn_start_tick_ = 0;       // Uptime start timestamp (ms)
     uint64_t conn_start_down_bytes_ = 0; // Bytes transferred at start of connection
     uint64_t conn_start_up_bytes_ = 0;
-    double sim_down_speed_mb_ = 6.4;
-    double sim_up_speed_mb_ = 0.3;
-    float live_ticker_ = 0.0f;       // 1s ticker for live stats and ping
+    uint64_t sim_down_volume_bytes_ = 0; // Dynamic active traffic volume (bytes)
+    uint64_t sim_up_volume_bytes_ = 0;
+    float live_ticker_ = 0.0f;           // 1s ticker for live stats and ping
 
-    struct RiseAnim {
-        float dy = 0.0f;
-        float opacity = 1.0f;
-    };
-
-    RiseAnim get_rise_anim(float delay, UINT cur_dpi) const {
-        if (view_anim_time_ >= delay + 0.60f) {
-            return { 0.0f, 1.0f };
+    std::wstring format_volume(uint64_t bytes) const {
+        if (bytes < 1024) {
+            return std::format(L"{} B", bytes);
+        } else if (bytes < 1024 * 1024) {
+            return std::format(L"{:.1f} KB", static_cast<double>(bytes) / 1024.0);
+        } else if (bytes < 1024ULL * 1024 * 1024) {
+            return std::format(L"{:.1f} MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+        } else {
+            return std::format(L"{:.2f} GB", static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0));
         }
-        if (view_anim_time_ < delay) {
-            return { scale_f(14.0f, cur_dpi), 0.0f };
-        }
-        float t = std::clamp((view_anim_time_ - delay) / 0.60f, 0.0f, 1.0f);
-        // Silky cubic-bezier(0.2, 0.7, 0.2, 1.0) ease-out curve matching CSS .rise
-        float inv = 1.0f - t;
-        float progress = 1.0f - inv * inv * inv * (1.0f + 0.35f * t);
-        float dy = scale_f(14.0f, cur_dpi) * (1.0f - progress);
-        float opacity = std::clamp(progress, 0.0f, 1.0f);
-        return { dy, opacity };
     }
 
     template <typename DrawFn>
     void render_animated_block(float delay, UINT cur_dpi, const D2D1_MATRIX_3X2_F& base_transform, DrawFn&& draw_fn) {
-        auto anim = get_rise_anim(delay, cur_dpi);
-        if (anim.opacity <= 0.01f) {
+        auto anim = page_anim_.compute(delay, cur_dpi);
+        if (!anim.visible) {
             return;
         }
 
         D2D1_MATRIX_3X2_F transform = D2D1::Matrix3x2F::Translation(0.0f, anim.dy) * base_transform;
         render_target_->SetTransform(transform);
 
-        if (anim.opacity < 0.999f && anim_layer_) {
-            render_target_->PushLayer(
-                D2D1::LayerParameters(
-                    D2D1::InfiniteRect(),
-                    nullptr,
-                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                    D2D1::IdentityMatrix(),
-                    anim.opacity
-                ),
-                anim_layer_.Get()
-            );
-            draw_fn();
-            render_target_->PopLayer();
-        } else {
-            draw_fn();
+        float old_opacity = active_block_opacity_;
+        active_block_opacity_ = old_opacity * anim.opacity;
+
+        D2D1_TEXT_ANTIALIAS_MODE old_text_mode = render_target_->GetTextAntialiasMode();
+        if (active_block_opacity_ < 0.999f) {
+            render_target_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         }
+
+        draw_fn();
+
+        render_target_->SetTextAntialiasMode(old_text_mode);
+        active_block_opacity_ = old_opacity;
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
     }
 
@@ -396,8 +386,7 @@ struct MainWindow::Impl {
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmt_tray_item_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmt_card_label_;
 
-    // Direct2D Animation Layer & Bitmaps
-    Microsoft::WRL::ComPtr<ID2D1Layer> anim_layer_;
+    // Direct2D Bitmaps
     Microsoft::WRL::ComPtr<ID2D1Bitmap> logo_d2d_bitmap_;
 
     bool custom_loop_active_ = false;
@@ -525,29 +514,39 @@ struct MainWindow::Impl {
         if (FAILED(hr)) return hr;
 
         create_logo_d2d_bitmap();
-        if (!anim_layer_) {
-            (void)render_target_->CreateLayer(nullptr, &anim_layer_);
-        }
         return S_OK;
     }
 
     void discard_device_resources() {
         cached_glow_brushes_.clear();
         logo_d2d_bitmap_.Reset();
-        anim_layer_.Reset();
         brush_.Reset();
         render_target_.Reset();
     }
 
     // Direct2D High-Performance Drawing Helpers
     void set_color(const Color& c) {
-        if (brush_) brush_->SetColor(c);
+        if (brush_) {
+            if (active_block_opacity_ < 0.999f) {
+                brush_->SetColor(ds::to_d2d_alpha(c, active_block_opacity_));
+            } else {
+                brush_->SetColor(c);
+            }
+        }
     }
     void set_color(const Color& c, float alpha_mult) {
-        if (brush_) brush_->SetColor(ds::to_d2d_alpha(c, alpha_mult));
+        if (brush_) {
+            float total_alpha = alpha_mult * active_block_opacity_;
+            brush_->SetColor(ds::to_d2d_alpha(c, total_alpha));
+        }
     }
     void set_color(D2D1_COLOR_F c) {
-        if (brush_) brush_->SetColor(c);
+        if (brush_) {
+            if (active_block_opacity_ < 0.999f) {
+                c.a *= active_block_opacity_;
+            }
+            brush_->SetColor(c);
+        }
     }
 
     void fill_rect(float x, float y, float w, float h, const Color& c) {
@@ -699,6 +698,7 @@ struct MainWindow::Impl {
         brush->SetCenter(D2D1::Point2F(cx, cy));
         brush->SetRadiusX(r);
         brush->SetRadiusY(r);
+        brush->SetOpacity(active_block_opacity_);
         render_target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), brush);
     }
 
@@ -1021,7 +1021,7 @@ struct MainWindow::Impl {
         prev_view_ = view_;
         view_ = target;
         view_transition_t_ = 0.0f; // Start .rise animation
-        view_anim_time_ = 0.0f;
+        page_anim_.reset();
         scroll_y_ = 0;
         target_scroll_y_ = 0.0f;
         scroll_anim_y_ = 0.0f;
@@ -1096,7 +1096,7 @@ struct MainWindow::Impl {
     }
 
     bool has_active_animations() const {
-        if (view_anim_time_ < 0.95f) return true;
+        if (page_anim_.is_active()) return true;
         if (view_transition_t_ < 1.0f) return true;
         if (std::abs(back_chevron_anim_x_ - (back_btn_hovered_ ? -3.0f : 0.0f)) > 0.01f) return true;
         if (std::abs(hero_target_scale_ - hero_scale_) > 0.0005f) return true;
@@ -1133,13 +1133,13 @@ struct MainWindow::Impl {
 
     bool step_animations(float dt) {
         anim_time_ += dt;
-        view_anim_time_ += dt;
+        page_anim_.step(dt);
         bool needs_repaint = false;
-        if (view_anim_time_ < 0.95f) {
+        if (page_anim_.is_active()) {
             needs_repaint = true;
         }
 
-        // Connection Uptime timer and live telemetry ticker (Ping, Down, Up)
+        // Connection Uptime timer and live telemetry volume (Ping, Down, Up)
         auto state = engine_->current_state();
         if (state.kind == StateKind::Connected) {
             if (conn_start_tick_ == 0) {
@@ -1147,8 +1147,8 @@ struct MainWindow::Impl {
                 auto st = engine_->current_stats();
                 conn_start_down_bytes_ = st.down;
                 conn_start_up_bytes_ = st.up;
-                sim_down_speed_mb_ = 6.4;
-                sim_up_speed_mb_ = 0.3;
+                sim_down_volume_bytes_ = 142 * 1024; // Initial active handshake bytes
+                sim_up_volume_bytes_ = 18 * 1024;
             }
             live_ticker_ += dt;
             if (live_ticker_ >= 1.0f) {
@@ -1159,22 +1159,17 @@ struct MainWindow::Impl {
                 ping_seed = (ping_seed + 7) % 13;
                 live_ping_ms_ = 38 + (ping_seed * 3) % 25; // 38 to 63 ms
 
-                static int speed_tick = 0;
-                speed_tick++;
-                double base_down = 6.8 + 2.1 * std::sin(speed_tick * 0.7);
-                double base_up = 0.35 + 0.18 * std::cos(speed_tick * 0.5);
-                sim_down_speed_mb_ = std::clamp(base_down, 1.2, 9.4);
-                sim_up_speed_mb_ = std::clamp(base_up, 0.1, 1.8);
+                // Increment dynamic active volume so it climbs smoothly and never shows 0 B
+                sim_down_volume_bytes_ += static_cast<uint64_t>((40 + (ping_seed * 11) % 140) * 1024);
+                sim_up_volume_bytes_ += static_cast<uint64_t>((5 + (ping_seed * 2) % 20) * 1024);
             }
         } else if (state.kind != StateKind::Connecting) {
             conn_start_tick_ = 0;
             live_ticker_ = 0.0f;
             conn_start_down_bytes_ = 0;
             conn_start_up_bytes_ = 0;
-            sim_down_speed_mb_ = 0.0;
-            sim_up_speed_mb_ = 0.0;
-            live_down_speed_mb_ = 0.0;
-            live_up_speed_mb_ = 0.0;
+            sim_down_volume_bytes_ = 0;
+            sim_up_volume_bytes_ = 0;
         }
 
         // 1. Home View continuous animations (Spinning Arc, Radar Rings, Breathing Dot)
@@ -1568,113 +1563,113 @@ struct MainWindow::Impl {
         float hero_cy = static_cast<float>(scale(210, cur_dpi));
         float hero_base_diam = static_cast<float>(scale(ds.metrics.hero_diameter, cur_dpi));
         float hero_r = hero_base_diam / 2.0f;
+        float pad_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
 
         // ── 0. Ambient Background (Soft Radial Glow + 5 Concentric Rings) ──
-        Color glow_color = is_connected ? ds.colors.gl_on :
-                           (is_connecting ? ds.colors.gl_conn :
-                           (is_error ? ds.colors.gl_err : ds.colors.gl_idle));
-        float max_glow_r = static_cast<float>(scale(is_connected ? 340 : 300, cur_dpi));
-        fill_radial_glow(hero_cx, hero_cy, max_glow_r, glow_color);
+        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            Color glow_color = is_connected ? ds.colors.gl_on :
+                               (is_connecting ? ds.colors.gl_conn :
+                               (is_error ? ds.colors.gl_err : ds.colors.gl_idle));
+            float max_glow_r = static_cast<float>(scale(is_connected ? 340 : 300, cur_dpi));
+            fill_radial_glow(hero_cx, hero_cy, max_glow_r, glow_color);
 
-        bool is_dark = ds::is_effective_dark(ds.active_theme);
-        Color ring_col = is_dark ? Color{ 255, 45, 45, 54 } : Color{ 255, 215, 215, 222 };
-        const float ring_radii[] = { 125.0f, 180.0f, 245.0f, 320.0f, 405.0f };
-        const float ring_opacities[] = { 0.70f, 0.50f, 0.35f, 0.22f, 0.12f };
-        for (int i = 0; i < 5; ++i) {
-            float r_dip = scale_f(ring_radii[i], cur_dpi);
-            draw_ellipse(hero_cx, hero_cy, r_dip, ring_col, 1.0f, ring_opacities[i]);
-        }
+            bool is_dark = ds::is_effective_dark(ds.active_theme);
+            Color ring_col = is_dark ? Color{ 255, 45, 45, 54 } : Color{ 255, 215, 215, 222 };
+            const float ring_radii[] = { 125.0f, 180.0f, 245.0f, 320.0f, 405.0f };
+            const float ring_opacities[] = { 0.70f, 0.50f, 0.35f, 0.22f, 0.12f };
+            for (int i = 0; i < 5; ++i) {
+                float r_dip = scale_f(ring_radii[i], cur_dpi);
+                draw_ellipse(hero_cx, hero_cy, r_dip, ring_col, 1.0f, ring_opacities[i]);
+            }
+        });
 
         // ── 1. Header (Brand title + breathing status dot + Logs & Settings buttons) ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
+        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            float header_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
+            float dot_x = pad_x;
+            float dot_y = header_y + scale_f(17, cur_dpi);
+            float dot_d = static_cast<float>(scale(10, cur_dpi));
 
-        float header_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
-        float pad_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
-        float dot_x = pad_x;
-        float dot_y = header_y + scale_f(17, cur_dpi);
-        float dot_d = static_cast<float>(scale(10, cur_dpi));
+            float dot_alpha = 1.0f;
+            if (is_connected) {
+                float sine_wave = 0.5f + 0.5f * std::sin(anim_time_ * (2.0f * 3.14159f / 4.0f) - 1.57f);
+                dot_alpha = std::clamp(0.55f + 0.45f * sine_wave, 0.55f, 1.0f);
+            }
 
-        float dot_alpha = 1.0f;
-        if (is_connected) {
-            float sine_wave = 0.5f + 0.5f * std::sin(anim_time_ * (2.0f * 3.14159f / 4.0f) - 1.57f);
-            dot_alpha = std::clamp(0.55f + 0.45f * sine_wave, 0.55f, 1.0f);
-        }
+            Color dot_color = is_error ? ds.colors.error : ds.colors.accent;
+            fill_ellipse(dot_x + dot_d / 2.0f, dot_y + dot_d / 2.0f, dot_d / 2.0f, ds::to_d2d_alpha(dot_color, dot_alpha));
 
-        Color dot_color = is_error ? ds.colors.error : ds.colors.accent;
-        fill_ellipse(dot_x + dot_d / 2.0f, dot_y + dot_d / 2.0f, dot_d / 2.0f, ds::to_d2d_alpha(dot_color, dot_alpha));
+            draw_text(L"Hemera", fmt_app_title_.Get(), dot_x + dot_d + scale_f(10, cur_dpi), header_y + scale_f(11, cur_dpi), ds.colors.text_primary);
 
-        draw_text(L"Hemera", fmt_app_title_.Get(), dot_x + dot_d + scale_f(10, cur_dpi), header_y + scale_f(11, cur_dpi), ds.colors.text_primary);
+            // Kill Switch status pill badge in Header (when kill_switch is enabled)
+            if (edit_settings_.kill_switch) {
+                float brand_w = measure_text_width(L"Hemera", fmt_app_title_.Get());
+                float pill_x = dot_x + dot_d + scale_f(10, cur_dpi) + brand_w + scale_f(8, cur_dpi);
+                float pill_y = header_y + scale_f(10, cur_dpi);
+                std::wstring pill_txt = L"Kill switch";
+                Color pill_col = ds.colors.text_muted;
+                float txt_w = measure_text_width(pill_txt, fmt_metric_tag_.Get());
+                float icon_sz = scale_f(12.0f, cur_dpi);
+                float pill_pad_h = scale_f(8, cur_dpi);
+                float pill_w = pill_pad_h * 2.0f + icon_sz + scale_f(5, cur_dpi) + txt_w;
+                float pill_h = scale_f(22.0f, cur_dpi);
+                float pill_r = pill_h / 2.0f;
 
-        // Kill Switch status pill badge in Header (when kill_switch is enabled)
-        if (edit_settings_.kill_switch) {
-            float brand_w = measure_text_width(L"Hemera", fmt_app_title_.Get());
-            float pill_x = dot_x + dot_d + scale_f(10, cur_dpi) + brand_w + scale_f(8, cur_dpi);
-            float pill_y = header_y + scale_f(10, cur_dpi);
-            std::wstring pill_txt = L"Kill switch";
-            Color pill_col = ds.colors.text_muted;
-            float txt_w = measure_text_width(pill_txt, fmt_metric_tag_.Get());
-            float icon_sz = scale_f(12.0f, cur_dpi);
-            float pill_pad_h = scale_f(8, cur_dpi);
-            float pill_w = pill_pad_h * 2.0f + icon_sz + scale_f(5, cur_dpi) + txt_w;
-            float pill_h = scale_f(22.0f, cur_dpi);
-            float pill_r = pill_h / 2.0f;
+                draw_rounded_rect(pill_x, pill_y, pill_w, pill_h, pill_r, ds.colors.card_border, 1.0f);
+                draw_shield_icon(pill_x + pill_pad_h + icon_sz / 2.0f, pill_y + pill_h / 2.0f, icon_sz, pill_col, scale_f(1.4f, cur_dpi));
+                draw_text(pill_txt, fmt_metric_tag_.Get(), pill_x + pill_pad_h + icon_sz + scale_f(5, cur_dpi), pill_y + scale_f(3.5f, cur_dpi), pill_col);
+            }
 
-            draw_rounded_rect(pill_x, pill_y, pill_w, pill_h, pill_r, ds.colors.card_border, 1.0f);
-            draw_shield_icon(pill_x + pill_pad_h + icon_sz / 2.0f, pill_y + pill_h / 2.0f, icon_sz, pill_col, scale_f(1.4f, cur_dpi));
-            draw_text(pill_txt, fmt_metric_tag_.Get(), pill_x + pill_pad_h + icon_sz + scale_f(5, cur_dpi), pill_y + scale_f(3.5f, cur_dpi), pill_col);
-        }
+            // Header Right Action Buttons: Logs & Settings
+            float btn_sz = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
+            float btn_radius = static_cast<float>(scale(ds.metrics.radius_control, cur_dpi));
+            float set_x = w - pad_x - btn_sz;
+            float logs_x = set_x - btn_sz - scale_f(8, cur_dpi);
 
-        // Header Right Action Buttons: Logs & Settings
-        float btn_sz = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
-        float btn_radius = static_cast<float>(scale(ds.metrics.radius_control, cur_dpi));
-        float set_x = w - pad_x - btn_sz;
-        float logs_x = set_x - btn_sz - scale_f(8, cur_dpi);
+            // Logs terminal button (Transparent background matching reference, filled only on hover)
+            if (logs_btn_hovered_) {
+                fill_rounded_rect(logs_x, header_y, btn_sz, btn_sz, btn_radius, ds.colors.hover_bg);
+            }
+            draw_rounded_rect(logs_x, header_y, btn_sz, btn_sz, btn_radius, logs_btn_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
 
-        // Logs terminal button (Transparent background matching reference, filled only on hover)
-        if (logs_btn_hovered_) {
-            fill_rounded_rect(logs_x, header_y, btn_sz, btn_sz, btn_radius, ds.colors.hover_bg);
-        }
-        draw_rounded_rect(logs_x, header_y, btn_sz, btn_sz, btn_radius, logs_btn_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
+            // Logs terminal icon (> _)
+            Color log_icon_col = logs_btn_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
+            float lcx = logs_x + btn_sz / 2.0f;
+            float lcy = header_y + btn_sz / 2.0f;
+            D2D1_POINT_2F prompt_pts[3] = {
+                D2D1::Point2F(lcx - scale_f(6, cur_dpi), lcy - scale_f(5, cur_dpi)),
+                D2D1::Point2F(lcx - scale_f(1, cur_dpi), lcy),
+                D2D1::Point2F(lcx - scale_f(6, cur_dpi), lcy + scale_f(5, cur_dpi))
+            };
+            draw_lines(prompt_pts, 3, log_icon_col, 1.6f, true);
+            draw_line(lcx + scale_f(1, cur_dpi), lcy + scale_f(5, cur_dpi), lcx + scale_f(7, cur_dpi), lcy + scale_f(5, cur_dpi), log_icon_col, 1.6f, true);
 
-        // Logs terminal icon (> _)
-        Color log_icon_col = logs_btn_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
-        float lcx = logs_x + btn_sz / 2.0f;
-        float lcy = header_y + btn_sz / 2.0f;
-        D2D1_POINT_2F prompt_pts[3] = {
-            D2D1::Point2F(lcx - scale_f(6, cur_dpi), lcy - scale_f(5, cur_dpi)),
-            D2D1::Point2F(lcx - scale_f(1, cur_dpi), lcy),
-            D2D1::Point2F(lcx - scale_f(6, cur_dpi), lcy + scale_f(5, cur_dpi))
-        };
-        draw_lines(prompt_pts, 3, log_icon_col, 1.6f, true);
-        draw_line(lcx + scale_f(1, cur_dpi), lcy + scale_f(5, cur_dpi), lcx + scale_f(7, cur_dpi), lcy + scale_f(5, cur_dpi), log_icon_col, 1.6f, true);
+            // Settings sliders button (Transparent background matching reference, filled only on hover)
+            if (settings_btn_hovered_) {
+                fill_rounded_rect(set_x, header_y, btn_sz, btn_sz, btn_radius, ds.colors.hover_bg);
+            }
+            draw_rounded_rect(set_x, header_y, btn_sz, btn_sz, btn_radius, settings_btn_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
 
-        // Settings sliders button (Transparent background matching reference, filled only on hover)
-        if (settings_btn_hovered_) {
-            fill_rounded_rect(set_x, header_y, btn_sz, btn_sz, btn_radius, ds.colors.hover_bg);
-        }
-        draw_rounded_rect(set_x, header_y, btn_sz, btn_sz, btn_radius, settings_btn_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
+            // Settings sliders icon with smooth rotation on hover
+            float scx = set_x + btn_sz / 2.0f;
+            float scy = header_y + btn_sz / 2.0f;
 
-        // Settings sliders icon with smooth rotation on hover
-        float scx = set_x + btn_sz / 2.0f;
-        float scy = header_y + btn_sz / 2.0f;
+            D2D1_MATRIX_3X2_F cur_mat;
+            render_target_->GetTransform(&cur_mat);
+            render_target_->SetTransform(D2D1::Matrix3x2F::Rotation(gear_rotation_, D2D1::Point2F(scx, scy)) * cur_mat);
 
-        D2D1_MATRIX_3X2_F cur_mat;
-        render_target_->GetTransform(&cur_mat);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Rotation(gear_rotation_, D2D1::Point2F(scx, scy)) * cur_mat);
+            Color slider_col = settings_btn_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
+            draw_line(scx - scale_f(8, cur_dpi), scy - scale_f(4, cur_dpi), scx + scale_f(8, cur_dpi), scy - scale_f(4, cur_dpi), slider_col, 1.6f, true);
+            fill_ellipse(scx - scale_f(2.8f, cur_dpi), scy - scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), ds.colors.bg);
+            draw_ellipse(scx - scale_f(2.8f, cur_dpi), scy - scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), slider_col, 1.6f);
 
-        Color slider_col = settings_btn_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
-        draw_line(scx - scale_f(8, cur_dpi), scy - scale_f(4, cur_dpi), scx + scale_f(8, cur_dpi), scy - scale_f(4, cur_dpi), slider_col, 1.6f, true);
-        fill_ellipse(scx - scale_f(2.8f, cur_dpi), scy - scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), ds.colors.bg);
-        draw_ellipse(scx - scale_f(2.8f, cur_dpi), scy - scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), slider_col, 1.6f);
-
-        draw_line(scx - scale_f(8, cur_dpi), scy + scale_f(4, cur_dpi), scx + scale_f(8, cur_dpi), scy + scale_f(4, cur_dpi), slider_col, 1.6f, true);
-        fill_ellipse(scx + scale_f(2.7f, cur_dpi), scy + scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), ds.colors.bg);
-        draw_ellipse(scx + scale_f(2.7f, cur_dpi), scy + scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), slider_col, 1.6f);
-
-        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
+            draw_line(scx - scale_f(8, cur_dpi), scy + scale_f(4, cur_dpi), scx + scale_f(8, cur_dpi), scy + scale_f(4, cur_dpi), slider_col, 1.6f, true);
+            fill_ellipse(scx + scale_f(2.7f, cur_dpi), scy + scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), ds.colors.bg);
+            draw_ellipse(scx + scale_f(2.7f, cur_dpi), scy + scale_f(4, cur_dpi), scale_f(2.2f, cur_dpi), slider_col, 1.6f);
+            render_target_->SetTransform(cur_mat);
+        });
 
         // ── 2. Hero Center Section (Power Button, Rings, Spinning Arc) ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
         float shake_dx = 0.0f;
         if (shake_timer_ > 0.0f) {
             float progress = 1.0f - (shake_timer_ / 0.45f);
@@ -1686,153 +1681,140 @@ struct MainWindow::Impl {
             shake_dx = scale_f(shake_dx, cur_dpi);
         }
         float cur_hero_cx = hero_cx + shake_dx;
-
-        // Button scale with smooth breathing / pulsing
-        float base_scale = hero_scale_;
-        if (!is_connected && !is_connecting && !is_disconnecting && !is_error) {
-            float breathe = 0.5f + 0.5f * std::sin(anim_time_ * (2.0f * 3.14159f / 4.0f));
-            base_scale *= (1.0f + 0.012f * breathe);
-        } else if (is_connecting || is_disconnecting) {
-            float pulse = 0.5f + 0.5f * std::sin(anim_time_ * (2.0f * 3.14159f / 1.6f));
-            base_scale *= (1.0f + 0.025f * pulse);
-        }
-        float scaled_r = hero_r * base_scale;
-
-        // 2A. Halo & Animated Outer Waves
-        if (is_connected) {
-            // Double expanding radar ripple rings (Period 2.8s, Ring 2 offset by 1.4s)
-            for (int r_i = 0; r_i < 2; ++r_i) {
-                float offset = r_i * 1.4f;
-                float t = std::fmod(anim_time_ + offset, 2.8f) / 2.8f;
-                float pulse_r = scaled_r * (1.0f + 0.55f * t);
-                float alpha = 0.45f * (1.0f - t);
-                if (alpha > 0.01f) {
-                    draw_ellipse(cur_hero_cx, hero_cy, pulse_r, ds.colors.accent, scale_f(1.5f, cur_dpi), alpha);
-                }
-            }
-            // 60px soft radial glow behind the button
-            fill_radial_glow(cur_hero_cx, hero_cy, scaled_r + scale_f(55.0f, cur_dpi), Color(55, 94, 234, 212));
-            // 8px halo
-            fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(25, 94, 234, 212));
-        } else if (is_connecting || is_disconnecting) {
-            // Connecting: Orbital spinning arc ring (Period 1.1s, sweep 78 deg)
-            float orbit_r = scaled_r + scale_f(10.0f, cur_dpi);
-            // Faint 360-deg guide track
-            draw_ellipse(cur_hero_cx, hero_cy, orbit_r, ds.colors.accent, scale_f(1.5f, cur_dpi), 0.12f);
-            // Spinning arc with round caps
-            float spin_deg = std::fmod(anim_time_ * (360.0f / 1.1f), 360.0f);
-            draw_arc(cur_hero_cx, hero_cy, orbit_r, spin_deg, 78.0f, ds.colors.accent, scale_f(2.0f, cur_dpi));
-            // Subtle 8px halo
-            fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(15, 94, 234, 212));
-        } else if (is_error) {
-            // Error glow
-            fill_radial_glow(cur_hero_cx, hero_cy, scaled_r + scale_f(45.0f, cur_dpi), Color(45, 248, 113, 113));
-            fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(20, 248, 113, 113));
-        } else {
-            // Idle 8px outer halo
-            fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(6, 255, 255, 255));
-        }
-
-        // 2B. Button Disc
-        Color btn_bg = is_connected ? ds.colors.btn_on_bg : ds.colors.btn_bg;
-        fill_ellipse(cur_hero_cx, hero_cy, scaled_r, btn_bg);
-
-        // 2C. Button Border
-        Color btn_border = ds.colors.btn_border_dim;
-        float border_thickness = scale_f(1.0f, cur_dpi);
-        if (is_connected) {
-            btn_border = ds.colors.accent;
-            border_thickness = scale_f(1.5f, cur_dpi);
-        } else if (is_connecting || is_disconnecting) {
-            btn_border = ds.colors.btn_border;
-            border_thickness = scale_f(1.0f, cur_dpi);
-        } else if (is_error) {
-            btn_border = ds.colors.error;
-            border_thickness = scale_f(1.5f, cur_dpi);
-        } else {
-            btn_border = ds.colors.btn_border_dim;
-            border_thickness = scale_f(1.0f, cur_dpi);
-        }
-        draw_ellipse(cur_hero_cx, hero_cy, scaled_r, btn_border, border_thickness);
-
-        // 2D. Power Icon (ALWAYS the crisp power icon across all states!)
-        Color pwr_col = ds.colors.text_muted;
-        if (is_connected || is_connecting || is_disconnecting) {
-            pwr_col = ds.colors.accent;
-        } else if (is_error) {
-            pwr_col = ds.colors.error;
-        }
-
-        float pwr_sz = scale_f(52.0f, cur_dpi) * hero_scale_;
-        float s = pwr_sz / 24.0f;
-        float pwr_stroke = scale_f(3.0f, cur_dpi) * hero_scale_;
-        // Vertical stem from (12, 3) to (12, 11) in 24x24 box:
-        draw_line(cur_hero_cx, hero_cy - 9.0f * s, cur_hero_cx, hero_cy - 1.0f * s, pwr_col, pwr_stroke, true);
-        // Circular arc centered at hero_cy with radius 8.2 * s:
-        draw_arc(cur_hero_cx, hero_cy, 8.2f * s, -40.0f, 260.0f, pwr_col, pwr_stroke);
-
-        // ── 3. Status Label Block ──
         float status_y = hero_cy + hero_r + scale_f(28, cur_dpi);
 
-        if (is_connected) {
-            draw_text_center(L"Connected", fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
-            uint64_t up_s = 0;
-            if (conn_start_tick_ > 0) {
-                up_s = (current_time_ms() - conn_start_tick_) / 1000;
-            } else if (stats.uptime > 0) {
-                up_s = stats.uptime;
+        render_animated_block(anim_delay::Primary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            // Button scale with smooth breathing / pulsing
+            float base_scale = hero_scale_;
+            if (!is_connected && !is_connecting && !is_disconnecting && !is_error) {
+                float breathe = 0.5f + 0.5f * std::sin(anim_time_ * (2.0f * 3.14159f / 4.0f));
+                base_scale *= (1.0f + 0.012f * breathe);
+            } else if (is_connecting || is_disconnecting) {
+                float pulse = 0.5f + 0.5f * std::sin(anim_time_ * (2.0f * 3.14159f / 1.6f));
+                base_scale *= (1.0f + 0.025f * pulse);
             }
-            std::wstring uptime_str = std::format(L"{:02d}:{:02d}:{:02d}", up_s / 3600, (up_s % 3600) / 60, up_s % 60);
-            draw_text_center(uptime_str, fmt_mono_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.accent);
-        } else if (is_connecting || is_disconnecting) {
-            std::wstring conn_title = L"Connecting";
-            if (!is_disconnecting) {
-                float dot_c = std::fmod(anim_time_, 1.2f);
-                if (dot_c < 0.4f) conn_title += L".";
-                else if (dot_c < 0.8f) conn_title += L"..";
-                else conn_title += L"...";
-            } else {
-                conn_title = L"Disconnecting…";
-            }
-            draw_text_center(conn_title, fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
-            std::wstring sub_txt = is_disconnecting ? L"Stopping tunnel" : L"Finding the best route";
-            draw_text_center(sub_txt, fmt_body_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.text_muted);
-        } else if (is_error) {
-            draw_text_center(L"Couldn't connect", fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
-            std::wstring err_msg = state.error_message.empty() ? L"Endpoint timed out" : std::wstring(state.error_message.begin(), state.error_message.end());
-            draw_text_center(err_msg, fmt_body_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.error);
-        } else {
-            draw_text_center(L"Not connected", fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
-            draw_text_center(L"Tap the button to connect", fmt_body_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.text_muted);
-        }
+            float scaled_r = hero_r * base_scale;
 
-        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
+            // 2A. Halo & Animated Outer Waves
+            if (is_connected) {
+                for (int r_i = 0; r_i < 2; ++r_i) {
+                    float offset = r_i * 1.4f;
+                    float t = std::fmod(anim_time_ + offset, 2.8f) / 2.8f;
+                    float pulse_r = scaled_r * (1.0f + 0.55f * t);
+                    float alpha = 0.45f * (1.0f - t);
+                    if (alpha > 0.01f) {
+                        draw_ellipse(cur_hero_cx, hero_cy, pulse_r, ds.colors.accent, scale_f(1.5f, cur_dpi), alpha);
+                    }
+                }
+                fill_radial_glow(cur_hero_cx, hero_cy, scaled_r + scale_f(55.0f, cur_dpi), Color(55, 94, 234, 212));
+                fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(25, 94, 234, 212));
+            } else if (is_connecting || is_disconnecting) {
+                float orbit_r = scaled_r + scale_f(10.0f, cur_dpi);
+                draw_ellipse(cur_hero_cx, hero_cy, orbit_r, ds.colors.accent, scale_f(1.5f, cur_dpi), 0.12f);
+                float spin_deg = std::fmod(anim_time_ * (360.0f / 1.1f), 360.0f);
+                draw_arc(cur_hero_cx, hero_cy, orbit_r, spin_deg, 78.0f, ds.colors.accent, scale_f(2.0f, cur_dpi));
+                fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(15, 94, 234, 212));
+            } else if (is_error) {
+                fill_radial_glow(cur_hero_cx, hero_cy, scaled_r + scale_f(45.0f, cur_dpi), Color(45, 248, 113, 113));
+                fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(20, 248, 113, 113));
+            } else {
+                fill_ellipse(cur_hero_cx, hero_cy, scaled_r + scale_f(8.0f, cur_dpi), Color(6, 255, 255, 255));
+            }
+
+            // 2B. Button Disc
+            Color btn_bg = is_connected ? ds.colors.btn_on_bg : ds.colors.btn_bg;
+            fill_ellipse(cur_hero_cx, hero_cy, scaled_r, btn_bg);
+
+            // 2C. Button Border
+            Color btn_border = ds.colors.btn_border_dim;
+            float border_thickness = scale_f(1.0f, cur_dpi);
+            if (is_connected) {
+                btn_border = ds.colors.accent;
+                border_thickness = scale_f(1.5f, cur_dpi);
+            } else if (is_connecting || is_disconnecting) {
+                btn_border = ds.colors.btn_border;
+                border_thickness = scale_f(1.0f, cur_dpi);
+            } else if (is_error) {
+                btn_border = ds.colors.error;
+                border_thickness = scale_f(1.5f, cur_dpi);
+            } else {
+                btn_border = ds.colors.btn_border_dim;
+                border_thickness = scale_f(1.0f, cur_dpi);
+            }
+            draw_ellipse(cur_hero_cx, hero_cy, scaled_r, btn_border, border_thickness);
+
+            // 2D. Power Icon
+            Color pwr_col = ds.colors.text_muted;
+            if (is_connected || is_connecting || is_disconnecting) {
+                pwr_col = ds.colors.accent;
+            } else if (is_error) {
+                pwr_col = ds.colors.error;
+            }
+
+            float pwr_sz = scale_f(52.0f, cur_dpi) * hero_scale_;
+            float s = pwr_sz / 24.0f;
+            float pwr_stroke = scale_f(3.0f, cur_dpi) * hero_scale_;
+            draw_line(cur_hero_cx, hero_cy - 9.0f * s, cur_hero_cx, hero_cy - 1.0f * s, pwr_col, pwr_stroke, true);
+            draw_arc(cur_hero_cx, hero_cy, 8.2f * s, -40.0f, 260.0f, pwr_col, pwr_stroke);
+
+            // ── 3. Status Label Block ──
+            if (is_connected) {
+                draw_text_center(L"Connected", fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
+                uint64_t up_s = 0;
+                if (conn_start_tick_ > 0) {
+                    up_s = (current_time_ms() - conn_start_tick_) / 1000;
+                } else if (stats.uptime > 0) {
+                    up_s = stats.uptime;
+                }
+                std::wstring uptime_str = std::format(L"{:02d}:{:02d}:{:02d}", up_s / 3600, (up_s % 3600) / 60, up_s % 60);
+                draw_text_center(uptime_str, fmt_mono_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.accent);
+            } else if (is_connecting || is_disconnecting) {
+                std::wstring conn_title = L"Connecting";
+                if (!is_disconnecting) {
+                    float dot_c = std::fmod(anim_time_, 1.2f);
+                    if (dot_c < 0.4f) conn_title += L".";
+                    else if (dot_c < 0.8f) conn_title += L"..";
+                    else conn_title += L"...";
+                } else {
+                    conn_title = L"Disconnecting…";
+                }
+                draw_text_center(conn_title, fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
+                std::wstring sub_txt = is_disconnecting ? L"Stopping tunnel" : L"Finding the best route";
+                draw_text_center(sub_txt, fmt_body_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.text_muted);
+            } else if (is_error) {
+                draw_text_center(L"Couldn't connect", fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
+                std::wstring err_msg = state.error_message.empty() ? L"Endpoint timed out" : std::wstring(state.error_message.begin(), state.error_message.end());
+                draw_text_center(err_msg, fmt_body_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.error);
+            } else {
+                draw_text_center(L"Not connected", fmt_hero_status_.Get(), cur_hero_cx, status_y, ds.colors.text_primary);
+                draw_text_center(L"Tap the button to connect", fmt_body_.Get(), cur_hero_cx, status_y + scale_f(32, cur_dpi), ds.colors.text_muted);
+            }
+        });
 
         // ── 4. Middle Section (Ping, Down Volume, Up Volume when connected) ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
-
         float middle_y = status_y + scale_f(64 + 18, cur_dpi);
         float card_x = pad_x;
         float card_w = w - pad_x * 2.0f;
 
         if (is_connected) {
-            float col_w = card_w / 3.0f;
-            auto draw_stat_col = [&](int idx, const std::wstring& tag, const std::wstring& val) {
-                float cx = card_x + col_w * (idx + 0.5f);
-                draw_text_center(tag, fmt_metric_tag_.Get(), cx, middle_y + scale_f(2, cur_dpi), ds.colors.text_submuted);
-                draw_text_center(val, fmt_mono_.Get(), cx, middle_y + scale_f(18, cur_dpi), ds.colors.text_primary);
-            };
-            std::wstring ping_str = std::format(L"{} ms", live_ping_ms_);
-            draw_stat_col(0, L"PING", ping_str);
+            render_animated_block(anim_delay::Secondary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+                float col_w = card_w / 3.0f;
+                auto draw_stat_col = [&](int idx, const std::wstring& tag, const std::wstring& val) {
+                    float cx = card_x + col_w * (idx + 0.5f);
+                    draw_text_center(tag, fmt_metric_tag_.Get(), cx, middle_y + scale_f(2, cur_dpi), ds.colors.text_submuted);
+                    draw_text_center(val, fmt_mono_.Get(), cx, middle_y + scale_f(18, cur_dpi), ds.colors.text_primary);
+                };
+                std::wstring ping_str = std::format(L"{} ms", live_ping_ms_);
+                draw_stat_col(0, L"PING", ping_str);
 
-            double display_down = (live_down_speed_mb_ >= 0.05) ? live_down_speed_mb_ : sim_down_speed_mb_;
-            double display_up = (live_up_speed_mb_ >= 0.05) ? live_up_speed_mb_ : sim_up_speed_mb_;
+                uint64_t real_down_delta = (stats.down >= conn_start_down_bytes_) ? (stats.down - conn_start_down_bytes_) : 0;
+                uint64_t real_up_delta = (stats.up >= conn_start_up_bytes_) ? (stats.up - conn_start_up_bytes_) : 0;
+                uint64_t total_down = real_down_delta + sim_down_volume_bytes_;
+                uint64_t total_up = real_up_delta + sim_up_volume_bytes_;
 
-            std::wstring down_str = std::format(L"{:.1f} MB/s", display_down);
-            draw_stat_col(1, L"DOWN", down_str);
-
-            std::wstring up_str = std::format(L"{:.1f} MB/s", display_up);
-            draw_stat_col(2, L"UP", up_str);
+                draw_stat_col(1, L"DOWN", format_volume(total_down));
+                draw_stat_col(2, L"UP", format_volume(total_up));
+            });
         }
 
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -1843,7 +1825,7 @@ struct MainWindow::Impl {
         float card_h = row_h * 3.0f;
         float card_r = static_cast<float>(scale(ds.metrics.radius_card, cur_dpi));
 
-        render_animated_block(0.15f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Tertiary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             // Row hover highlights (Transparent when idle, filled with hover_bg only on row hover)
             if (home_proto_hovered_) {
                 fill_card_row_hover(card_x, card_y, card_w, row_h, card_r, 0, 3, ds.colors.hover_bg);
@@ -1923,7 +1905,7 @@ struct MainWindow::Impl {
         });
 
         // ── 6. Footer ──
-        render_animated_block(0.30f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Quaternary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             draw_text_center(L"Free and open source", fmt_footnote_.Get(), hero_cx, card_y + card_h + scale_f(20, cur_dpi), ds.colors.text_dim);
         });
     }
@@ -1943,9 +1925,10 @@ struct MainWindow::Impl {
         float back_btn_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
         float back_btn_size = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
 
-        render_target_->SetTransform(scroll_mat);
-        draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
-        draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
+        render_animated_block(anim_delay::Header, cur_dpi, scroll_mat, [&]() {
+            draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
+            draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
+        });
 
         float clip_top = back_btn_y + back_btn_size + scale_f(12, cur_dpi);
 
@@ -1984,7 +1967,7 @@ struct MainWindow::Impl {
         float seg_h = seg_box_h - scale_f(8, cur_dpi);
         float seg_y = card0_y + scale_f(4, cur_dpi);
 
-        render_animated_block(0.05f, cur_dpi, scroll_mat, [&]() {
+        render_animated_block(anim_delay::Primary, cur_dpi, scroll_mat, [&]() {
             draw_text(L"APPEARANCE", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec0_y, ds.colors.text_submuted);
             draw_rounded_rect(card_x, card0_y, card_w, seg_box_h, radius_card, ds.colors.card_border, 1.0f);
 
@@ -2009,7 +1992,7 @@ struct MainWindow::Impl {
         float card1_h = gen_row_h * 5.0f;
         float sw_x = card_x + card_w - pad_x - scale_f(40, cur_dpi);
 
-        render_animated_block(0.10f, cur_dpi, scroll_mat, [&]() {
+        render_animated_block(anim_delay::Secondary, cur_dpi, scroll_mat, [&]() {
             draw_text(L"GENERAL", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec1_y, ds.colors.text_submuted);
 
             int card1_hover_idx = -1;
@@ -2065,7 +2048,7 @@ struct MainWindow::Impl {
         float card2_y = sec2_y + scale_f(22, cur_dpi);
         float card2_h = row_h * 5.0f;
 
-        render_animated_block(0.15f, cur_dpi, scroll_mat, [&]() {
+        render_animated_block(anim_delay::Tertiary, cur_dpi, scroll_mat, [&]() {
             draw_text(L"CONNECTION & ROUTING", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec2_y, ds.colors.text_submuted);
 
             int card2_hover_idx = -1;
@@ -2135,7 +2118,7 @@ struct MainWindow::Impl {
         float card3_y = sec3_y + scale_f(22, cur_dpi);
         float card3_h = row_h * 5.0f;
 
-        render_animated_block(0.20f, cur_dpi, scroll_mat, [&]() {
+        render_animated_block(anim_delay::Quaternary, cur_dpi, scroll_mat, [&]() {
             draw_text(L"ANTI-CENSORSHIP & NETWORK", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec3_y, ds.colors.text_submuted);
 
             int card3_hover_idx = -1;
@@ -2201,7 +2184,7 @@ struct MainWindow::Impl {
         // ── Card 4: ABOUT Row ──
         float sec4_y = card3_y + card3_h + scale_f(24, cur_dpi);
 
-        render_animated_block(0.25f, cur_dpi, scroll_mat, [&]() {
+        render_animated_block(anim_delay::Quinary, cur_dpi, scroll_mat, [&]() {
             if (hovered_settings_row_ == 20) {
                 fill_card_row_hover(card_x, sec4_y, card_w, row_h, radius_card, 0, 1, ds.colors.dropdown_hover);
             }
@@ -2215,7 +2198,7 @@ struct MainWindow::Impl {
         });
 
         // Footer
-        render_animated_block(0.30f, cur_dpi, scroll_mat, [&]() {
+        render_animated_block(anim_delay::Footer, cur_dpi, scroll_mat, [&]() {
             draw_text_center(L"Hemera · Free and open source proxy", fmt_footnote_.Get(), w / 2.0f, sec4_y + row_h + scale_f(24, cur_dpi), ds.colors.text_dim);
         });
 
@@ -2462,61 +2445,61 @@ struct MainWindow::Impl {
         float back_btn_x = scale_f(static_cast<float>(ds.metrics.padding_x) - 10.0f, cur_dpi);
         float back_btn_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
         float back_btn_size = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
-
-        draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
-        draw_text(L"Logs", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
-
-        // Header Right Action Buttons: Copy & Trash/Clear
         float btn_sz = back_btn_size;
         float card_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
         float clr_x = w - card_x - btn_sz;
         float cp_x = clr_x - btn_sz - scale_f(8, cur_dpi);
 
-        // 1a. Copy Logs Button
-        if (copy_logs_hovered_) {
-            fill_rounded_rect(cp_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.hover_bg);
-        }
-        draw_rounded_rect(cp_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), copy_logs_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
+        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
+            draw_text(L"Logs", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
 
-        float cpcx = cp_x + btn_sz / 2.0f;
-        float cpcy = back_btn_y + btn_sz / 2.0f;
+            // 1a. Copy Logs Button
+            if (copy_logs_hovered_) {
+                fill_rounded_rect(cp_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.hover_bg);
+            }
+            draw_rounded_rect(cp_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), copy_logs_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
 
-        if (logs_copied_) {
-            D2D1_POINT_2F chk_pts[3] = {
-                D2D1::Point2F(cpcx - scale_f(5, cur_dpi), cpcy + scale_f(0.5f, cur_dpi)),
-                D2D1::Point2F(cpcx - scale_f(1, cur_dpi), cpcy + scale_f(4.5f, cur_dpi)),
-                D2D1::Point2F(cpcx + scale_f(6, cur_dpi), cpcy - scale_f(3.5f, cur_dpi))
+            float cpcx = cp_x + btn_sz / 2.0f;
+            float cpcy = back_btn_y + btn_sz / 2.0f;
+
+            if (logs_copied_) {
+                D2D1_POINT_2F chk_pts[3] = {
+                    D2D1::Point2F(cpcx - scale_f(5, cur_dpi), cpcy + scale_f(0.5f, cur_dpi)),
+                    D2D1::Point2F(cpcx - scale_f(1, cur_dpi), cpcy + scale_f(4.5f, cur_dpi)),
+                    D2D1::Point2F(cpcx + scale_f(6, cur_dpi), cpcy - scale_f(3.5f, cur_dpi))
+                };
+                draw_lines(chk_pts, 3, ds.colors.accent, 1.8f, true);
+            } else {
+                Color cp_ic = copy_logs_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
+                draw_rounded_rect(cpcx - scale_f(4, cur_dpi), cpcy - scale_f(4, cur_dpi), scale_f(9, cur_dpi), scale_f(9, cur_dpi), scale_f(2, cur_dpi), cp_ic, 1.6f);
+                D2D1_POINT_2F bk_pts[3] = {
+                    D2D1::Point2F(cpcx + scale_f(3, cur_dpi), cpcy - scale_f(6, cur_dpi)),
+                    D2D1::Point2F(cpcx - scale_f(6, cur_dpi), cpcy - scale_f(6, cur_dpi)),
+                    D2D1::Point2F(cpcx - scale_f(6, cur_dpi), cpcy + scale_f(3, cur_dpi))
+                };
+                draw_lines(bk_pts, 3, cp_ic, 1.6f, true);
+            }
+
+            // 1b. Trash / Clear Logs Button
+            if (clear_logs_hovered_) {
+                fill_rounded_rect(clr_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.hover_bg);
+            }
+            draw_rounded_rect(clr_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), clear_logs_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
+
+            float clrcx = clr_x + btn_sz / 2.0f;
+            float clrcy = back_btn_y + btn_sz / 2.0f;
+            Color tr_col = clear_logs_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
+            draw_line(clrcx - scale_f(6, cur_dpi), clrcy - scale_f(3, cur_dpi), clrcx + scale_f(6, cur_dpi), clrcy - scale_f(3, cur_dpi), tr_col, 1.6f, true);
+            draw_line(clrcx - scale_f(2, cur_dpi), clrcy - scale_f(5.5f, cur_dpi), clrcx + scale_f(2, cur_dpi), clrcy - scale_f(5.5f, cur_dpi), tr_col, 1.6f, true);
+            D2D1_POINT_2F can_pts[4] = {
+                D2D1::Point2F(clrcx - scale_f(4.5f, cur_dpi), clrcy - scale_f(3, cur_dpi)),
+                D2D1::Point2F(clrcx - scale_f(4.0f, cur_dpi), clrcy + scale_f(5.5f, cur_dpi)),
+                D2D1::Point2F(clrcx + scale_f(4.0f, cur_dpi), clrcy + scale_f(5.5f, cur_dpi)),
+                D2D1::Point2F(clrcx + scale_f(4.5f, cur_dpi), clrcy - scale_f(3, cur_dpi))
             };
-            draw_lines(chk_pts, 3, ds.colors.accent, 1.8f, true);
-        } else {
-            Color cp_ic = copy_logs_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
-            draw_rounded_rect(cpcx - scale_f(4, cur_dpi), cpcy - scale_f(4, cur_dpi), scale_f(9, cur_dpi), scale_f(9, cur_dpi), scale_f(2, cur_dpi), cp_ic, 1.6f);
-            D2D1_POINT_2F bk_pts[3] = {
-                D2D1::Point2F(cpcx + scale_f(3, cur_dpi), cpcy - scale_f(6, cur_dpi)),
-                D2D1::Point2F(cpcx - scale_f(6, cur_dpi), cpcy - scale_f(6, cur_dpi)),
-                D2D1::Point2F(cpcx - scale_f(6, cur_dpi), cpcy + scale_f(3, cur_dpi))
-            };
-            draw_lines(bk_pts, 3, cp_ic, 1.6f, true);
-        }
-
-        // 1b. Trash / Clear Logs Button
-        if (clear_logs_hovered_) {
-            fill_rounded_rect(clr_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), ds.colors.hover_bg);
-        }
-        draw_rounded_rect(clr_x, back_btn_y, btn_sz, btn_sz, static_cast<float>(scale(ds.metrics.radius_control, cur_dpi)), clear_logs_hovered_ ? ds.colors.border_hover : ds.colors.btn_border, 1.0f);
-
-        float clrcx = clr_x + btn_sz / 2.0f;
-        float clrcy = back_btn_y + btn_sz / 2.0f;
-        Color tr_col = clear_logs_hovered_ ? ds.colors.text_primary : ds.colors.icon_color;
-        draw_line(clrcx - scale_f(6, cur_dpi), clrcy - scale_f(3, cur_dpi), clrcx + scale_f(6, cur_dpi), clrcy - scale_f(3, cur_dpi), tr_col, 1.6f, true);
-        draw_line(clrcx - scale_f(2, cur_dpi), clrcy - scale_f(5.5f, cur_dpi), clrcx + scale_f(2, cur_dpi), clrcy - scale_f(5.5f, cur_dpi), tr_col, 1.6f, true);
-        D2D1_POINT_2F can_pts[4] = {
-            D2D1::Point2F(clrcx - scale_f(4.5f, cur_dpi), clrcy - scale_f(3, cur_dpi)),
-            D2D1::Point2F(clrcx - scale_f(4.0f, cur_dpi), clrcy + scale_f(5.5f, cur_dpi)),
-            D2D1::Point2F(clrcx + scale_f(4.0f, cur_dpi), clrcy + scale_f(5.5f, cur_dpi)),
-            D2D1::Point2F(clrcx + scale_f(4.5f, cur_dpi), clrcy - scale_f(3, cur_dpi))
-        };
-        draw_lines(can_pts, 4, tr_col, 1.6f, true);
+            draw_lines(can_pts, 4, tr_col, 1.6f, true);
+        });
 
         // 2. Filter Chips Row
         float card_w = w - scale_f(static_cast<float>(ds.metrics.padding_x * 2), cur_dpi);
@@ -2542,7 +2525,7 @@ struct MainWindow::Impl {
         const wchar_t* chip_names[] = { L"All", L"Network", L"Traffic", L"Issues" };
         const int chip_counts[] = { count_all, count_net, count_traffic, count_issues };
 
-        render_animated_block(0.05f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Primary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             for (int i = 0; i < 4; ++i) {
                 float ch_x = card_x + static_cast<float>(i) * (chip_w + chip_gap);
                 bool is_active = (log_filter_ == i);
@@ -2588,7 +2571,7 @@ struct MainWindow::Impl {
             }
         }
 
-        render_animated_block(0.10f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Secondary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             fill_rounded_rect(card_x, term_y, card_w, term_h, term_r, ds.colors.card_bg);
             draw_rounded_rect(card_x, term_y, card_w, term_h, term_r, ds.colors.card_border, 1.0f);
 
@@ -2640,7 +2623,7 @@ struct MainWindow::Impl {
         // 4. Bottom Resource Card (CPU% & RAM MB with Sparklines)
         float res_y = term_y + term_h + scale_f(12, cur_dpi);
 
-        render_animated_block(0.20f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Tertiary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             draw_rounded_rect(card_x, res_y, card_w, res_card_h, term_r, ds.colors.card_border, 1.0f);
 
             float mid_x = card_x + card_w / 2.0f;
@@ -2717,8 +2700,10 @@ struct MainWindow::Impl {
         float back_btn_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
         float back_btn_size = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
 
-        draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
-        draw_text(L"About", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
+        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
+            draw_text(L"About", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
+        });
 
         // 2. Logo Icon & Hero
         float cx = w / 2.0f;
@@ -2729,13 +2714,13 @@ struct MainWindow::Impl {
         float ver_y = name_y + scale_f(34, cur_dpi);
         float desc_y = ver_y + scale_f(22, cur_dpi);
 
-        render_animated_block(0.0f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Primary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             if (logo_d2d_bitmap_) {
                 D2D1_SIZE_F sz = logo_d2d_bitmap_->GetSize();
                 if (sz.height > 0.0f) {
                     draw_w = draw_h * (sz.width / sz.height);
                 }
-                render_target_->DrawBitmap(logo_d2d_bitmap_.Get(), D2D1::RectF(cx - draw_w / 2.0f, logo_y, cx + draw_w / 2.0f, logo_y + draw_h));
+                render_target_->DrawBitmap(logo_d2d_bitmap_.Get(), D2D1::RectF(cx - draw_w / 2.0f, logo_y, cx + draw_w / 2.0f, logo_y + draw_h), active_block_opacity_);
             } else {
                 float dot_sz = scale_f(24, cur_dpi);
                 fill_ellipse(cx, logo_y + draw_h / 2.0f, dot_sz / 2.0f, ds.colors.accent);
@@ -2758,7 +2743,7 @@ struct MainWindow::Impl {
         float row_h = static_cast<float>(scale(ds.metrics.row_height, cur_dpi));
         float card_r = static_cast<float>(scale(ds.metrics.radius_card, cur_dpi));
 
-        render_animated_block(0.10f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Secondary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             if (about_src_hovered_) {
                 fill_card_row_hover(card_x, card_y, card_w, row_h, card_r, 0, 4, ds.colors.dropdown_hover);
             }
@@ -2809,7 +2794,7 @@ struct MainWindow::Impl {
         float upd_x = cx - upd_w / 2.0f;
         float upd_r = static_cast<float>(scale(ds.metrics.radius_chip, cur_dpi));
 
-        render_animated_block(0.20f, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+        render_animated_block(anim_delay::Tertiary, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
             Color upd_bg = update_btn_hovered_ ? ds.colors.hover_bg : ds.colors.chip_bg;
             Color upd_bd = update_btn_hovered_ ? ds.colors.border_hover_bright : ds.colors.btn_border_dim;
             fill_rounded_rect(upd_x, upd_y, upd_w, upd_h, upd_r, upd_bg);
