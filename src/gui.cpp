@@ -10,7 +10,6 @@
 #include "autostart.hpp"
 #include "sysproxy.hpp"
 #include "resource.h"
-#include "window_shadow.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -169,7 +168,6 @@ struct MainWindow::Impl {
     HWND hwnd_ = nullptr;
     std::shared_ptr<HemeraEngine> engine_;
     bool start_minimized_ = false;
-    std::unique_ptr<hemera::gui::WindowShadow> shadow_;
 
     ActiveView view_ = ActiveView::Home;
     ActiveView prev_view_ = ActiveView::Home;
@@ -2673,6 +2671,9 @@ struct MainWindow::Impl {
         // Chrome-style Titlebar Controls (Minimize & Close)
         draw_caption_buttons(win_w, cur_dpi);
 
+        // Telegram Desktop crisp 1px perimeter window border
+        draw_rect(0.5f, 0.5f, win_w - 1.0f, win_h - 1.0f, ds.colors.btn_border_dim, 1.0f);
+
         HRESULT hr = render_target_->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET) {
             discard_device_resources();
@@ -3371,38 +3372,10 @@ struct MainWindow::Impl {
                 return 0;
             }
 
-            case WM_WINDOWPOSCHANGED: {
-                if (impl && impl->shadow_) {
-                    auto* pos = reinterpret_cast<WINDOWPOS*>(lParam);
-                    impl->shadow_->update(pos);
-                }
-                return DefWindowProcW(hwnd, msg, wParam, lParam);
-            }
-
-            case WM_MOVE: {
-                if (impl && impl->shadow_) {
-                    impl->shadow_->update();
-                }
-                return DefWindowProcW(hwnd, msg, wParam, lParam);
-            }
-
-            case WM_SHOWWINDOW: {
-                if (impl && impl->shadow_) {
-                    if (wParam) {
-                        impl->shadow_->update();
-                        impl->shadow_->show();
-                    } else {
-                        impl->shadow_->hide();
-                    }
-                }
-                return DefWindowProcW(hwnd, msg, wParam, lParam);
-            }
-
-            case WM_ACTIVATE: {
-                if (impl && impl->shadow_) {
-                    impl->shadow_->sync_z_order();
-                }
-                return DefWindowProcW(hwnd, msg, wParam, lParam);
+            case WM_DWMCOMPOSITIONCHANGED: {
+                MARGINS margins = { 0, 0, 1, 0 };
+                DwmExtendFrameIntoClientArea(hwnd, &margins);
+                return 0;
             }
 
             case WM_NCCALCSIZE: {
@@ -3454,7 +3427,7 @@ struct MainWindow::Impl {
                     impl->close_btn_pressed_ = false;
                     InvalidateRect(hwnd, nullptr, FALSE);
                 }
-                return TRUE;
+                return DefWindowProcW(hwnd, msg, wParam, -1);
             }
 
             case WM_ENTERSIZEMOVE: {
@@ -3467,7 +3440,6 @@ struct MainWindow::Impl {
                 KillTimer(hwnd, TIMER_ANIMATION);
                 impl->is_moving_window_ = false;
                 impl->last_frame_time_ = std::chrono::steady_clock::now();
-                if (impl->shadow_) impl->shadow_->update();
                 InvalidateRect(hwnd, nullptr, FALSE);
                 UpdateWindow(hwnd);
                 return 0;
@@ -3514,13 +3486,6 @@ struct MainWindow::Impl {
             }
 
             case WM_SIZE: {
-                if (impl && impl->shadow_) {
-                    if (wParam == SIZE_MINIMIZED) {
-                        impl->shadow_->hide();
-                    } else {
-                        impl->shadow_->update();
-                    }
-                }
                 if (wParam == SIZE_MINIMIZED) {
                     SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
                     return 0;
@@ -4270,10 +4235,6 @@ struct MainWindow::Impl {
                     ShowWindow(hwnd, SW_SHOW);
                     ShowWindow(hwnd, SW_RESTORE);
                     SetForegroundWindow(hwnd);
-                    if (impl->shadow_) {
-                        impl->shadow_->update();
-                        impl->shadow_->show();
-                    }
                 } else if (lParam == WM_RBUTTONUP) {
                     // Right-click: Open custom Direct2D tray flyout menu
                     POINT pt;
@@ -4286,7 +4247,6 @@ struct MainWindow::Impl {
             case WM_CLOSE: {
                 auto s = impl->engine_->load_settings();
                 if (s.close_to_tray) {
-                    if (impl->shadow_) impl->shadow_->hide();
                     ShowWindow(hwnd, SW_HIDE);
                     SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
                     return 0;
@@ -4296,7 +4256,6 @@ struct MainWindow::Impl {
             }
 
             case WM_DESTROY: {
-                if (impl->shadow_) impl->shadow_->hide();
                 impl->remove_tray_icon();
                 KillTimer(hwnd, TIMER_ANIMATION);
                 PostQuitMessage(0);
@@ -4348,13 +4307,23 @@ bool MainWindow::create() {
 
     if (!impl_->hwnd_) return false;
 
-    // Enforce 100% square 90-degree corners via native DWM preference (Windows 11)
-    DWORD corner_pref = 1; // DWMWCP_DONOTROUND
+    // Enable native DWM rounded corners (matches Telegram Desktop on Windows 11)
+    DWORD corner_pref = 2; // DWMWCP_ROUND
     DwmSetWindowAttribute(impl_->hwnd_, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner_pref, sizeof(corner_pref));
 
     // Apply immersive title bar mode based on active theme
     BOOL dark_mode = ds::is_effective_dark(ds.active_theme) ? TRUE : FALSE;
     DwmSetWindowAttribute(impl_->hwnd_, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark_mode, sizeof(dark_mode));
+
+    // Set DWM caption and text colors matching theme background (matches Telegram Desktop)
+    COLORREF caption_col = dark_mode ? RGB(11, 11, 13) : RGB(246, 246, 247);
+    DwmSetWindowAttribute(impl_->hwnd_, 35 /* DWMWA_CAPTION_COLOR */, &caption_col, sizeof(caption_col));
+    COLORREF caption_txt = dark_mode ? RGB(237, 237, 237) : RGB(24, 24, 27);
+    DwmSetWindowAttribute(impl_->hwnd_, 36 /* DWMWA_TEXT_COLOR */, &caption_txt, sizeof(caption_txt));
+
+    // Extend frame into client area to activate native Windows DWM hardware-accelerated drop shadow
+    MARGINS margins = { 0, 0, 1, 0 };
+    DwmExtendFrameIntoClientArea(impl_->hwnd_, &margins);
 
     SetWindowPos(impl_->hwnd_, nullptr, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
@@ -4379,13 +4348,9 @@ bool MainWindow::create() {
     impl_->ensure_device_resources();
     impl_->render();
 
-    impl_->shadow_ = std::make_unique<hemera::gui::WindowShadow>(impl_->hwnd_);
-    impl_->shadow_->update();
-
     if (!impl_->start_minimized_) {
         ShowWindow(impl_->hwnd_, SW_SHOWNORMAL);
         UpdateWindow(impl_->hwnd_);
-        impl_->shadow_->show();
     }
 
     return true;
