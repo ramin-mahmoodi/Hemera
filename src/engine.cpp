@@ -344,6 +344,9 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
 
         hemera::core::InprocCallbacks cbs;
         cbs.on_log = [this](std::string_view l) {
+            if (l.starts_with("[=] up ") || (l.find(" down ") != std::string_view::npos && l.find(" uptime ") != std::string_view::npos)) {
+                return;
+            }
             impl_->emit_log(l);
         };
         cbs.on_stats = [this](uint64_t up, uint64_t down, uint64_t uptime) {

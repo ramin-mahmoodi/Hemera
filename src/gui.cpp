@@ -172,19 +172,33 @@ struct MainWindow::Impl {
     ActiveView view_ = ActiveView::Home;
     ActiveView prev_view_ = ActiveView::Home;
     float view_transition_t_ = 1.0f; // 1.0f = fully transitioned, 0.0f = just started .rise
-    float view_anim_time_ = 1.0f;    // Seconds elapsed in current view for staggered component rise
+    float view_anim_time_ = 1.0f;    // Seconds elapsed in current view for smooth page rise
     uint64_t conn_start_tick_ = 0;   // Uptime start timestamp (ms)
+    uint64_t conn_start_down_bytes_ = 0; // Bytes transferred at start of connection
+    uint64_t conn_start_up_bytes_ = 0;
     float live_ticker_ = 0.0f;       // 1s ticker for live stats and ping
 
-    float compute_comp_rise(float delay_s, float dur_s = 0.50f) const {
-        if (view_anim_time_ <= delay_s) return 0.0f;
-        float t = std::clamp((view_anim_time_ - delay_s) / dur_s, 0.0f, 1.0f);
-        float inv = 1.0f - t;
-        return 1.0f - inv * inv * inv * (1.0f + 0.5f * t);
+    static std::wstring format_volume_bytes(uint64_t bytes) {
+        if (bytes < 1024) {
+            return std::format(L"{} B", bytes);
+        }
+        double kb = static_cast<double>(bytes) / 1024.0;
+        if (kb < 1024.0) {
+            return std::format(L"{:.1f} KB", kb);
+        }
+        double mb = kb / 1024.0;
+        if (mb < 1024.0) {
+            return std::format(L"{:.1f} MB", mb);
+        }
+        double gb = mb / 1024.0;
+        return std::format(L"{:.2f} GB", gb);
     }
 
-    float get_comp_dy(float delay_s, UINT cur_dpi, float dur_s = 0.50f) const {
-        float progress = compute_comp_rise(delay_s, dur_s);
+    float get_page_content_dy(UINT cur_dpi) const {
+        if (view_anim_time_ >= 0.28f) return 0.0f;
+        float t = std::clamp(view_anim_time_ / 0.28f, 0.0f, 1.0f);
+        float inv = 1.0f - t;
+        float progress = 1.0f - inv * inv * inv * (1.0f + 0.3f * t);
         return scale_f(14.0f, cur_dpi) * (1.0f - progress);
     }
 
@@ -1047,7 +1061,7 @@ struct MainWindow::Impl {
     }
 
     bool has_active_animations() const {
-        if (view_anim_time_ < 0.85f) return true;
+        if (view_anim_time_ < 0.30f) return true;
         if (view_transition_t_ < 1.0f) return true;
         if (std::abs(back_chevron_anim_x_ - (back_btn_hovered_ ? -3.0f : 0.0f)) > 0.01f) return true;
         if (std::abs(hero_target_scale_ - hero_scale_) > 0.0005f) return true;
@@ -1065,8 +1079,8 @@ struct MainWindow::Impl {
             else if (i == 7) t_val = edit_profile_.tun_mode ? 1.0f : 0.0f;
             if (std::abs(t_val - switch_anim_[i]) > 0.001f) return true;
         }
-        if (std::abs(target_scroll_y_ - scroll_anim_y_) > 0.1f) return true;
-        if (std::abs(target_logs_scroll_y_ - logs_scroll_anim_y_) > 0.1f) return true;
+        if (std::abs(target_scroll_y_ - scroll_anim_y_) > 0.05f) return true;
+        if (std::abs(target_logs_scroll_y_ - logs_scroll_anim_y_) > 0.05f) return true;
         if (shake_timer_ > 0.0f) return true;
         if (copy_timer_ > 0.0f) return true;
         if (logs_copy_timer_ > 0.0f) return true;
@@ -1086,7 +1100,7 @@ struct MainWindow::Impl {
         anim_time_ += dt;
         view_anim_time_ += dt;
         bool needs_repaint = false;
-        if (view_anim_time_ < 0.85f) {
+        if (view_anim_time_ < 0.30f) {
             needs_repaint = true;
         }
 
@@ -1095,6 +1109,9 @@ struct MainWindow::Impl {
         if (state.kind == StateKind::Connected) {
             if (conn_start_tick_ == 0) {
                 conn_start_tick_ = current_time_ms();
+                auto st = engine_->current_stats();
+                conn_start_down_bytes_ = st.down;
+                conn_start_up_bytes_ = st.up;
             }
             live_ticker_ += dt;
             if (live_ticker_ >= 1.0f) {
@@ -1104,21 +1121,12 @@ struct MainWindow::Impl {
                 static int ping_seed = 0;
                 ping_seed = (ping_seed + 7) % 13;
                 live_ping_ms_ = 34 + ping_seed;
-
-                if (live_down_speed_mb_ < 0.05) {
-                    static int ds_seed = 0;
-                    ds_seed = (ds_seed + 3) % 7;
-                    live_down_speed_mb_ = 0.4 + 0.2 * ds_seed;
-                }
-                if (live_up_speed_mb_ < 0.02) {
-                    static int us_seed = 0;
-                    us_seed = (us_seed + 2) % 5;
-                    live_up_speed_mb_ = 0.08 + 0.04 * us_seed;
-                }
             }
         } else if (state.kind != StateKind::Connecting) {
             conn_start_tick_ = 0;
             live_ticker_ = 0.0f;
+            conn_start_down_bytes_ = 0;
+            conn_start_up_bytes_ = 0;
         }
 
         // 1. Home View continuous animations (Spinning Arc, Radar Rings, Breathing Dot)
@@ -1211,11 +1219,11 @@ struct MainWindow::Impl {
             }
         }
 
-        // 7. Silky-Smooth Inertial Scroll for Settings (120 FPS stable exponential decay)
+        // 7. Silky-Smooth Inertial Scroll for Settings (instantaneous, zero lag)
         float scr_diff = target_scroll_y_ - scroll_anim_y_;
-        if (std::abs(scr_diff) > 0.1f) {
-            scroll_anim_y_ += scr_diff * (1.0f - std::exp(-22.0f * dt));
-            if (std::abs(target_scroll_y_ - scroll_anim_y_) < 0.2f) {
+        if (std::abs(scr_diff) > 0.05f) {
+            scroll_anim_y_ += scr_diff * (1.0f - std::exp(-35.0f * dt));
+            if (std::abs(target_scroll_y_ - scroll_anim_y_) < 0.15f) {
                 scroll_anim_y_ = target_scroll_y_;
             }
             needs_repaint = true;
@@ -1223,9 +1231,9 @@ struct MainWindow::Impl {
 
         // 8. Silky-Smooth Inertial Scroll for Logs
         float lscr_diff = target_logs_scroll_y_ - logs_scroll_anim_y_;
-        if (std::abs(lscr_diff) > 0.1f) {
-            logs_scroll_anim_y_ += lscr_diff * (1.0f - std::exp(-22.0f * dt));
-            if (std::abs(target_logs_scroll_y_ - logs_scroll_anim_y_) < 0.2f) {
+        if (std::abs(lscr_diff) > 0.05f) {
+            logs_scroll_anim_y_ += lscr_diff * (1.0f - std::exp(-35.0f * dt));
+            if (std::abs(target_logs_scroll_y_ - logs_scroll_anim_y_) < 0.15f) {
                 logs_scroll_anim_y_ = target_logs_scroll_y_;
             }
             needs_repaint = true;
@@ -1295,6 +1303,9 @@ struct MainWindow::Impl {
 
     void parse_and_append_log(std::string_view raw_line, uint64_t timestamp_ms) {
         if (raw_line.empty()) return;
+        if (raw_line.starts_with("[=] up ") || (raw_line.find(" down ") != std::string_view::npos && raw_line.find(" uptime ") != std::string_view::npos)) {
+            return;
+        }
 
         LogEntry entry{};
         entry.timestamp_ms = timestamp_ms;
@@ -1527,8 +1538,7 @@ struct MainWindow::Impl {
         }
 
         // ── 1. Header (Brand title + breathing status dot + Logs & Settings buttons) ──
-        float h_dy = get_comp_dy(0.0f, cur_dpi);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, h_dy));
+        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
         float header_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
         float pad_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
@@ -1552,9 +1562,8 @@ struct MainWindow::Impl {
             float brand_w = measure_text_width(L"Hemera", fmt_app_title_.Get());
             float pill_x = dot_x + dot_d + scale_f(10, cur_dpi) + brand_w + scale_f(8, cur_dpi);
             float pill_y = header_y + scale_f(10, cur_dpi);
-            bool is_blocking = (!is_connected && !is_connecting);
-            std::wstring pill_txt = is_blocking ? L"Internet blocked" : L"Kill switch";
-            Color pill_col = is_blocking ? ds.colors.warning : ds.colors.text_muted;
+            std::wstring pill_txt = L"Kill switch";
+            Color pill_col = ds.colors.text_muted;
             float txt_w = measure_text_width(pill_txt, fmt_metric_tag_.Get());
             float icon_sz = scale_f(12.0f, cur_dpi);
             float pill_pad_h = scale_f(8, cur_dpi);
@@ -1617,8 +1626,7 @@ struct MainWindow::Impl {
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
         // ── 2. Hero Center Section (Power Button, Rings, Spinning Arc) ──
-        float hero_dy = get_comp_dy(0.0f, cur_dpi);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, hero_dy));
+        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
         float shake_dx = 0.0f;
         if (shake_timer_ > 0.0f) {
             float progress = 1.0f - (shake_timer_ / 0.45f);
@@ -1752,9 +1760,8 @@ struct MainWindow::Impl {
 
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
-        // ── 4. Middle Section (Ping, Down, Up stats when connected) ──
-        float stats_dy = get_comp_dy(0.08f, cur_dpi);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, stats_dy));
+        // ── 4. Middle Section (Ping, Down Volume, Up Volume when connected) ──
+        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
         float middle_y = status_y + scale_f(64 + 18, cur_dpi);
         float card_x = pad_x;
@@ -1769,17 +1776,23 @@ struct MainWindow::Impl {
             };
             std::wstring ping_str = std::format(L"{} ms", live_ping_ms_);
             draw_stat_col(0, L"PING", ping_str);
-            std::wstring down_str = std::format(L"{:.1f} MB/s", live_down_speed_mb_);
-            draw_stat_col(1, L"DOWN", down_str);
-            std::wstring up_str = std::format(L"{:.1f} MB/s", live_up_speed_mb_);
-            draw_stat_col(2, L"UP", up_str);
+
+            auto cur_st = engine_->current_stats();
+            uint64_t total_down = (cur_st.down >= conn_start_down_bytes_) ? (cur_st.down - conn_start_down_bytes_) : cur_st.down;
+            uint64_t total_up = (cur_st.up >= conn_start_up_bytes_) ? (cur_st.up - conn_start_up_bytes_) : cur_st.up;
+
+            std::wstring down_vol_str = format_volume_bytes(total_down);
+            draw_stat_col(1, L"DOWN", down_vol_str);
+
+            std::wstring up_vol_str = format_volume_bytes(total_up);
+            draw_stat_col(2, L"UP", up_vol_str);
         }
 
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
         // ── 5. Details Card ──
-        float card_dy = get_comp_dy(0.15f, cur_dpi);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, card_dy));
+        float content_dy = get_page_content_dy(cur_dpi);
+        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, content_dy));
         float card_y = static_cast<float>(scale(470, cur_dpi));
         float row_h = static_cast<float>(scale(54, cur_dpi));
         float card_h = row_h * 3.0f;
@@ -1867,8 +1880,7 @@ struct MainWindow::Impl {
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
         // ── 6. Footer ──
-        float foot_dy = get_comp_dy(0.30f, cur_dpi);
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, foot_dy));
+        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, content_dy));
         draw_text_center(L"Free and open source", fmt_footnote_.Get(), hero_cx, card_y + card_h + scale_f(20, cur_dpi), ds.colors.text_dim);
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
     }
@@ -1888,11 +1900,15 @@ struct MainWindow::Impl {
         float back_btn_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
         float back_btn_size = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
 
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.0f, cur_dpi)) * scroll_mat);
+        render_target_->SetTransform(scroll_mat);
         draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
         draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
 
         float clip_top = back_btn_y + back_btn_size + scale_f(12, cur_dpi);
+
+        float content_dy = get_page_content_dy(cur_dpi);
+        D2D1_MATRIX_3X2_F body_mat = D2D1::Matrix3x2F::Translation(0.0f, content_dy) * scroll_mat;
+        render_target_->SetTransform(body_mat);
 
         float card_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
         float card_w = w - scale_f(static_cast<float>(ds.metrics.padding_x * 2), cur_dpi);
@@ -1919,7 +1935,6 @@ struct MainWindow::Impl {
         };
 
         // ── Card 0: APPEARANCE ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.05f, cur_dpi)) * scroll_mat);
         float sec0_y = clip_top + scale_f(8, cur_dpi);
         draw_text(L"APPEARANCE", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec0_y, ds.colors.text_submuted);
 
@@ -1947,7 +1962,6 @@ struct MainWindow::Impl {
         }
 
         // ── Card 1: GENERAL (5 Toggles) ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.10f, cur_dpi)) * scroll_mat);
         float sec1_y = card0_y + seg_box_h + scale_f(24, cur_dpi);
         draw_text(L"GENERAL", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec1_y, ds.colors.text_submuted);
 
@@ -2006,7 +2020,6 @@ struct MainWindow::Impl {
         draw_animated_toggle(sw_x, card1_y + gen_row_h * 4.0f + (gen_row_h - scale_f(24, cur_dpi)) / 2.0f, 7);
 
         // ── Card 2: CONNECTION & ROUTING ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.15f, cur_dpi)) * scroll_mat);
         float sec2_y = card1_y + card1_h + scale_f(24, cur_dpi);
         draw_text(L"CONNECTION & ROUTING", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec2_y, ds.colors.text_submuted);
 
@@ -2076,7 +2089,6 @@ struct MainWindow::Impl {
         draw_animated_toggle(sw_x, card2_y + row_h * 4.0f + (row_h - scale_f(24, cur_dpi)) / 2.0f, 6);
 
         // ── Card 3: ANTI-CENSORSHIP & NETWORK ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.20f, cur_dpi)) * scroll_mat);
         float sec3_y = card2_y + card2_h + scale_f(24, cur_dpi);
         draw_text(L"ANTI-CENSORSHIP & NETWORK", fmt_metric_tag_.Get(), card_x + scale_f(4, cur_dpi), sec3_y, ds.colors.text_submuted);
 
@@ -2144,7 +2156,6 @@ struct MainWindow::Impl {
         }
 
         // ── Card 4: ABOUT Row ──
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.30f, cur_dpi)) * scroll_mat);
         float sec4_y = card3_y + card3_h + scale_f(24, cur_dpi);
         fill_rounded_rect(card_x, sec4_y, card_w, row_h, radius_card, ds.colors.card_bg);
 
@@ -2160,7 +2171,6 @@ struct MainWindow::Impl {
         draw_text_right(about_sub, fmt_mono_.Get(), card_x + card_w - pad_x, about_y, ds.colors.text_muted);
 
         // Footer
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.35f, cur_dpi)) * scroll_mat);
         draw_text_center(L"Hemera · Free and open source proxy", fmt_footnote_.Get(), w / 2.0f, sec4_y + row_h + scale_f(24, cur_dpi), ds.colors.text_dim);
 
         // Dynamic scroll bounds (stops right after footer with a neat 20px bottom padding, zero dead space)
@@ -2400,7 +2410,7 @@ struct MainWindow::Impl {
     void render_logs_view(float w, float h, UINT cur_dpi) {
         const auto& ds = ds::DesignSystem::get();
 
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.0f, cur_dpi)));
+        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
         // 1. Pinned Header: Back Button + "Logs" Title + Copy Button + Clear Button
         float back_btn_x = scale_f(static_cast<float>(ds.metrics.padding_x) - 10.0f, cur_dpi);
@@ -2463,6 +2473,9 @@ struct MainWindow::Impl {
         draw_lines(can_pts, 4, tr_col, 1.6f, true);
 
         // 2. Filter Chips Row
+        float content_dy = get_page_content_dy(cur_dpi);
+        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, content_dy));
+
         float card_w = w - scale_f(static_cast<float>(ds.metrics.padding_x * 2), cur_dpi);
         float chips_y = back_btn_y + btn_sz + scale_f(12, cur_dpi);
         float chip_h = scale_f(36, cur_dpi);
@@ -2507,7 +2520,6 @@ struct MainWindow::Impl {
         }
 
         // 3. Terminal Log Card
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.10f, cur_dpi)));
         float term_y = chips_y + chip_h + scale_f(12, cur_dpi);
         float res_card_h = static_cast<float>(scale(72, cur_dpi));
         float term_h = h - term_y - res_card_h - scale_f(24, cur_dpi);
@@ -2579,7 +2591,6 @@ struct MainWindow::Impl {
         render_target_->PopAxisAlignedClip();
 
         // 4. Bottom Resource Card (CPU% & RAM MB with Sparklines)
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.20f, cur_dpi)));
         float res_y = term_y + term_h + scale_f(12, cur_dpi);
         fill_rounded_rect(card_x, res_y, card_w, res_card_h, term_r, ds.colors.card_bg);
         draw_rounded_rect(card_x, res_y, card_w, res_card_h, term_r, ds.colors.card_border, 1.0f);
@@ -2650,7 +2661,7 @@ struct MainWindow::Impl {
         (void)h;
         const auto& ds = ds::DesignSystem::get();
 
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.0f, cur_dpi)));
+        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
 
         // 1. Pinned Header: Back Button + "About" Title
         float back_btn_x = scale_f(static_cast<float>(ds.metrics.padding_x) - 10.0f, cur_dpi);
@@ -2661,6 +2672,8 @@ struct MainWindow::Impl {
         draw_text(L"About", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
 
         // 2. Logo Icon
+        float content_dy = get_page_content_dy(cur_dpi);
+        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, content_dy));
         float cx = w / 2.0f;
         float logo_y = back_btn_y + back_btn_size + scale_f(28, cur_dpi);
         float draw_h = scale_f(72, cur_dpi);
@@ -2690,7 +2703,6 @@ struct MainWindow::Impl {
         draw_text_center(L"Free, open source, no account needed.", fmt_footnote_.Get(), cx, desc_y + scale_f(18, cur_dpi), ds.colors.text_dim);
 
         // 3. Links Card (Source Code, Issues, Releases, License)
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.10f, cur_dpi)));
         float card_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
         float card_w = w - scale_f(static_cast<float>(ds.metrics.padding_x * 2), cur_dpi);
         float card_y = desc_y + scale_f(48, cur_dpi);
@@ -2743,7 +2755,6 @@ struct MainWindow::Impl {
         draw_text_right(L"GNU AGPLv3 ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry3, ds.colors.text_muted);
 
         // 4. "Check for updates" Button
-        render_target_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, get_comp_dy(0.20f, cur_dpi)));
         float upd_y = card_y + row_h * 4.0f + scale_f(24, cur_dpi);
         float upd_w = static_cast<float>(scale(180, cur_dpi));
         float upd_h = static_cast<float>(scale(44, cur_dpi));
@@ -3655,7 +3666,7 @@ struct MainWindow::Impl {
                 } else if (impl->view_ == ActiveView::Logs) {
                     impl->target_logs_scroll_y_ = std::clamp(impl->target_logs_scroll_y_ - scroll_amount, 0.0f, impl->max_logs_scroll_);
                 }
-                impl->last_frame_time_ = std::chrono::steady_clock::now();
+                InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
 
@@ -4339,9 +4350,14 @@ struct MainWindow::Impl {
                 if (state.kind == StateKind::Connected) {
                     if (impl->conn_start_tick_ == 0) {
                         impl->conn_start_tick_ = current_time_ms();
+                        auto st = impl->engine_->current_stats();
+                        impl->conn_start_down_bytes_ = st.down;
+                        impl->conn_start_up_bytes_ = st.up;
                     }
                 } else if (state.kind == StateKind::Idle || state.kind == StateKind::Error) {
                     impl->conn_start_tick_ = 0;
+                    impl->conn_start_down_bytes_ = 0;
+                    impl->conn_start_up_bytes_ = 0;
                     impl->live_down_speed_mb_ = 0.0;
                     impl->live_up_speed_mb_ = 0.0;
                 }
