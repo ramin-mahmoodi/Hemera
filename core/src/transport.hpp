@@ -159,6 +159,7 @@ public:
     [[nodiscard]] std::expected<void, std::string> connect_to(const SocketAddr& peer);
     [[nodiscard]] bool connected() const;
     [[nodiscard]] bool wait_readable(std::chrono::milliseconds timeout) override;
+    [[nodiscard]] void* read_event() const;
 
     [[nodiscard]] SocketAddr local() const override;
     [[nodiscard]] std::expected<std::size_t, std::string> send(

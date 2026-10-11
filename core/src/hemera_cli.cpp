@@ -1318,6 +1318,11 @@ public:
         auto pair = ns::Channel<std::vector<std::uint8_t>>::bounded(capacity == 0 ? 1 : capacity);
         tx_ = std::move(pair.first);
         rx_ = std::move(pair.second);
+        event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    }
+
+    ~StackQueue() {
+        if (event_) CloseHandle(event_);
     }
 
     // flush_tx's try_send: nothing blocks, a full queue is the Rust's Full (the packet is dropped and
@@ -1328,43 +1333,84 @@ public:
             std::lock_guard<std::mutex> lock(cv_mutex_);
             outcome = tx_.try_send(std::vector<std::uint8_t>(packet.begin(), packet.end()));
         }
-        if (outcome == ns::SendOutcome::Ok) cv_.notify_one();
+        if (outcome == ns::SendOutcome::Ok) {
+            cv_.notify_one();
+            if (event_) SetEvent(event_);
+        }
         return outcome;
     }
+
+    [[nodiscard]] ns::SendOutcome push_wait(std::span<const std::uint8_t> packet, std::chrono::milliseconds timeout) {
+        ns::SendOutcome outcome;
+        {
+            std::unique_lock<std::mutex> lock(cv_mutex_);
+            outcome = tx_.try_send(std::vector<std::uint8_t>(packet.begin(), packet.end()));
+            if (outcome == ns::SendOutcome::Full && timeout.count() > 0) {
+                space_cv_.wait_for(lock, timeout, [&] {
+                    outcome = tx_.try_send(std::vector<std::uint8_t>(packet.begin(), packet.end()));
+                    return outcome != ns::SendOutcome::Full;
+                });
+            }
+        }
+        if (outcome == ns::SendOutcome::Ok) {
+            cv_.notify_one();
+            if (event_) SetEvent(event_);
+        }
+        return outcome;
+    }
+
     void push_front(std::vector<std::uint8_t> packet) {
         std::lock_guard<std::mutex> lock(cv_mutex_);
         rx_.push_front(std::move(packet));
         cv_.notify_one();
+        if (event_) SetEvent(event_);
     }
+
     // outbound_rx.recv() at a carrier's pace: nothing when the queue is empty.
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> pull() {
         std::lock_guard<std::mutex> lock(cv_mutex_);
-        return rx_.recv();
+        auto res = rx_.recv();
+        if (res.has_value()) space_cv_.notify_one();
+        return res;
     }
+
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> pull_wait(std::chrono::milliseconds budget) {
         std::unique_lock<std::mutex> lock(cv_mutex_);
-        if (auto p = rx_.recv()) return p;
+        if (auto p = rx_.recv()) {
+            space_cv_.notify_one();
+            return p;
+        }
         if (rx_.at_end() || budget.count() <= 0) return std::nullopt;
         cv_.wait_for(lock, budget, [&] { return rx_.queued() > 0 || rx_.at_end(); });
-        return rx_.recv();
+        auto res = rx_.recv();
+        if (res.has_value()) space_cv_.notify_one();
+        return res;
     }
+
     // Rust's `while let Some(p) = rx.recv()` ending: every sender dropped and the queue drained.
     [[nodiscard]] bool ended() const {
         std::lock_guard<std::mutex> lock(cv_mutex_);
         return rx_.at_end();
     }
+
     // The send task's end, which is what makes `ended()` answer for the reader's side.
     void close() {
         std::lock_guard<std::mutex> lock(cv_mutex_);
         tx_ = ns::Sender<std::vector<std::uint8_t>>{};
         cv_.notify_all();
+        space_cv_.notify_all();
+        if (event_) SetEvent(event_);
     }
+
+    [[nodiscard]] HANDLE event() const { return event_; }
 
 private:
     ns::Sender<std::vector<std::uint8_t>> tx_;
     ns::Receiver<std::vector<std::uint8_t>> rx_;
     mutable std::mutex cv_mutex_;
     std::condition_variable cv_;
+    std::condition_variable space_cv_;
+    HANDLE event_ = nullptr;
 };
 
 class Hop;
@@ -1518,15 +1564,23 @@ public:
         app_cv_.notify_all();
     }
 
-    void wait_app(std::chrono::milliseconds timeout, const eg::Stop* stop = nullptr) {
+    [[nodiscard]] std::uint64_t app_epoch() const {
+        std::lock_guard<std::mutex> lk(app_cv_mutex_);
+        return app_epoch_;
+    }
+
+    void wait_app_since(std::uint64_t epoch_before, std::chrono::milliseconds timeout, const eg::Stop* stop = nullptr) {
         std::unique_lock<std::mutex> lk(app_cv_mutex_);
-        const auto epoch_before = app_epoch_;
-        if (stop_.asked() || finished_ || (stop && stop->asked()) || timeout.count() <= 0) {
+        if (app_epoch_ != epoch_before || stop_.asked() || finished_ || (stop && stop->asked()) || timeout.count() <= 0) {
             return;
         }
         app_cv_.wait_for(lk, timeout, [&] {
             return app_epoch_ != epoch_before || stop_.asked() || finished_ || (stop && stop->asked());
         });
+    }
+
+    void wait_app(std::chrono::milliseconds timeout, const eg::Stop* stop = nullptr) {
+        wait_app_since(app_epoch(), timeout, stop);
     }
 
     // ---- the pump thread's side -------------------------------------------------------------
@@ -1827,16 +1881,12 @@ void run_quic_hop(Hop& hop, quic::TunnelConfig tunnel, const Settings& settings,
 
         const auto delay = tick.delay.value_or(std::chrono::milliseconds(20));
         if (delay.count() > 0 && !closing) {
-            // Wait up to delay (capped at 20ms to allow timely queue checks without 2ms polling loop)
-            const auto slice = std::clamp(delay, std::chrono::milliseconds(1), std::chrono::milliseconds(20));
-            if (!(*io)->wait_readable(slice)) {
-                // If socket had no traffic during the slice, check outbound queue
-                if (session.ready()) {
-                    if (auto pkt = hop.queue().pull_wait(std::chrono::milliseconds(0))) {
-                        hop.queue().push_front(std::move(*pkt));
-                    }
-                }
-            }
+            HANDLE handles[2] = {
+                reinterpret_cast<HANDLE>((*io)->read_event()),
+                hop.queue().event()
+            };
+            const DWORD count = handles[0] ? 2 : 1;
+            WaitForMultipleObjects(count, handles, FALSE, static_cast<DWORD>(delay.count()));
         }
         if (closing) break; // one turn after the close went out is all the flush needs
     }
@@ -1946,6 +1996,7 @@ public:
                                        eg::Stop& stop) override {
         const auto finish = std::chrono::steady_clock::now() + wait;
         for (;;) {
+            const auto epoch_before = hop_.app_epoch();
             {
                 const std::lock_guard<std::mutex> lock(hop_.mutex());
                 if (!leftovers_.empty()) {
@@ -1972,7 +2023,7 @@ public:
             if (wait.count() > 0 && std::chrono::steady_clock::now() >= finish) {
                 return eg::ReadAttempt{eg::ReadAttempt::Kind::Timeout, 0, {}};
             }
-            hop_.wait_app(wait.count() > 0 ? std::min(wait, eg::Millis(10)) : eg::Millis(10), &stop);
+            hop_.wait_app_since(epoch_before, wait.count() > 0 ? std::min(wait, eg::Millis(10)) : eg::Millis(10), &stop);
         }
     }
 
@@ -2041,6 +2092,7 @@ public:
     [[nodiscard]] std::optional<ns::UdpInbound> recv(eg::Stop& stop, eg::Millis wait) {
         const auto finish = std::chrono::steady_clock::now() + wait;
         for (;;) {
+            const auto epoch_before = hop_.app_epoch();
             {
                 const std::lock_guard<std::mutex> lock(hop_.mutex());
                 if (std::optional<ns::UdpInbound> arrived = from_stack_.recv()) return arrived;
@@ -2048,7 +2100,7 @@ public:
             }
             if (stop.asked()) return std::nullopt;
             if (std::chrono::steady_clock::now() >= finish) return std::nullopt;
-            hop_.wait_app(wait.count() > 0 ? std::min(wait, eg::Millis(10)) : eg::Millis(10), &stop);
+            hop_.wait_app_since(epoch_before, wait.count() > 0 ? std::min(wait, eg::Millis(10)) : eg::Millis(10), &stop);
         }
     }
 
@@ -3269,11 +3321,25 @@ void attach_tun_if_enabled(Hop& hop, const Settings& settings, const Identity& i
 
     hop.add_thread(std::thread([&hop, cancel, dev] {
         HANDLE read_ev = reinterpret_cast<HANDLE>(dev->read_wait_event());
+        size_t dropped_count = 0;
+        auto last_report = std::chrono::steady_clock::now();
         while (!cancel.is_cancelled() && !hop.stop().asked()) {
             // Drain all available packets from Wintun receive ring buffer
-            const size_t drained = dev->drain_read_packets(256, [&hop](std::span<const uint8_t> pkt) {
-                (void)hop.queue().push(pkt);
+            const size_t drained = dev->drain_read_packets(256, [&hop, &dropped_count](std::span<const uint8_t> pkt) {
+                const auto outcome = hop.queue().push_wait(pkt, std::chrono::milliseconds(5));
+                if (outcome == ns::SendOutcome::Full) {
+                    ++dropped_count;
+                }
             });
+            if (dropped_count > 0) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last_report >= std::chrono::seconds(1)) {
+                    emit(Level::Warn, "[-] TUN outbound queue under pressure: dropped " +
+                                           std::to_string(dropped_count) + " packets");
+                    dropped_count = 0;
+                    last_report = now;
+                }
+            }
             // When ring is empty, wait for incoming packet signal or a 20ms fallback
             if (drained == 0) {
                 WaitForSingleObject(read_ev, 20);

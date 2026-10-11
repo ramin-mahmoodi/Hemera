@@ -114,6 +114,14 @@ struct WinUdp::Impl {
     SOCKET fd = INVALID_SOCKET;
     SocketAddr local{};
     bool connected = false;
+    WSAEVENT event = WSA_INVALID_EVENT;
+
+    ~Impl() {
+        if (event != WSA_INVALID_EVENT) {
+            WSACloseEvent(event);
+            event = WSA_INVALID_EVENT;
+        }
+    }
 };
 
 namespace {
@@ -210,6 +218,10 @@ std::expected<std::unique_ptr<WinUdp>, std::string> WinUdp::open(const SocketAdd
         return std::unexpected("getsockname: " + last_socket_error());
     }
     impl->local = from_sockaddr(name, namelen);
+    impl->event = WSACreateEvent();
+    if (impl->event != WSA_INVALID_EVENT) {
+        WSAEventSelect(fd, impl->event, FD_READ | FD_CLOSE);
+    }
 
     std::unique_ptr<WinUdp> out(new WinUdp());
     out->impl_ = std::move(impl);
@@ -285,6 +297,15 @@ std::expected<std::optional<Arrived>, std::string> WinUdp::receive() {
 
 bool WinUdp::wait_readable(std::chrono::milliseconds timeout) {
     if (!impl_ || impl_->fd == INVALID_SOCKET) return false;
+    if (impl_->event != WSA_INVALID_EVENT) {
+        const DWORD res = WaitForSingleObject(impl_->event, static_cast<DWORD>(timeout.count()));
+        if (res == WAIT_OBJECT_0) {
+            WSANETWORKEVENTS ev{};
+            WSAEnumNetworkEvents(impl_->fd, impl_->event, &ev);
+            return (ev.lNetworkEvents & FD_READ) != 0 || (ev.lNetworkEvents & FD_CLOSE) != 0;
+        }
+        return false;
+    }
     fd_set read_fds;
     FD_ZERO(&read_fds);
     FD_SET(impl_->fd, &read_fds);
@@ -292,6 +313,10 @@ bool WinUdp::wait_readable(std::chrono::milliseconds timeout) {
     tv.tv_sec = static_cast<long>(timeout.count() / 1000);
     tv.tv_usec = static_cast<long>((timeout.count() % 1000) * 1000);
     return ::select(0, &read_fds, nullptr, nullptr, &tv) > 0;
+}
+
+void* WinUdp::read_event() const {
+    return (impl_ && impl_->event != WSA_INVALID_EVENT) ? reinterpret_cast<void*>(impl_->event) : nullptr;
 }
 
 // ---------------------------------------------------------------------------

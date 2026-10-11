@@ -173,23 +173,31 @@ public:
     size_t drain_read_packets(
         size_t max_packets,
         const std::function<void(std::span<const uint8_t>)>& on_packet) override {
-        std::lock_guard<std::mutex> lock(recv_mutex_);
         if (!session_ || !g_wintun.ReceivePacket || !g_wintun.ReleaseReceivePacket) return 0;
 
-        size_t count = 0;
-        const size_t limit = (max_packets == 0) ? (std::numeric_limits<size_t>::max)() : max_packets;
-        while (count < limit) {
-            DWORD size = 0;
-            BYTE* pkt = g_wintun.ReceivePacket(session_, &size);
-            if (!pkt) break;
+        std::vector<std::vector<uint8_t>> batch;
+        batch.reserve(max_packets == 0 ? 64 : std::min<size_t>(max_packets, 256));
+        {
+            std::lock_guard<std::mutex> lock(recv_mutex_);
+            const size_t limit = (max_packets == 0) ? (std::numeric_limits<size_t>::max)() : max_packets;
+            while (batch.size() < limit) {
+                DWORD size = 0;
+                BYTE* pkt = g_wintun.ReceivePacket(session_, &size);
+                if (!pkt) break;
 
-            if (on_packet && size > 0) {
-                on_packet(std::span<const uint8_t>(pkt, size));
+                if (size > 0) {
+                    batch.emplace_back(pkt, pkt + size);
+                }
+                g_wintun.ReleaseReceivePacket(session_, pkt);
             }
-            g_wintun.ReleaseReceivePacket(session_, pkt);
-            count++;
         }
-        return count;
+
+        if (on_packet) {
+            for (const auto& pkt : batch) {
+                on_packet(std::span<const uint8_t>(pkt.data(), pkt.size()));
+            }
+        }
+        return batch.size();
     }
 
     [[nodiscard]] void* read_wait_event() const override {

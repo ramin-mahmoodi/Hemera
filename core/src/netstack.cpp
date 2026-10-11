@@ -803,7 +803,9 @@ private:
         if (mss == 0) return;
         std::size_t flight = static_cast<std::uint32_t>(snd_nxt_ - snd_una_);
         const std::size_t limit = std::min(cwnd_, remote_window_);
-        while (!tx_buf_.empty() && flight < limit) {
+        std::size_t sent_segments = 0;
+        constexpr std::size_t MAX_BURST_SEGMENTS = 64; // Pace emission to avoid overwhelming outbound carrier queue
+        while (!tx_buf_.empty() && flight < limit && sent_segments < MAX_BURST_SEGMENTS) {
             const std::size_t room = limit - flight;
             const std::size_t n = std::min({tx_buf_.size(), mss, room});
             if (n == 0) break;
@@ -822,6 +824,7 @@ private:
             emit_packet(now, flags, snd_nxt_, rcv_nxt_, payload, {}, emit);
             snd_nxt_ = seq_add(snd_nxt_, n);
             flight += n;
+            ++sent_segments;
             if (!next_retransmit_) next_retransmit_ = now + rto_;
         }
     }
