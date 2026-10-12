@@ -1776,9 +1776,8 @@ struct MainWindow::Impl {
         if (view_ == ActiveView::Settings) {
             float back_x = scale_f(static_cast<float>(ds.metrics.padding_x) - 10.0f, cur_dpi);
             float back_y = (float)scale(ds.metrics.padding_top, cur_dpi);
-            float sy = scale_f(scroll_anim_y_, cur_dpi);
             float back_sz = (float)scale(ds.metrics.header_btn_size, cur_dpi);
-            if (x >= back_x && x <= back_x + back_sz && y >= (back_y - sy) && y <= (back_y - sy) + back_sz) return true;
+            if (x >= back_x && x <= back_x + back_sz && y >= back_y && y <= back_y + back_sz) return true;
 
             if (hovered_settings_row_ >= 0) return true;
             return false;
@@ -2203,24 +2202,23 @@ struct MainWindow::Impl {
     void render_settings_view(float w, float h, UINT cur_dpi) {
         const auto& ds = ds::DesignSystem::get();
 
-        // 1. Scrollable Body with GPU Scissor & Translation Transform
-        render_target_->PushAxisAlignedClip(D2D1::RectF(0.0f, 0.0f, w, h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
-        float sy = std::round(scale_f(scroll_anim_y_, cur_dpi));
-        D2D1_MATRIX_3X2_F scroll_mat = D2D1::Matrix3x2F::Translation(0.0f, -sy);
-
-        // Header: Back Button + "Settings" Title (scrolls naturally with page content)
+        // 1. Pinned Header: Back Button + "Settings" Title (fixed in place matching reference)
         float back_btn_x = scale_f(static_cast<float>(ds.metrics.padding_x) - 10.0f, cur_dpi);
         float back_btn_y = static_cast<float>(scale(ds.metrics.padding_top, cur_dpi));
         float back_btn_size = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
 
-        // Header: Back Button + "Settings" Title (fixed in place matching reference)
-        render_target_->SetTransform(scroll_mat);
-        draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
-        draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
+        render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
+        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
+            draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
+            draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
+        });
 
+        // 2. Scrollable Body with GPU Scissor & Translation Transform
         float clip_top = back_btn_y + back_btn_size + scale_f(12, cur_dpi);
+        render_target_->PushAxisAlignedClip(D2D1::RectF(0.0f, clip_top, w, h), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
+        float sy = std::round(scale_f(scroll_anim_y_, cur_dpi));
+        D2D1_MATRIX_3X2_F scroll_mat = D2D1::Matrix3x2F::Translation(0.0f, -sy);
         render_target_->SetTransform(scroll_mat);
 
         float card_x = static_cast<float>(scale(ds.metrics.padding_x, cur_dpi));
@@ -4346,13 +4344,13 @@ struct MainWindow::Impl {
                     float back_x = scale_f(static_cast<float>(ds.metrics.padding_x) - 10.0f, cur_dpi);
                     float back_y = (float)scale(ds.metrics.padding_top, cur_dpi);
                     float back_sz = (float)scale(ds.metrics.header_btn_size, cur_dpi);
-                    float sy = scale_f(impl->scroll_anim_y_, cur_dpi);
-                    impl->back_btn_hovered_ = (x >= back_x && x <= back_x + back_sz && y >= (back_y - sy) && y <= (back_y - sy) + back_sz);
+                    impl->back_btn_hovered_ = (x >= back_x && x <= back_x + back_sz && y >= back_y && y <= back_y + back_sz);
 
                     float card_x = (float)scale(ds.metrics.padding_x, cur_dpi);
                     float card_w = w - scale_f(static_cast<float>(ds.metrics.padding_x * 2), cur_dpi);
                     float row_h = (float)scale(ds.metrics.row_height, cur_dpi);
                     float clip_top = back_y + back_sz + scale_f(12, cur_dpi);
+                    float sy = scale_f(impl->scroll_anim_y_, cur_dpi);
 
                     float sec0_y = clip_top + scale_f(8, cur_dpi) - sy;
                     float card0_y = sec0_y + scale_f(22, cur_dpi);
@@ -4384,7 +4382,7 @@ struct MainWindow::Impl {
                     impl->save_btn_hovered_ = false;
 
                     impl->hovered_settings_row_ = -1;
-                    if (y >= 0 && x >= card_x && x <= card_x + card_w) {
+                    if (y >= clip_top && x >= card_x && x <= card_x + card_w) {
                         if (y >= card0_y && y <= card0_y + seg_box_h) {
                             impl->hovered_settings_row_ = 100; // Appearance segments
                         } else if (y >= card1_y && y <= card1_y + card1_h) {
