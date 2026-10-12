@@ -60,7 +60,7 @@ jobs:
         run: |
           $ver = if ("${{ github.ref_name }}") { "${{ github.ref_name }}" } else { "latest" }
           $zipName = "Hemera-${ver}-${{ matrix.target }}.zip"
-          Compress-Archive -Path "build/Release/Hemera.exe", "build/Release/wintun.dll" -DestinationPath $zipName
+          Compress-Archive -Path "build/Release/Hemera.exe", "build/Release/wintun.dll" -DestinationPath $zipName -Force
           echo "RELEASE_ZIP=$zipName" >> $env:GITHUB_ENV
 
       - name: Upload Build Artifact

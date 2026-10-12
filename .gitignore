@@ -13,6 +13,7 @@
 *.log
 *.res
 *.obj
+*.zip
 
 # Libraries (ignore all except core/vendor static libs)
 *.lib
