@@ -2208,10 +2208,8 @@ struct MainWindow::Impl {
         float back_btn_size = static_cast<float>(scale(ds.metrics.header_btn_size, cur_dpi));
 
         render_target_->SetTransform(D2D1::Matrix3x2F::Identity());
-        render_animated_block(anim_delay::Header, cur_dpi, D2D1::Matrix3x2F::Identity(), [&]() {
-            draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
-            draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
-        });
+        draw_back_button(back_btn_x, back_btn_y, back_btn_size, cur_dpi);
+        draw_text(L"Settings", fmt_view_title_.Get(), back_btn_x + back_btn_size + scale_f(8, cur_dpi), back_btn_y + scale_f(9, cur_dpi), ds.colors.text_primary);
 
         // 2. Scrollable Body with GPU Scissor & Translation Transform
         float clip_top = back_btn_y + back_btn_size + scale_f(12, cur_dpi);
