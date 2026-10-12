@@ -28,7 +28,8 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="صفحه اصلی هِمِرا — اتصال با یک کلیک" width="460">
+  <img src="docs/1.png" alt="صفحه اصلی هِمِرا در تم روشن" width="370">&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/2.png" alt="صفحه اصلی هِمِرا در تم تاریک" width="370">
 </p>
 
 ## معرفی پروژه

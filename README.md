@@ -28,7 +28,8 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="Hemera Native — One-Click Connect Screen" width="460">
+  <img src="docs/1.png" alt="Hemera Native — Light Mode" width="370">&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/2.png" alt="Hemera Native — Dark Mode" width="370">
 </p>
 
 ## Overview
