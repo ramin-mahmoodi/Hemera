@@ -220,8 +220,8 @@ find_program(SIGNTOOL_EXECUTABLE
 
 if(SIGNTOOL_EXECUTABLE)
     add_custom_command(TARGET Hemera POST_BUILD
-        COMMAND "${SIGNTOOL_EXECUTABLE}" sign /fd SHA256 /s My /n "Hemera Project" "$<TARGET_FILE:Hemera>"
-        COMMAND "${SIGNTOOL_EXECUTABLE}" sign /fd SHA256 /s My /n "Hemera Project" "${CMAKE_CURRENT_SOURCE_DIR}/Hemera.exe"
+        COMMAND powershell -NoProfile -Command
+            "if (Get-ChildItem Cert:\\CurrentUser\\My | Where-Object Subject -like '*Hemera*') { & '${SIGNTOOL_EXECUTABLE}' sign /fd SHA256 /s My /n 'Hemera Project' '$<TARGET_FILE:Hemera>'; & '${SIGNTOOL_EXECUTABLE}' sign /fd SHA256 /s My /n 'Hemera Project' '${CMAKE_CURRENT_SOURCE_DIR}/Hemera.exe' } else { Write-Host 'Code signing certificate not found, skipping.' }"
         COMMENT "Code signing Hemera.exe to prevent antivirus false positives..."
     )
 endif()

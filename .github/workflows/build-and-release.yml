@@ -39,6 +39,11 @@ jobs:
         run: |
           ./scripts/build_vendor_arm64.ps1
 
+      - name: Setup Code Signing Certificate
+        shell: pwsh
+        run: |
+          New-SelfSignedCertificate -Type CodeSigning -Subject "CN=Hemera Project" -CertStoreLocation "Cert:\CurrentUser\My" -HashAlgorithm SHA256
+
       - name: Configure CMake (x64)
         if: matrix.arch == 'x64'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
