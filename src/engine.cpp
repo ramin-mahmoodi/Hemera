@@ -235,7 +235,7 @@ void HemeraEngine::save_profile(const ConnectionProfile& profile) const {
         std::lock_guard lock(impl_->mutex);
         impl_->profile = profile;
     }
-    auto json_val = json::profile_to_json(profile, true);
+    auto json_val = json::profile_to_json(profile, false);
     std::error_code ec;
     std::filesystem::create_directories(impl_->data_dir, ec);
     std::ofstream out(impl_->profile_file);
@@ -354,6 +354,10 @@ std::expected<void, std::string> HemeraEngine::connect(std::optional<ConnectionP
             env["HEMERA_MASQUE_H2_FRAGMENT"] = "1";
             env["HEMERA_MASQUE_H2_FRAGMENT_SNI"] = "1";
         }
+        if (prof.api_fragment) env["HEMERA_API_FRAGMENT"] = "1";
+        if (prof.disable_grease) env["HEMERA_DISABLE_GREASE"] = "1";
+        if (prof.wg_keepalive > 0) env["HEMERA_WG_KEEPALIVE"] = std::to_string(prof.wg_keepalive);
+        if (!prof.upstream.empty()) env["HEMERA_UPSTREAM"] = prof.upstream;
         if (prof.ech) env["HEMERA_ECH"] = "auto";
         if (!prof.exit_loc.empty()) env["HEMERA_EXIT_LOC"] = prof.exit_loc;
         if (!prof.dns.empty()) env["HEMERA_DNS"] = prof.dns;

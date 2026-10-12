@@ -251,6 +251,9 @@ struct ConnectionProfile {
     bool tun_mode = false;
     bool fragment = false;
     bool ech = false;
+    bool api_fragment = true;
+    bool disable_grease = false;
+    uint32_t wg_keepalive = 25;
 
     [[nodiscard]] std::chrono::seconds connect_timeout() const noexcept {
         uint64_t base = 0;
@@ -365,13 +368,25 @@ struct ConnectionProfile {
             args.push_back(custom_endpoint);
         }
 
-        // Anti-censorship: TLS fragmentation & ECH
+        // Anti-censorship: TLS fragmentation, API fragmentation, ECH, GREASE
         if (fragment) {
             args.push_back("--fragment");
+        }
+        if (api_fragment) {
+            args.push_back("--api-fragment");
+        }
+        if (disable_grease) {
+            args.push_back("--disable-grease");
         }
         if (ech) {
             args.push_back("--ech");
             args.push_back("auto");
+        }
+
+        // WireGuard / Gool keepalive
+        if (wg_keepalive > 0 && (protocol == Protocol::Wireguard || protocol == Protocol::Gool || protocol == Protocol::WarpInWarp)) {
+            args.push_back("--keepalive");
+            args.push_back(std::to_string(wg_keepalive));
         }
 
         // Noize obfuscation
@@ -401,6 +416,14 @@ struct ConnectionProfile {
             if (zero_trust_gateway) {
                 args.push_back("--gateway");
             }
+        }
+        if (!access_client_id.empty()) {
+            args.push_back("--access-id");
+            args.push_back(access_client_id);
+        }
+        if (!access_client_secret.empty()) {
+            args.push_back("--access-secret");
+            args.push_back(access_client_secret);
         }
 
         // HTTP Front

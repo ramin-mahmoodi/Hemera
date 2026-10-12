@@ -429,6 +429,9 @@ inline Value profile_to_json(const ConnectionProfile& p, bool sanitize_credentia
     o["tun_mode"] = p.tun_mode;
     o["fragment"] = p.fragment;
     o["ech"] = p.ech;
+    o["api_fragment"] = p.api_fragment;
+    o["disable_grease"] = p.disable_grease;
+    o["wg_keepalive"] = static_cast<double>(p.wg_keepalive);
     o["transport"] = std::string(to_string(p.transport));
     o["perf_profile"] = std::string(to_string(p.perf_profile));
     o["custom_endpoint"] = p.custom_endpoint;
@@ -469,6 +472,9 @@ inline ConnectionProfile profile_from_json(const Value& val) {
     p.tun_mode = val.get("tun_mode").as_bool(false);
     p.fragment = val.get("fragment").as_bool(false);
     p.ech = val.get("ech").as_bool(false);
+    p.api_fragment = val.get("api_fragment").as_bool(true);
+    p.disable_grease = val.get("disable_grease").as_bool(false);
+    p.wg_keepalive = static_cast<uint32_t>(val.get("wg_keepalive").as_int(25));
     return p;
 }
 
