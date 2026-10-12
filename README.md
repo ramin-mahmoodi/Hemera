@@ -4,11 +4,11 @@
   <img src="icon.png" alt="Hemera Logo" width="120" height="120">
 </p>
 
-<h3 align="center">Ultra-Fast, Lightweight, Native Windows Circumvention Client</h3>
+<h3 align="center">Pure C++26 Native Implementation of Aether Censorship-Circumvention Engine & Desktop Application</h3>
 
 <p align="center">
-  A pure, modern <b>C++26</b> native desktop client for <a href="https://github.com/CluvexStudio/Aether"><b>Aether</b></a> censorship-circumvention tunnels.<br>
-  Engineered from scratch with <b>Direct2D hardware acceleration</b>, zero web runtimes, and minimal memory footprint.
+  A self-contained, high-performance native Windows port of the <a href="https://github.com/CluvexStudio/Aether"><b>Aether</b></a> circumvention engine.<br>
+  Engineered from the ground up in modern <b>ISO C++26</b> with an integrated native network stack, <b>Direct2D hardware acceleration</b>, and zero external runtimes.
 </p>
 
 <p align="center">
@@ -33,57 +33,57 @@
 
 ## Overview
 
-**Hemera** is a pure native Windows port and standalone client for [**Aether**](https://github.com/CluvexStudio/Aether) — a next-generation censorship-circumvention tunnel built for heavily restricted, adversarial networks where Deep Packet Inspection (DPI), protocol fingerprinting, and UDP throttling are aggressive.
+**Hemera** is a pure native C++26 implementation and standalone Windows application for [**Aether**](https://github.com/CluvexStudio/Aether) — an advanced censorship-circumvention tunnel architecture engineered for heavily restricted, adversarial networks where Deep Packet Inspection (DPI), SNI filtering, and protocol fingerprinting are prevalent.
 
-Unlike traditional desktop clients built on heavy runtimes (Electron, WebView2, Qt, or WebKit), **Hemera** is re-engineered from the ground up in modern **ISO C++26** and rendered directly through **Windows Direct2D & DirectWrite**. The result is a single, self-contained native executable that consumes **less than 15 MB of RAM**, causes **0% idle CPU usage**, and delivers butter-smooth **60–120+ FPS** hardware-accelerated animations.
+Hemera is **not merely a graphical wrapper or frontend**. The entire network engine, protocol implementations, and user interface are ported and unified into a single, cohesive C++26 codebase:
+- **No Go / Rust runtime dependencies:** Eliminates secondary daemon processes, heavy IPC serialization overhead, and garbage collection pauses.
+- **No Web / Electron runtimes:** Built with native Win32 APIs and hardware-accelerated **Direct2D & DirectWrite** rather than embedding Chromium, Node.js, or WebView2.
+- **Ultra-low resource footprint:** Consumes **under 15 MB of RAM**, uses **0.0% idle CPU**, starts up instantaneously (< 300 ms), and delivers a single monolithic executable.
 
 ---
 
-## ⚡ Performance Benchmark
+## ⚡ Architecture & Performance Comparison
 
-| Metric | Hemera (Native C++26) | Typical Web/Tauri Clients | Typical Electron Clients |
+| Metric | Hemera (Pure C++26 Native) | Typical Go/Rust Core + Webview | Typical Electron Clients |
 | :--- | :---: | :---: | :---: |
+| **Engine Architecture** | **Unified In-Process Native C++26 Core** | External CLI Process + IPC Bridge | Node.js Backend / Sidecar Daemon |
 | **RAM Consumption** | **< 15 MB** | 70 – 160 MB | 200 – 450 MB |
 | **Idle CPU Usage** | **0.0%** | 0.8 – 3.0% | 2.0 – 6.0% |
-| **Rendering Pipeline** | **Direct2D Hardware-Accelerated** | WebView2 / WebKit DOM | Chromium GPU / Blink |
+| **GUI Rendering** | **Direct2D & DirectWrite (GPU Native)** | WebView2 / WebKit DOM | Chromium GPU / Blink Engine |
 | **Startup Time** | **< 300 ms (Instant)** | 1.5 – 3.0 s | 2.5 – 6.0 s |
-| **Binary Architecture** | **Single Native `.exe` (~12 MB)** | Multi-file Bundle | 100+ MB Framework Files |
-| **Framework Dependencies** | **None (Pure Win32 API)** | WebView2 Runtime | Node.js + Chromium |
-| **Display Refresh Sync** | **Adaptive 60 / 120 / 144 Hz** | Fixed 60 Hz | Fixed 60 Hz |
+| **Binary Delivery** | **Single Monolithic `.exe` (~12 MB)** | Multi-file Bundle + Web Assets | 100+ MB Framework Bundle |
+| **Runtime Dependencies** | **None (Pure Win32 OS APIs)** | Microsoft WebView2 Runtime | Node.js + Embedded Chromium |
 
 ---
 
-## Features
+## Key Features
 
-### 🚀 One-Click Simplicity
-- **Zero Configuration Needed:** Press **Connect**, and Hemera automatically discovers optimal endpoints, negotiates encrypted handshakes, and routes your traffic.
-- **Smart Reconnect:** Caches the last verified working gateway and re-tests it first, connecting in seconds without rescanning.
+### 🧠 Native C++ NetStack & Core Engine Port
+- **In-Process Protocol Engine:** Complete native port of the Aether tunnel protocols directly in modern C++26, eliminating subprocess pipes and socket overhead.
+- **RFC 6298 Jacobson/Karn RTT Estimator:** Continuous round-trip time and variance tracking with adaptive RTO boundaries (100 ms – 10 s) to eliminate stalled connections on lossy, high-jitter networks.
+- **RFC 6582 NewReno Fast Recovery:** Recovers gracefully from multiple dropped packets within a single flight window without stalling transmission pipelines.
+- **Condition-Variable Signaling:** True event-driven I/O with zero thread-spinning or busy-waiting, ensuring 0% CPU consumption when idle.
+- **Windows EcoQoS Awareness:** Automatically suppresses Windows 11 background power throttling so network throughput and timer precision stay consistent when minimized.
 
-### 🛡️ Advanced Protocol Engine
+### 🛡️ Censorship-Resistant Protocol Stack
 - **MASQUE (HTTP/3 & HTTP/2):** Encapsulates raw IP datagrams inside genuine QUIC and HTTP/2 TLS streams. Features ClientHello fragmentation to completely evade TLS SNI-based firewalls.
-- **WireGuard:** Ultra-fast, minimal overhead modern UDP tunnel.
-- **WARP-in-WARP (`gool`):** Dual nested WireGuard hops discovered automatically or configured manually for clean egress IPs.
+- **WireGuard Engine:** Lean, high-throughput UDP tunnel implementation.
+- **WARP-in-WARP (`gool`):** Dual nested WireGuard hops discovered automatically or routed through custom endpoints for clean egress IPs.
 - **MASQUE-in-MASQUE (`mim`):** Two chained MASQUE tunnels for maximum censorship resistance and exit country diversity.
 
-### 🌐 System-Wide Routing & Proxy
-- **Native Wintun TUN Driver:** Optional full-system L3 virtual network adapter that captures and routes all OS traffic, preventing any DNS leaks or UDP bypasses.
-- **Seamless Windows System Proxy (SysProxy):** Automatically configures WinINet registry settings with instant atomic notification (`InternetSetOptionW`) without requiring browser restarts.
-- **Crash-Proof Proxy Restoration:** Automatically restores your original network proxy settings upon disconnect, normal exit, and even after system crashes.
+### 🌐 System-Wide Routing & Proxy Management
+- **Native Wintun L3 Driver:** High-performance virtual network adapter that captures and routes all OS traffic, completely preventing DNS leaks and UDP bypasses.
+- **Seamless WinINet System Proxy:** Automatically configures Windows system proxy settings with instant atomic notification (`InternetSetOptionW`) without requiring browser restarts.
+- **Fail-Safe Proxy Restoration:** Guarantees atomic restoration of original network proxy settings upon disconnect, normal exit, or system crash.
 
-### 🔍 Multi-Tier Intelligent Route Discovery
-- **Turbo / Balanced / Thorough:** Balances candidate scan budgets against endpoint discovery depth.
-- **Verified / Ironclad:** End-to-end data-plane validation. Candidate gateways are only trusted after successfully passing a live encrypted HTTP request, eliminating dead routes before you connect.
+### 🔍 Multi-Tier Route Discovery & Validation
+- **Discovery Budgets:** Turbo, Balanced, and Thorough search profiles balancing discovery latency against endpoint candidate depth.
+- **Data-Plane Verification (Verified / Ironclad):** Validates candidate gateways through real end-to-end encrypted HTTP requests, ensuring dead routes are discarded before establishing user traffic.
 
-### 🧠 Zero-Spin Event-Driven NetStack
-- **RFC 6298 Jacobson/Karn RTT Estimator:** Dynamic RTT and variance calculation with adaptive RTO bounds (100 ms – 10 s) to eliminate stalled connections on jittery networks.
-- **RFC 6582 NewReno Fast Recovery:** Recovers from multiple packet losses within a single burst window without triggering pipeline resets.
-- **Condition-Variable Signaling:** Zero mutex-spinning or artificial sleeps, eliminating lock contention.
-- **Windows 11 EcoQoS-Aware:** Automatically disables background `PowerThrottling` so timer resolution and throughput remain peak even when minimized to the System Tray.
-
-### 🎛️ Windows Integration
-- **System Tray:** Minimizes cleanly to tray with dynamic connection state badges and right-click quick controls.
+### 🎛️ Windows Integration & Controls
+- **System Tray:** Minimizes cleanly to the notification area with live state badges and right-click quick controls.
 - **Windows Job Object:** Sandboxes helper processes to guarantee zero orphaned background tasks.
-- **Live Diagnostic Logs:** Clean, timestamped diagnostic logs with one-click clipboard copy.
+- **Diagnostic Logging:** Real-time timestamped diagnostic console with one-click clipboard export.
 
 ---
 
@@ -158,7 +158,6 @@ Hemera/
 ## Credits & Acknowledgements
 
 - [**CluvexStudio/Aether**](https://github.com/CluvexStudio/Aether) — Original censorship-circumvention tunnel & protocol architecture.
-- [**MatinSenPai/Aether-GUI**](https://github.com/MatinSenPai/Aether-GUI) — Inspiration for the clean desktop user experience.
 - [**Wintun**](https://www.wintun.net/) — High-performance TUN driver for Windows.
 
 ---
