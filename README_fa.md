@@ -93,8 +93,8 @@
 
 | معماری پردازنده | فایل دانلودی | کاربرد |
 | :--- | :--- | :--- |
-| **ویندوز x64** | [`Hemera-v1.0.6-windows-x64.zip`](https://github.com/ramin-mahmoodi/Hemera/releases/latest) | مناسب تمام پردازنده‌های معمول ۶۴ بیتی اینتل و AMD |
-| **ویندوز ARM64** | [`Hemera-v1.0.6-windows-arm64.zip`](https://github.com/ramin-mahmoodi/Hemera/releases/latest) | مناسب سرفیس‌پرو و پردازنده‌های اسنپ‌دراگون و ARM |
+| **ویندوز x64** | [`Hemera-v1.0.7-windows-x64.zip`](https://github.com/ramin-mahmoodi/Hemera/releases/latest) | مناسب تمام پردازنده‌های معمول ۶۴ بیتی اینتل و AMD |
+| **ویندوز ARM64** | [`Hemera-v1.0.7-windows-arm64.zip`](https://github.com/ramin-mahmoodi/Hemera/releases/latest) | مناسب سرفیس‌پرو و پردازنده‌های اسنپ‌دراگون و ARM |
 
 > **بدون نیاز به نصب.** فایل فشرده را استخراج کرده و `Hemera.exe` را اجرا کنید.
 

@@ -93,8 +93,8 @@ Prebuilt binaries are available on the [**Releases**](https://github.com/ramin-m
 
 | Architecture | Package | Description |
 | :--- | :--- | :--- |
-| **Windows x64** | [`Hemera-v1.0.6-windows-x64.zip`](https://github.com/ramin-mahmoodi/Hemera/releases/latest) | For standard 64-bit Intel / AMD PCs |
-| **Windows ARM64** | [`Hemera-v1.0.6-windows-arm64.zip`](https://github.com/ramin-mahmoodi/Hemera/releases/latest) | For Surface Pro, Snapdragon X Elite & ARM PCs |
+| **Windows x64** | [`Hemera-v1.0.7-windows-x64.zip`](https://github.com/ramin-mahmoodi/Hemera/releases/latest) | For standard 64-bit Intel / AMD PCs |
+| **Windows ARM64** | [`Hemera-v1.0.7-windows-arm64.zip`](https://github.com/ramin-mahmoodi/Hemera/releases/latest) | For Surface Pro, Snapdragon X Elite & ARM PCs |
 
 > **No installation required.** Simply extract the zip archive and run `Hemera.exe`.
 

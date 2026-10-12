@@ -2662,7 +2662,7 @@ struct MainWindow::Impl {
 
             float about_y = sec6_y + (row_h - static_cast<float>(scale(ds.typo.body_label, cur_dpi))) / 2.0f;
             draw_text(L"About Hemera", fmt_body_.Get(), card_x + pad_x, about_y, ds.colors.text_primary);
-            std::wstring about_sub = L"v1.0.6   ›";
+            std::wstring about_sub = L"v1.0.7   ›";
             draw_text_right(about_sub, fmt_mono_.Get(), card_x + card_w - pad_x, about_y, ds.colors.text_muted);
         });
 
@@ -3233,7 +3233,7 @@ struct MainWindow::Impl {
 
             // App Name & Version
             draw_text_center(L"Hemera", fmt_hero_status_.Get(), cx, name_y, ds.colors.text_primary);
-            draw_text_center(L"Version 1.0.6", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
+            draw_text_center(L"Version 1.0.7", fmt_mono_.Get(), cx, ver_y, ds.colors.text_muted);
 
             // Subtitle text
             draw_text_center(L"Native high-performance circumvention for Windows.", fmt_body_.Get(), cx, desc_y, ds.colors.text_muted);
@@ -3284,7 +3284,7 @@ struct MainWindow::Impl {
             // Row 2: Releases & Updates
             float ry2 = card_y + row_h * 2.0f + text_mid_offset;
             draw_text(L"Releases & Changelog", fmt_body_.Get(), card_x + pad_x, ry2, ds.colors.text_primary);
-            draw_text_right(L"v1.0.6 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
+            draw_text_right(L"v1.0.7 (Latest) ↗", fmt_mono_.Get(), card_x + card_w - pad_x, ry2, ds.colors.text_muted);
 
             // Row 3: License
             float ry3 = card_y + row_h * 3.0f + text_mid_offset;
@@ -5280,7 +5280,7 @@ bool MainWindow::create() {
         }
     });
 
-    impl_->parse_and_append_log("[+] Hemera v1.0.6 initialized and ready", GetTickCount64());
+    impl_->parse_and_append_log("[+] Hemera v1.0.7 initialized and ready", GetTickCount64());
 
     // Pre-render the first Direct2D frame BEFORE presenting the window to the user
     // This completely eliminates any blank/white startup delay!
